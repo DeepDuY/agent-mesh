@@ -85,11 +85,12 @@ rsync -a --delete \
 # ------------------------------------------------------------------
 # Virtualenv + dependencies
 # ------------------------------------------------------------------
+# Some distros ship a Python without ensurepip (so `python -m venv` fails);
+# ensure_venv() in common.sh handles that with several fallbacks.
+source "${REPO_DIR}/deploy/common.sh"
+
 PYBIN="$(command -v python3.12 || command -v python3)"
-if [ ! -d "${INSTALL_DIR}/lib/venv" ]; then
-    echo "==> Creating virtual environment (${PYBIN})"
-    "${PYBIN}" -m venv "${INSTALL_DIR}/lib/venv"
-fi
+ensure_venv "${INSTALL_DIR}/lib/venv" "${PYBIN}"
 
 echo "==> Installing dependencies"
 "${INSTALL_DIR}/lib/venv/bin/pip" install -q -U pip

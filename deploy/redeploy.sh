@@ -14,6 +14,8 @@ INSTALL_DIR="${INSTALL_DIR:-/opt/agent-mesh}"
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_PROBE="${BUILD_PROBE:-0}"
 
+source "${REPO_DIR}/deploy/common.sh"
+
 echo "==> Redeploying agent-mesh source"
 
 systemctl stop agent-mesh-orchestrator 2>/dev/null || true
@@ -35,6 +37,7 @@ rsync -a --delete \
     "${REPO_DIR}/" "${INSTALL_DIR}/lib/agent-mesh/"
 
 cd "${INSTALL_DIR}/lib/agent-mesh"
+ensure_venv "${INSTALL_DIR}/lib/venv" "$(command -v python3.12 || command -v python3)"
 # asyncpg>=0.30 has only manylinux_2_28 wheels (unusable on older glibc).
 "${INSTALL_DIR}/lib/venv/bin/pip" install -q -e '.[dev]' 'asyncpg<0.30'
 
