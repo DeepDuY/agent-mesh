@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Mesh 控制台</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="aurora" aria-hidden="true">
+    <span class="blob blob-a"></span>
+    <span class="blob blob-b"></span>
+    <span class="blob blob-c"></span>
+    <span class="blob blob-d"></span>
+  </div>
+  <div id="login-view" class="login-view">
+    <div class="login-box">
+      <h2>Agent Mesh</h2>
+      <p class="login-tip">多 Agent 远程协同控制台</p>
+      <input id="username" type="text" placeholder="用户名" autocomplete="username">
+      <input id="password" type="password" placeholder="密码" autocomplete="current-password">
+      <button onclick="login()">登录</button>
+      <div id="login-error" class="error"></div>
+    </div>
+  </div>
+
+  <div id="app-view" class="hidden">
+    <header>
+      <div class="brand">
+        <h1>Agent Mesh 控制台</h1>
+        <span class="brand-sub">多 Agent 远程协同</span>
+      </div>
+      <div class="user-info">
+        <span id="user-label"></span>
+        <button class="btn btn-secondary" onclick="openPasswordModal()">修改密码</button>
+        <button class="btn btn-secondary" onclick="logout()">退出</button>
+      </div>
+    </header>
+    <div class="tabs">
+      <div class="tab active" data-tab="agents" onclick="switchTab('agents')">节点</div>
+      <div class="tab" data-tab="tasks" onclick="switchTab('tasks')">任务</div>
+      <div class="tab" data-tab="files" onclick="switchTab('files')">文件</div>
+      <div class="tab" data-tab="skills" onclick="switchTab('skills')">技能</div>
+      <div class="tab" data-tab="templates" onclick="switchTab('templates')">模板</div>
+      <div class="tab admin-only hidden" data-tab="users" onclick="switchTab('users')">用户</div>
+      <div class="tab" data-tab="config" onclick="switchTab('config')">配置</div>
+    </div>
+    <div class="container">
+      <section id="tab-agents" class="tab-panel">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>节点列表</h2>
+            <button class="btn btn-success" onclick="showInstallCommand()">+ 安装新节点</button>
+          </div>
+          <table>
+            <thead><tr><th>ID</th><th>主机名</th><th>别名</th><th>版本</th><th>运行时</th><th>系统</th><th>CPU/内存</th><th>状态</th><th>当前任务</th><th>操作</th></tr></thead>
+            <tbody id="agents-body"><tr><td colspan="10" class="empty">加载中...</td></tr></tbody>
+          </table>
+          <p class="refresh-hint">每 5 秒自动刷新</p>
+        </div>
+      </section>
+      <section id="tab-tasks" class="tab-panel hidden">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>任务列表</h2>
+          </div>
+          <div class="filter-bar">
+            <input id="task-search" type="text" placeholder="搜索指令 / 任务ID / 节点" class="filter-input" onkeydown="if(event.key==='Enter')applyTaskFilters()">
+            <button class="btn" onclick="applyTaskFilters()">搜索</button>
+            <button class="btn btn-secondary" onclick="clearTaskFilters()">重置</button>
+            <select id="task-status-filter" class="filter-select" onchange="applyTaskFilters()">
+              <option value="">全部状态</option>
+              <option value="queued">排队</option>
+              <option value="assigned">已分配</option>
+              <option value="working">执行中</option>
+              <option value="completed">完成</option>
+              <option value="failed">失败</option>
+              <option value="timed_out">超时</option>
+              <option value="cancelled">已终止</option>
+            </select>
+            <select id="task-mode-filter" class="filter-select" onchange="applyTaskFilters()">
+              <option value="">全部模式</option>
+              <option value="llm">LLM</option>
+              <option value="command">命令</option>
+            </select>
+            <select id="task-time-op" class="filter-select" onchange="toggleTimeInputs()">
+              <option value="">开始时间不限</option>
+              <option value="after">开始时间之后</option>
+              <option value="between">开始时间之间</option>
+              <option value="before">开始时间之前</option>
+            </select>
+            <input type="datetime-local" id="task-time-from" class="filter-input" style="display:none" onchange="applyTaskFilters()">
+            <span id="task-time-sep" style="display:none">～</span>
+            <input type="datetime-local" id="task-time-to" class="filter-input" style="display:none" onchange="applyTaskFilters()">
+          </div>
+          <div class="batch-bar">
+            <label><input type="checkbox" id="tasks-select-all-pages" onclick="toggleSelectAllPages()"> 全选所有页（跨页）</label>
+            <span id="tasks-selected-count">已选 0 项</span>
+            <button class="btn btn-danger" id="tasks-batch-delete-btn" onclick="batchDeleteTasks()">删除选中</button>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead><tr>
+                <th class="col-select"><input type="checkbox" id="tasks-select-all" onclick="toggleSelectAllPage()" title="全选当前页"></th>
+                <th>ID</th><th>节点</th><th>指令</th><th>模式</th><th>状态</th><th>开始时间</th><th>耗时</th><th>操作</th>
+              </tr></thead>
+              <tbody id="tasks-body"><tr><td colspan="9" class="empty">加载中...</td></tr></tbody>
+            </table>
+          </div>
+          <div class="pagination">
+            <button class="btn" onclick="prevTaskPage()">上一页</button>
+            <span id="task-page-info">第 1 页</span>
+            <button class="btn" onclick="nextTaskPage()">下一页</button>
+          </div>
+          <p class="refresh-hint">每 5 秒自动刷新</p>
+        </div>
+      </section>
+      <section id="tab-files" class="tab-panel hidden">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>文件库</h2>
+            <div>
+              <input type="file" id="files-upload-input" multiple style="display:none" onchange="uploadFiles(this)">
+              <button class="btn btn-success" onclick="document.getElementById('files-upload-input').click()">上传文件</button>
+            </div>
+          </div>
+          <div class="filter-bar">
+            <input id="files-search" type="text" placeholder="搜索文件名 / 文件ID" class="filter-input" onkeydown="if(event.key==='Enter')applyFileSearch()">
+            <button class="btn" onclick="applyFileSearch()">搜索</button>
+            <button class="btn btn-secondary" onclick="clearFileSearch()">重置</button>
+          </div>
+          <div class="batch-bar">
+            <label><input type="checkbox" id="files-select-all" onclick="toggleSelectAllFiles(this)"> 全选</label>
+            <span id="files-selected-count">已选 0 项</span>
+            <button class="btn btn-danger" id="files-batch-delete-btn" onclick="batchDeleteFiles()" disabled>删除选中</button>
+            <button class="btn" id="files-batch-download-btn" onclick="batchDownloadFiles()" disabled>批量下载</button>
+          </div>
+          <table>
+            <thead><tr><th class="col-select"></th><th>ID</th><th>文件名</th><th>大小</th><th>MD5</th><th>上传时间</th><th>操作</th></tr></thead>
+            <tbody id="files-body"><tr><td colspan="7" class="empty">加载中...</td></tr></tbody>
+          </table>
+          <div id="files-upload-status" class="status-msg"></div>
+        </div>
+      </section>
+
+      <section id="tab-skills" class="tab-panel hidden">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>技能库</h2>
+            <div>
+              <input type="file" id="skill-upload-input" accept=".zip" style="display:none" onchange="uploadSkill(this)">
+              <button class="btn btn-success" onclick="document.getElementById('skill-upload-input').click()">上传技能 ZIP</button>
+            </div>
+          </div>
+          <p class="refresh-hint">上传的 zip 会被提取 SKILL.md 元数据（name/description）；边沿 agent 通过摘要接口浏览、按需下载使用。</p>
+          <table>
+            <thead><tr><th>名称</th><th class="col-desc">描述</th><th>版本</th><th>状态</th><th>操作</th></tr></thead>
+            <tbody id="skills-body"><tr><td colspan="5" class="empty">加载中...</td></tr></tbody>
+          </table>
+          <div id="skill-upload-status" class="status-msg"></div>
+        </div>
+      </section>
+
+      <section id="tab-templates" class="tab-panel hidden">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>节点模板</h2>
+            <button class="btn btn-success" onclick="openTemplateModal()">+ 新建模板</button>
+          </div>
+          <p class="refresh-hint" style="text-align:left">模板是节点的可复用配置（提示词 / 默认模型 / 预留权限）。节点绑定模板后自动继承；节点自身的同名配置优先/叠加。改模板会影响所有绑定节点。</p>
+          <table>
+            <thead><tr><th>名称</th><th>说明</th><th>默认模型</th><th class="col-desc">System Prompt</th><th>绑定节点</th><th>操作</th></tr></thead>
+            <tbody id="templates-body"><tr><td colspan="6" class="empty">加载中...</td></tr></tbody>
+          </table>
+          <div id="templates-status" class="status-msg"></div>
+        </div>
+      </section>
+
+      <section id="tab-users" class="tab-panel hidden">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>用户管理</h2>
+          </div>
+          <div class="card">
+            <h3>创建用户</h3>
+            <div class="form-row">
+              <input id="new-user-username" type="text" placeholder="用户名（字母/数字/._-）" autocomplete="off">
+              <input id="new-user-password" type="password" placeholder="密码（至少 6 位）" autocomplete="new-password">
+              <select id="new-user-role">
+                <option value="user">普通用户</option>
+                <option value="admin">管理员</option>
+              </select>
+              <button class="btn btn-success" onclick="createUser()">创建</button>
+            </div>
+            <div id="create-user-status" class="status-msg"></div>
+            <div id="new-user-token-box" class="hidden">
+              <p class="refresh-hint" style="text-align:left">API token 只显示这一次，请立即保存：</p>
+              <pre id="new-user-token-value" class="mono"></pre>
+              <button class="btn" onclick="copyText(document.getElementById('new-user-token-value').textContent)">复制 token</button>
+            </div>
+          </div>
+          <table>
+            <thead><tr><th>用户名</th><th>角色</th><th>状态</th><th>创建时间</th><th>最近登录</th><th>Token 更新时间</th><th>操作</th></tr></thead>
+            <tbody id="users-body"><tr><td colspan="7" class="empty">加载中...</td></tr></tbody>
+          </table>
+          <p class="refresh-hint">用户 API token 用于 REST 与 MCP；丢失后可由管理员轮换（只显示一次）。</p>
+        </div>
+      </section>
+
+      <section id="tab-config" class="tab-panel hidden">
+        <div class="panel">
+          <h2>全局配置</h2>
+
+          <div class="settings">
+            <div class="setting">
+              <div class="setting-label">公开地址 <span class="help" data-tip="Agent 安装脚本和边缘节点用来访问此编排器的地址。">?</span></div>
+              <div class="setting-control">
+                <input id="public-url" type="text" value="" placeholder="http://10.0.0.1:8000" onfocus="pauseRefresh()" onblur="resumeRefresh()">
+                <button class="btn" onclick="savePublicUrl()">保存</button>
+                <span id="public-url-status" class="status-msg"></span>
+              </div>
+            </div>
+
+            <div class="setting setting-lg">
+              <div class="setting-label">默认 LLM 配置 <span class="help" data-tip="节点默认使用的模型与网关凭据（未配置时 llm 任务会被拒绝）。保存后通过心跳同步给在线节点，节点级配置优先。">?</span></div>
+              <div class="setting-control">
+                <div class="sub-field">
+                  <label>模型（必填，网关真实完整 id）</label>
+                  <input id="llm-model" type="text" value="" placeholder="anthropic/deepseek-v4-flash">
+                </div>
+                <div class="sub-field">
+                  <label>API Key</label>
+                  <input id="llm-api-key" type="password" value="" placeholder="sk-...">
+                </div>
+                <div class="sub-field">
+                  <label>Base URL</label>
+                  <input id="llm-base-url" type="text" value="" placeholder="https://api.example.com/v1">
+                </div>
+                <div class="sub-actions">
+                  <button class="btn" onclick="saveLlmConfig()">保存 LLM 配置</button>
+                  <span id="llm-config-status" class="status-msg"></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="setting setting-lg">
+              <div class="setting-label">可用模型列表 <span class="help" data-tip="每行一个完整网关模型 id（如 anthropic/deepseek-v4-flash）。节点据此生成 opencode 模型表，派发时也会据此校验 model 参数。留空 = 不限制。">?</span></div>
+              <div class="setting-control">
+                <div class="sub-field">
+                  <textarea id="llm-models" rows="4" placeholder="anthropic/deepseek-v4-flash&#10;anthropic/deepseek-v4-pro&#10;anthropic/vip/kimi-k2.7-code"></textarea>
+                </div>
+                <div class="sub-actions">
+                  <button class="btn" onclick="saveLlmModels()">保存模型列表</button>
+                  <span id="llm-models-status" class="status-msg"></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="setting">
+              <div class="setting-label">自动升级 <span class="help" data-tip="开启后，版本低于最新安装包的节点会在空闲时自动升级（无需逐个点击）。">?</span></div>
+              <div class="setting-control">
+                <label class="toggle-line"><input type="checkbox" id="auto-upgrade" onchange="saveAutoUpgrade(this)"> 自动升级旧节点</label>
+                <span id="auto-upgrade-status" class="status-msg"></span>
+              </div>
+            </div>
+
+            <div class="setting">
+              <div class="setting-label">节点并发 <span class="help" data-tip="每个节点最多同时执行的任务数（心跳下发给所有在线节点，默认 2）。">?</span></div>
+              <div class="setting-control">
+                <input id="max-concurrent" type="number" min="1" max="32" value="2" placeholder="2">
+                <button class="btn" onclick="saveMaxConcurrent()">保存</button>
+                <span id="max-concurrent-status" class="status-msg"></span>
+              </div>
+            </div>
+
+            <div class="setting">
+              <div class="setting-label">实时输出刷新间隔 <span class="help" data-tip="任务详情页「实时输出」区域的轮询间隔（秒，默认 5）。">?</span></div>
+              <div class="setting-control">
+                <input id="task-log-poll" type="number" min="1" max="60" value="5" placeholder="5">
+                <button class="btn" onclick="saveTaskLogPoll()">保存</button>
+                <span id="task-log-poll-status" class="status-msg"></span>
+              </div>
+            </div>
+
+            <div class="setting">
+              <div class="setting-label">Agent-Mesh Skill <span class="help" data-tip="下载最新版 agent-mesh 使用指南（SKILL.md），放入主 Agent 的 skills 目录即可使用。">?</span></div>
+              <div class="setting-control">
+                <button class="btn" onclick="downloadAgentMeshSkill()">下载 SKILL.md</button>
+                <span id="skill-doc-status" class="status-msg"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div id="template-modal" class="modal hidden" onclick="onTemplateBackdrop(event)">
+    <div class="modal-content" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h2 id="template-modal-title">新建模板</h2>
+        <span class="close" onclick="closeTemplateModal()">&times;</span>
+      </div>
+      <input id="tpl-id" type="hidden">
+      <div class="form-group">
+        <label>名称（字母/数字/._-）</label>
+        <input id="tpl-name" type="text" placeholder="例如：部署节点">
+      </div>
+      <div class="form-group">
+        <label>说明</label>
+        <input id="tpl-description" type="text" placeholder="可选，供人识别">
+      </div>
+      <div class="form-group">
+        <label>默认模型（可选，节点自身未配置时使用）</label>
+        <select id="tpl-model"></select>
+      </div>
+      <div class="form-group">
+        <label>System Prompt（可选，拼接在节点提示词之后）</label>
+        <textarea id="tpl-system-prompt" class="modal-textarea" rows="5" placeholder="例如：你是部署专员，只操作 /opt 下的目录。"></textarea>
+      </div>
+      <div class="form-group">
+        <label>允许工具 allowed_tools（可选，JSON 数组，预留）</label>
+        <input id="tpl-allowed-tools" type="text" placeholder='["bash","edit"]'>
+      </div>
+      <div id="tpl-status" class="status-msg"></div>
+      <div class="sub-actions">
+        <button class="btn" onclick="saveTemplate()">保存</button>
+        <button class="btn btn-secondary" onclick="closeTemplateModal()">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="password-modal" class="modal hidden" onclick="onPasswordBackdrop(event)">
+    <div class="modal-content" style="max-width:420px" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h2>修改密码</h2>
+        <span class="close" onclick="closePasswordModal()">&times;</span>
+      </div>
+      <div class="form-group">
+        <label>当前密码</label>
+        <input id="cp-old" type="password" autocomplete="current-password">
+      </div>
+      <div class="form-group">
+        <label>新密码（至少 6 位）</label>
+        <input id="cp-new" type="password" autocomplete="new-password">
+      </div>
+      <div class="form-group">
+        <label>确认新密码</label>
+        <input id="cp-confirm" type="password" autocomplete="new-password">
+      </div>
+      <div id="cp-status" class="status-msg"></div>
+      <div class="sub-actions">
+        <button class="btn" onclick="submitChangePassword()">确认修改</button>
+        <button class="btn btn-secondary" onclick="closePasswordModal()">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="agent-modal" class="modal hidden" onclick="onModalBackdrop(event)">
+    <div class="modal-content" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h2 id="modal-title">节点详情</h2>
+        <span class="close" onclick="closeAgentModal()">&times;</span>
+      </div>
+      <div id="agent-detail"></div>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+  <script src="/static/js/auth.js"></script>
+  <script src="/static/js/agents.js"></script>
+  <script src="/static/js/tasks.js"></script>
+  <script src="/static/js/files.js"></script>
+  <script src="/static/js/skills.js"></script>
+  <script src="/static/js/users.js"></script>
+  <script src="/static/js/templates.js"></script>
+  <script src="/static/js/config.js"></script>
+</body>
+</html>

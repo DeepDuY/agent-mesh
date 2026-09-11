@@ -1,0 +1,2 @@
+ALTER TABLE tasks ADD COLUMN mode TEXT DEFAULT 'llm';
+ALTER TABLE task_results ADD COLUMN mode TEXT DEFAULT 'llm';

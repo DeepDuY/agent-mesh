@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual env / build artifacts
+.venv/
+dist/
+build/
+:memory:/
+
+# Runtime data (generated / machine-local)
+/data/*
+!/data/bootstrap/
+/data/bootstrap/*
+!/data/bootstrap/install.sh
+*.log
+
+# Backups / archives (deployment rollback, local tarballs)
+backup-*.tar.gz
+*.db.bak*
+
+# Local config / secrets
+.env
+etc/
+
+# OS
+.DS_Store
+
+# Internal review artifacts (not for publication)
+code-review-report.md
+评审补充澄清.md
+
+# Local MCP bridge config (machine-specific)
+mcp-server.json
