@@ -23,7 +23,7 @@ export AGENT_MESH_HOST=0.0.0.0
 export AGENT_MESH_PORT=8000
 pkill -f "agent_mesh.orchestrator.main" || true
 sleep 1
-nohup uv run python -m agent_mesh.orchestrator.main > /tmp/orch.log 2>&1 &
+nohup uv run --no-sync python -m agent_mesh.orchestrator.main > /tmp/orch.log 2>&1 &
 echo $! > /tmp/orch.pid
 echo "orchestrator pid=$(cat /tmp/orch.pid)"
 sleep 2

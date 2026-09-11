@@ -124,7 +124,13 @@ if [ -f "$SCRIPT_DIR/VERSION" ]; then
     cp -f "$SCRIPT_DIR/VERSION" "${INSTALL_DIR}/etc/agent_version"
 fi
 
-chmod +x "${INSTALL_DIR}/bin/opencode" 2>/dev/null || true
+if [ -f "${INSTALL_DIR}/bin/opencode" ]; then
+    chmod +x "${INSTALL_DIR}/bin/opencode" 2>/dev/null || true
+    echo "==> opencode bundled: ${INSTALL_DIR}/bin/opencode"
+else
+    echo "WARNING: this package does not contain bin/opencode; llm tasks will" >&2
+    echo "         fail on this node until opencode is installed in ${INSTALL_DIR}/bin/." >&2
+fi
 
 if [ "${SKIP_SERVICE:-0}" = "1" ]; then
     echo "==> Skipped service registration (SKIP_SERVICE=1 or not running as root)"
