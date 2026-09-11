@@ -56,7 +56,12 @@ ensure_venv() {
     fi
 
     echo "ERROR: could not create a Python virtualenv with pip." >&2
-    echo "  Install one of: python3.12-venv / virtualenv / uv, or ensure internet" >&2
-    echo "  access to https://bootstrap.pypa.io/get-pip.py" >&2
+    echo "  Fix one of the following:" >&2
+    echo "    - install the venv/ensurepip support for your Python:" >&2
+    echo "        Debian/Ubuntu : apt-get install -y python3.12-venv" >&2
+    echo "        RHEL/CentOS   : yum install -y python3-pip   # or ensure python3.12 has venv+ensurepip" >&2
+    echo "    - install 'uv'           (https://docs.astral.sh/uv/)" >&2
+    echo "    - install 'virtualenv'   (pip install --user virtualenv)" >&2
+    echo "    - ensure curl/wget can reach https://bootstrap.pypa.io/get-pip.py" >&2
     return 1
 }

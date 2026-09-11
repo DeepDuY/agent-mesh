@@ -46,17 +46,74 @@ done
 echo "==> Deploying agent-mesh to ${INSTALL_DIR} (source: ${REPO_DIR})"
 
 # ------------------------------------------------------------------
-# Pre-flight
+# Pre-flight: fail early with actionable messages
 # ------------------------------------------------------------------
-command -v rsync >/dev/null 2>&1 || { echo "ERROR: rsync is required" >&2; exit 1; }
+fail() { echo "" >&2; echo "ERROR: $*" >&2; echo "" >&2; exit 1; }
+warn() { echo "WARNING: $*" >&2; }
+
+# 1) root (we install a systemd unit and write to /opt)
 if [ "$(id -u)" -ne 0 ]; then
-    echo "WARNING: not running as root; systemd registration will likely fail" >&2
+    fail "this installer must run as root (installs a systemd service and writes ${INSTALL_DIR}).
+  Re-run as: sudo $0"
 fi
 
-# ------------------------------------------------------------------
-# Stop existing service
-# ------------------------------------------------------------------
+# 2) required commands
+for c in rsync tar; do
+    command -v "$c" >/dev/null 2>&1 || fail "missing required command: ${c}
+  Debian/Ubuntu : apt-get install -y ${c}
+  RHEL/CentOS   : yum install -y ${c}   (or dnf)"
+done
+command -v systemctl >/dev/null 2>&1 \
+    || warn "systemctl not found: the orchestrator will be installed but NOT started as a service."
+
+# 3) Python >= 3.12
+PYBIN="$(command -v python3.12 || command -v python3 || true)"
+[ -n "${PYBIN}" ] || fail "Python not found. This project requires Python >= 3.12.
+  Debian/Ubuntu : apt-get install -y python3.12
+  RHEL/CentOS   : yum install -y python3.12
+  Or install via pyenv/miniconda and ensure 'python3.12' is on PATH."
+"${PYBIN}" -c 'import sys; sys.exit(0 if sys.version_info[:2] >= (3, 12) else 1)' \
+    || fail "found ${PYBIN} but it is older than Python 3.12 (this project needs >= 3.12).
+  Install Python 3.12+ and make sure 'python3.12' resolves to it."
+
+# 4) disk space (~2GB: venv + opencode ~200MB + probe package)
+avail_mb="$(df -Pm "${INSTALL_DIR%/}" 2>/dev/null | awk 'NR==2{print $4}')"
+[ -n "${avail_mb}" ] || avail_mb="$(df -Pm / 2>/dev/null | awk 'NR==2{print $4}')"
+if [ -n "${avail_mb}" ] && [ "${avail_mb}" -lt 2000 ] 2>/dev/null; then
+    warn "only ${avail_mb}MB free; building the probe (opencode ~200MB) needs ~2GB. Free space or use --no-probe."
+fi
+
+# 5) port conflicts (stop any existing service first so we don't flag ourselves)
 systemctl stop agent-mesh-orchestrator 2>/dev/null || true
+if command -v ss >/dev/null 2>&1; then
+    for p in "${ORCH_PORT}" "$((ORCH_PORT + 1))"; do
+        if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${p}$"; then
+            warn "port ${p} is already in use; the orchestrator may fail to listen (change AGENT_MESH_PORT)."
+        fi
+    done
+fi
+
+# 6) connectivity (pip install always needs it; opencode download needs github)
+have_net() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsS -o /dev/null --max-time 8 "$1" 2>/dev/null
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -O /dev/null --timeout=8 "$1" 2>/dev/null
+    else
+        return 1
+    fi
+}
+if ! have_net https://pypi.org/simple/; then
+    warn "cannot reach pypi.org: 'pip install' will fail unless a local mirror is configured."
+fi
+if [ "${BUILD_PROBE}" = "1" ] && [ -z "${OPENCODE_BIN}" ] \
+    && ! command -v opencode >/dev/null 2>&1 && [ ! -x "${HOME}/.opencode/bin/opencode" ]; then
+    echo "==> opencode not found locally; it will be downloaded from github.com/sst/opencode"
+    have_net https://github.com \
+        || warn "cannot reach github.com: opencode download may fail (use --opencode PATH, or --no-probe)."
+fi
+
+echo "==> Pre-flight checks passed"
 
 # ------------------------------------------------------------------
 # Directory layout
@@ -89,7 +146,6 @@ rsync -a --delete \
 # ensure_venv() in common.sh handles that with several fallbacks.
 source "${REPO_DIR}/deploy/common.sh"
 
-PYBIN="$(command -v python3.12 || command -v python3)"
 ensure_venv "${INSTALL_DIR}/lib/venv" "${PYBIN}"
 
 echo "==> Installing dependencies"

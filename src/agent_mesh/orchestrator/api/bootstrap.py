@@ -55,9 +55,6 @@ def mount_bootstrap_routes(
         host = request.headers.get("x-forwarded-host") or request.headers.get("host", "127.0.0.1:8000")
         scheme = request.headers.get("x-forwarded-proto") or "http"
         base_url = config.public_url or f"{scheme}://{host}"
-        os_name = request.query_params.get("os", "linux")
-        arch = request.query_params.get("arch", "x64")
-        pkg = f"agent-mesh-agent-{os_name}-{arch}.tar.gz"
         token_check = "${TOKEN:-}"
         install_dir = "${INSTALL_DIR:-/opt/agent-mesh-agent}"
 
@@ -65,31 +62,54 @@ def mount_bootstrap_routes(
         # are delivered to a node over the heartbeat config-sync after it
         # registers (auth-security.md §9), so no LLM credential ever appears in
         # this script or in the process list during installation.
+        #
+        # OS/arch are detected on the TARGET machine (not baked in server-side),
+        # so the same command works on linux/macOS and x64/arm64.
         script = (
             "#!/usr/bin/env bash\n"
             "set -e\n"
-            f'INSTALL_URL="{base_url}/api/bootstrap/{pkg}"\n'
+            f'BASE_URL="{base_url}"\n'
             "\n"
             "OS=$(uname -s | tr '[:upper:]' '[:lower:]')\n"
+            'case "$OS" in\n'
+            "    darwin) OS=darwin ;;\n"
+            "    *)      OS=linux ;;\n"
+            "esac\n"
             "ARCH=$(uname -m)\n"
             'case "$ARCH" in\n'
-            '    x86_64) ARCH="x64" ;;\n'
-            '    aarch64|arm64) ARCH="arm64" ;;\n'
+            "    x86_64|amd64) ARCH=x64 ;;\n"
+            "    aarch64|arm64) ARCH=arm64 ;;\n"
             "esac\n"
+            'PKG="agent-mesh-agent-${OS}-${ARCH}.tar.gz"\n'
+            'INSTALL_URL="${BASE_URL}/api/bootstrap/${PKG}"\n'
             "\n"
-            f'ORCHESTRATOR_URL="{base_url}"\n'
+            "for c in curl tar; do\n"
+            '    command -v "$c" >/dev/null 2>&1 || { echo "ERROR: $c is required but not installed." >&2; exit 1; }\n'
+            "done\n"
             f'if [ -z "{token_check}" ]; then\n'
-            '    echo "ERROR: TOKEN environment variable is required" >&2\n'
+            '    echo "ERROR: TOKEN environment variable is required." >&2\n'
+            '    echo "  Usage: TOKEN=<your user token> bash <(curl ... /api/bootstrap/install.sh)" >&2\n'
             "    exit 1\n"
             "fi\n"
             "\n"
             "TMPDIR=$(mktemp -d)\n"
             'trap "rm -rf $TMPDIR" EXIT\n'
-            'curl -fsSL -H "Authorization: Bearer $TOKEN" "$INSTALL_URL" -o "$TMPDIR/agent.tar.gz"\n'
+            'echo "==> Downloading ${PKG} from ${INSTALL_URL}"\n'
+            'if ! curl -fsSL -H "Authorization: Bearer $TOKEN" "$INSTALL_URL" -o "$TMPDIR/agent.tar.gz"; then\n'
+            '    echo "ERROR: failed to download the probe package (${PKG})." >&2\n'
+            '    echo "  - check TOKEN is valid and the server is reachable" >&2\n'
+            '    echo "  - make sure a probe package for ${OS}/${ARCH} was built and published" >&2\n'
+            "    exit 1\n"
+            "fi\n"
             'tar -xzf "$TMPDIR/agent.tar.gz" -C "$TMPDIR"\n'
-            f'INSTALL_DIR="{install_dir}" ORCHESTRATOR_URL="$ORCHESTRATOR_URL" TOKEN="$TOKEN" '
+            'PKG_DIR="$TMPDIR/agent-mesh-agent-${OS}-${ARCH}"\n'
+            'if [ ! -f "$PKG_DIR/install.sh" ]; then\n'
+            '    echo "ERROR: unexpected package layout (no install.sh in $PKG_DIR)" >&2\n'
+            "    exit 1\n"
+            "fi\n"
+            f'INSTALL_DIR="{install_dir}" ORCHESTRATOR_URL="$BASE_URL" TOKEN="$TOKEN" '
             f'EDGE_ALIAS="${{EDGE_ALIAS:-}}" '
-            f'bash "$TMPDIR/agent-mesh-agent-{os_name}-{arch}/install.sh"\n'
+            'bash "$PKG_DIR/install.sh"\n'
         )
         return PlainTextResponse(script, media_type="text/x-shellscript")
 

@@ -6,6 +6,29 @@
 - **orchestrator**：独立调度器，负责任务队列、边沿心跳、任务分发
 - **边沿 Agent**：部署在目标机器上的轻量守护进程，用本机 opencode 执行任务
 
+## 一键部署（推荐）
+
+在服务器上（需要 root）：
+
+```bash
+git clone https://github.com/DeepDuY/agent-mesh.git
+cd agent-mesh
+sudo ./deploy/install.sh
+```
+
+脚本会自动：部署 orchestrator 到 `/opt/agent-mesh`（systemd 开机自启）→ 生成随机 token → 设置数据目录 → **构建探针安装包（含 opencode）并发布到 `/opt/agent-mesh/data/bootstrap/`**。
+
+之后：打开 `http://<服务器IP>:8000/`（默认 `admin/admin`，首登改密）→ 配置页填 Public URL → 节点页「+ 安装新节点」把探针装到目标机器。
+
+常用参数：
+
+```bash
+sudo ./deploy/install.sh --no-probe                 # 只装服务端，不构建探针
+sudo ./deploy/install.sh --opencode /path/opencode  # 指定本机 opencode（否则自动下载）
+```
+
+详见 [deploy/README.md](deploy/README.md)。
+
 ## 核心特性
 
 - 主 Agent 可通过 **MCP**（SSE :8001）或 **REST API** 控制 orchestrator
@@ -31,16 +54,18 @@
 - **节点描述与角色设定**：每个节点可设 `description`（主 Agent 通过 `list_agents` 识别用途）与节点级 `system_prompt`（注入该节点每个 llm 任务提示词顶部，配置页/节点详情可编辑）
 - **节点模板**：可复用的节点配置（`system_prompt` / 默认 `llm_model` / 预留权限 `allowed_tools`）；节点**引用式绑定**（`agents.template_id`），改模板自动同步到所有绑定节点。生效顺序：模型 `节点 > 模板 > 全局默认`，提示词按 `内置 + 节点 + 模板` 拼接
 - 数据持久化（SQLite/PostgreSQL），重启不丢失
-- Agent 一键安装脚本（PyInstaller 单二进制 + opencode），不依赖外网；含前置检查与安装后自动启动
+- Agent 一键安装脚本（PyInstaller 单二进制 + **内置 opencode**，目标机无需外网）；构建机本机无 opencode 时自动从官方 GitHub releases 下载
 - 节点删除：一键下发卸载任务，自动清理安装目录与 systemd 服务
 
 ## 快速开始
 
 ### 1. 环境要求
 
-- Python 3.12+
-- opencode CLI 已安装在边沿机器
-- 推荐用 `uv` 管理依赖
+- **Python 3.12+**（部署脚本会校验；若该 Python 缺 `ensurepip`，脚本自动用 `get-pip.py` 兜底）
+- 部署为 systemd 服务需 **root**；依赖 `rsync`、`tar`、`systemctl`
+- 构建探针包需联网（pip 源；本机无 opencode 时会从 `github.com/sst/opencode` 下载）
+- **目标边沿机器无需安装 opencode**（已打包进探针）
+- 推荐用 `uv` 管理开发依赖；下方 REST 示例用 `jq` 解析 JSON（可选）
 
 ### 2. 本地开发安装
 
@@ -60,17 +85,18 @@ uv sync
 - REST/Web：`http://0.0.0.0:8000`
 - MCP SSE：`http://0.0.0.0:8001`
 
-> 默认按 CPU 核数启动多个 uvicorn worker（多进程）。单进程部署：`AGENT_MESH_WORKERS=1 uv run python -m agent_mesh.orchestrator.main`
+> 默认按 CPU 核数启动多个 uvicorn worker（多进程）。单进程部署：`AGENT_MESH_WORKERS=1 uv run --no-sync python -m agent_mesh.orchestrator.main`
 > 使用 PostgreSQL：`AGENT_MESH_DB_TYPE=pg AGENT_MESH_PG_DSN='postgresql://user:pass@host/db'`（统一连接层 `store/connection.py` 为每进程惰性建 asyncpg 池，**多 worker 自动重建各自连接池**，无需单进程限制）
+> ⚠️ 一律用 `uv run --no-sync`：直接 `uv run` 会重新解析依赖并尝试源码编译 `asyncpg`，在旧 glibc（<2.28）上会失败。
 
 ### 4. 启动 edge agent
 
 ```bash
 EDGE_AGENT_ID=client EDGE_ORCHESTRATOR_URL=http://127.0.0.1:8000 \
-  uv run python -m agent_mesh.edge.agent
+  uv run --no-sync python -m agent_mesh.edge.agent
 ```
 
-> edge 的 LLM 配置（`EDGE_LLM_API_KEY` / `EDGE_LLM_BASE_URL` / `EDGE_LLM_MODEL`）通过环境变量注入，不要写进代码。
+> edge 的 LLM 配置通过 orchestrator 配置页/`PATCH /api/settings` 下发（心跳 config-sync，落盘 `edge.env`）；也可用 `EDGE_LLM_*` 环境变量预置。密钥不写进代码。
 
 ### 5. 下发任务
 
@@ -182,13 +208,15 @@ http://127.0.0.1:8000/
 
 ```bash
 cd <repo>
-./deploy/install.sh
+sudo ./deploy/install.sh
 ```
 
-安装后自动：
-- 部署到 `/opt/agent-mesh`
-- 创建 systemd 服务并设置开机自启
-- 生成随机 token 保存到 `/opt/agent-mesh/etc/orchestrator.env`
+安装后会：
+- 部署 orchestrator 到 `/opt/agent-mesh`（systemd 服务、开机自启），数据路径指向 `/opt/agent-mesh/data`
+- 生成随机 token 保存到 `/opt/agent-mesh/etc/orchestrator.env`（**已存在则保留，不覆盖**）
+- **构建并发布 edge 探针包到 `/opt/agent-mesh/data/bootstrap/`**（含 opencode），供节点安装与自动升级
+
+> 只装服务端：`sudo ./deploy/install.sh --no-probe`；本机无 opencode：`--opencode /path/opencode`（否则自动从 GitHub 下载）。
 
 ### 服务管理
 
@@ -200,7 +228,7 @@ systemctl status agent-mesh-orchestrator
 tail -f /opt/agent-mesh/log/orchestrator.log
 ```
 
-> `deploy/install.sh` 只安装 **orchestrator**；edge 探针不经此部署，需在各目标机器上用 bootstrap（`GET /api/bootstrap/install.sh`）单独安装到 `/opt/agent-mesh-agent`。
+> `deploy/install.sh` 负责 **orchestrator** 与**探针安装包的构建/发布**；edge 探针本身不经此部署，而是在各目标机器上用 bootstrap（`GET /api/bootstrap/install.sh`）安装到 `/opt/agent-mesh-agent`。
 
 ### 升级
 
@@ -216,10 +244,13 @@ tail -f /opt/agent-mesh/log/orchestrator.log
 
 ## 远程 Agent 一键安装
 
-在 orchestrator 上先构建/更新安装包：
+在 orchestrator 上先构建/更新安装包（`install.sh` 已自动完成；手动构建见下）：
 
 ```bash
-uv run --no-sync python scripts/build-agent-bootstrap.py
+# 用部署好的 venv 构建，缺 opencode 会自动从 GitHub 下载
+/opt/agent-mesh/lib/venv/bin/python scripts/build-agent-bootstrap.py \
+    --output-dir /opt/agent-mesh/data/bootstrap
+# 或用本机 opencode：--opencode /path/to/opencode
 ```
 
 在 orchestrator Web 看板的 **配置** 页面设置 **Public URL**（例如 `http://10.0.0.1:8000`），然后节点页右上角 **「+ 安装新节点」** 生成安装命令，在目标机器上执行：
@@ -256,7 +287,7 @@ TOKEN='你的用户token' bash <(curl -fsSL -H "Authorization: Bearer $TOKEN" ht
 ### 自升级
 
 - **自动升级（默认开启）**：orchestrator 构建/更新了新版安装包后，版本低于最新包的节点会在空闲时自动升级，无需逐个操作。配置页可关闭（`auto_upgrade=0`）。
-- **手动升级**：在 orchestrator 上先构建/更新安装包（`uv run --no-sync python scripts/build-agent-bootstrap.py`），然后节点页点「升级」或：
+- **手动升级**：在 orchestrator 上先构建/更新安装包并发布到 `/opt/agent-mesh/data/bootstrap/`（`BUILD_PROBE=1 ./deploy/redeploy.sh`，或手动跑 `scripts/build-agent-bootstrap.py --output-dir /opt/agent-mesh/data/bootstrap`），然后节点页点「升级」或：
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/api/agents/1/upgrade \
@@ -478,7 +509,7 @@ curl -s -X POST http://127.0.0.1:8000/api/tasks/dispatch \
 ## 测试
 
 ```bash
-uv run python -m pytest tests/ -q
+uv run --no-sync python -m pytest tests/ -q
 ```
 
 ## 安全提示
@@ -489,7 +520,7 @@ uv run python -m pytest tests/ -q
 - MCP SSE（:8001）已强制 Bearer 鉴权，仅接受用户 token；全局 `AGENT_MESH_TOKEN` 仅用于边沿 REST 协议
 - 使用 HTTPS 网关终止 TLS
 - 边沿 Agent 使用低权限账号运行
-- LLM API key 通过环境变量注入，不写入代码
+- LLM API key 存于 orchestrator `settings`（DB，配置页写入）并经心跳下发到节点 `etc/edge.env`；安装脚本不内嵌任何凭据，`edge.env`/`orchestrator.env` 建议 600 权限
 - REST API 使用用户 token 认证；MCP SSE 与 Edge 协议使用用户 token / 全局 `AGENT_MESH_TOKEN`
 - 删除节点会卸载目标机器上的 agent，谨慎操作
 

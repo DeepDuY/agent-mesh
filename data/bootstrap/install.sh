@@ -29,8 +29,9 @@ if [ "${SKIP_PREFLIGHT:-0}" != "1" ]; then
     fi
 
     AVAILABLE=$(df -m "$INSTALL_DIR" 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
-    if [ "$AVAILABLE" -lt 100 ] 2>/dev/null; then
-        echo "ERROR: insufficient disk space (need 100MB, have ${AVAILABLE}MB)" >&2
+    if [ "$AVAILABLE" -lt 500 ] 2>/dev/null; then
+        echo "ERROR: insufficient disk space at ${INSTALL_DIR} (need ~500MB, have ${AVAILABLE}MB)." >&2
+        echo "       The package includes the edge binary + opencode (~250MB unpacked)." >&2
         exit 1
     fi
 

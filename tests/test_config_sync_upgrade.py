@@ -108,6 +108,19 @@ def test_bootstrap_install_script_does_not_embed_llm_key(client: TestClient):
     assert "EDGE_LLM" not in resp.text
 
 
+def test_bootstrap_install_script_detects_platform_client_side(client: TestClient):
+    resp = client.get("/api/bootstrap/install.sh", headers=_admin_headers())
+    assert resp.status_code == 200
+    text = resp.text
+    # OS/arch are resolved on the target, so the same command works everywhere.
+    assert "uname -m" in text
+    assert "agent-mesh-agent-${OS}-${ARCH}.tar.gz" in text
+    # Actionable errors for missing prerequisites / failed download.
+    assert "for c in curl tar" in text
+    assert "is required but not installed" in text
+    assert "failed to download the probe package" in text
+
+
 # ----------------------------------------------------------------------
 # Agent self-upgrade
 # ----------------------------------------------------------------------
