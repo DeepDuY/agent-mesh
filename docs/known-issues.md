@@ -87,6 +87,15 @@
     - **Web**：模板弹窗权限编辑器（预设 build/plan/readonly + JSON 高级模式）；配置页「默认权限」编辑器。
     - **仍未做**：多用户节点授权（`agent_users` 只记录不校验）、沙箱/结构化 argv、`Constraints.skills` 下发。
     - **测试**：新增 `tests/test_permission.py`（引擎、profile、command deny、config-sync 下发、默认模板 seed、审计事件），`test_templates.py` 改用 `permission`，全量 **119 项通过**。
+26. **2026-09-14 升级事故与探针防复发加固（VERSION 1.6.0 → 1.6.2）**：
+    - **事故**：旧探针 `_perform_upgrade` 在 `systemctl restart` 后又 `os.execv` 自身，PyInstaller onefile 继承 `_PYI_*` 环境 → 新进程以 `Security validation failure` 崩溃 → systemd 判失败 → wrapper 回滚 → 服务端下个心跳再次下发升级 → **每个心跳重下 ~100MB 包并解压/重启，循环把节点负载打满**，导致部分机器卡到无法登录（控制台卡在启动、根分区被升级临时文件写满）。
+    - **修复（1.6.0/1.6.1）**：服务管理器重启成功后**只等待被替换、不再 execv**；非 systemd 兜底 execv 前清除 `_PYI_*`/`_MEIPASS`；`task_events.agent_id/user_id` 强制转字符串（PG TEXT 列类型错误曾致派发 500）。
+    - **防复发（1.6.2）**：
+      1. 升级临时文件固定到 `<install>/.upgrade`，**每次尝试前/后强制清理**，进程启动时也清理残留 → 临时文件永不累积。
+      2. **不再整包解压**：只流式取出所需成员；并在包内写入 `MANIFEST.json`（version + 各文件 size/sha256），`opencode` **未变化则跳过抽取**（省 ~180MB I/O 与临时空间）。
+      3. 升级**指数退避（300s×2ⁿ，封顶 3600s）+ 连续失败 5 次后停用**（直到下次重启），杜绝循环。
+    - **运维恢复**：带外控制台/救援模式进入后 `systemctl stop/disable agent-mesh-edge`，删除 `/opt/agent-mesh-agent/etc/upgrade`、`/opt/agent-mesh-agent/.upgrade`、`/tmp/am_*`，确认 `df -h` 后重启；服务端已 `auto_upgrade=0`、清空 `upgrade_requested` 防止再次触发。
+    - **测试**：新增 `tests/test_upgrade.py`（tar 流式抽取、manifest、保持不变跳过、临时目录清理），全量 **122 项通过**。
 
 ---
 

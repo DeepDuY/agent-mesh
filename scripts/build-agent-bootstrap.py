@@ -25,6 +25,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import platform
 import shutil
@@ -58,6 +60,17 @@ _OPENCODE_DOWNLOAD_BASE = os.environ.get(
 def _run(cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
     print("$", " ".join(cmd))
     subprocess.run(cmd, cwd=cwd, env=env, check=True)
+
+
+def _sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        while True:
+            chunk = fh.read(chunk_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _find_opencode(explicit: str | None = None) -> Path | None:
@@ -240,6 +253,23 @@ def build(
         (pkg / "VERSION").write_text(VERSION, encoding="utf-8")
         (bootstrap_dir / "VERSION").write_text(VERSION, encoding="utf-8")
         print(f"wrote VERSION={VERSION} to {bootstrap_dir / 'VERSION'}")
+
+        # MANIFEST.json: lets the edge upgrade path skip re-extracting unchanged
+        # large members (notably the ~180MB opencode binary) instead of unpacking
+        # the whole archive on every upgrade.
+        manifest_files: dict[str, dict[str, object]] = {}
+        for rel in ("bin/agent-mesh-edge", "bin/opencode"):
+            fp = pkg / rel
+            if fp.exists():
+                manifest_files[rel] = {
+                    "size": fp.stat().st_size,
+                    "sha256": _sha256(fp),
+                }
+        manifest = {"version": VERSION, "files": manifest_files}
+        (pkg / "MANIFEST.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print("wrote MANIFEST.json")
 
         # Build tar.gz.
         tar_name = f"agent-mesh-agent-{os_name}-{arch}.tar.gz"

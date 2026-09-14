@@ -291,10 +291,23 @@ def test_perform_upgrade_replaces_binary_and_marks_upgrade(tmp_path, monkeypatch
 
     monkeypatch.setattr(agent.client, "download_to", fake_download)
     execv_calls = []
-    monkeypatch.setattr("os.execv", lambda path, argv: execv_calls.append((path, argv)))
+    monkeypatch.setattr(
+        "os.execve",
+        lambda path, argv, env: execv_calls.append((path, argv)),
+    )
 
-    asyncio.run(agent._perform_upgrade({"version": "2.0.0", "filename": "pkg.tar.gz"}))
+    # No service manager in the test: systemctl "fails" so the execv fallback
+    # is exercised (never touch the real host service).
+    class _Failed:
+        returncode = 1
 
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: _Failed())
+
+    replaced = asyncio.run(
+        agent._perform_upgrade({"version": "2.0.0", "filename": "pkg.tar.gz"})
+    )
+
+    assert replaced is True
     assert (install / "bin" / "agent-mesh-edge.bin").read_text() == "#!/bin/sh\necho NEW-BIN\n"
     assert (install / "bin" / "agent-mesh-edge.bin.old").read_text() == "OLDBIN"
     assert (install / "bin" / "opencode").read_text() == "#!/bin/sh\necho NEW-OPENCODE\n"
@@ -305,7 +318,8 @@ def test_perform_upgrade_replaces_binary_and_marks_upgrade(tmp_path, monkeypatch
     assert "rolled back" in wrapper
     assert execv_calls == [(str(install / "bin" / "agent-mesh-edge"),
                             [str(install / "bin" / "agent-mesh-edge")])]
-    # staging dir cleaned up
+    # staging dir cleaned up (fixed, hidden dir)
+    assert not (install / ".upgrade").exists()
     assert not (install / "etc" / "upgrade").exists()
 
 
