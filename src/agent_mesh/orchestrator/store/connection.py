@@ -798,6 +798,23 @@ class PostgresDatabase(Database):
                 "ALTER TABLE task_results ADD COLUMN session_id TEXT"
             )
 
+        # Audit events. Created by a SQLite migration historically, but the PG
+        # schema bootstrap never included it; ensure it exists on both.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS task_events (
+                event_id SERIAL PRIMARY KEY,
+                task_id TEXT,
+                event_type TEXT NOT NULL,
+                agent_id TEXT,
+                user_id TEXT,
+                details JSONB,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_task_events_task_id ON task_events(task_id, event_id)"
+        )
+
     async def _ensure_admin_user(self, conn: Any) -> None:
         from datetime import datetime, timezone
 
