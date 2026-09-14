@@ -20,7 +20,7 @@ DEVICE = "00:aa:bb:cc:dd:01"
 
 
 def _admin_headers() -> dict:
-    return {"Authorization": f"Bearer {ADMIN_API_TOKEN}"}
+    return {"Authorization": f"Bearer {ADMIN_API_TOKEN}", "X-Agent-Mesh-UI": "1"}
 
 
 def _poll(client: TestClient) -> dict:
@@ -292,6 +292,20 @@ def test_effective_description_node_over_template(client: TestClient):
     agent = client.get(f"/api/agents/{DEVICE}", headers=_admin_headers()).json()["agent"]
     assert agent["description"] == "node desc"
     assert agent["effective_description"] == "node desc"
+
+
+def test_templates_hidden_from_api_without_ui_header(client: TestClient):
+    # Management endpoints are not part of the API surface: even an admin token
+    # without the Web-UI header gets 404, as if the route did not exist.
+    h = {"Authorization": f"Bearer {ADMIN_API_TOKEN}"}
+    _poll(client)
+    assert client.get("/api/templates", headers=h).status_code == 404
+    assert client.post("/api/templates", json={"name": "x"}, headers=h).status_code == 404
+    assert client.patch("/api/templates/1", json={"name": "y"}, headers=h).status_code == 404
+    assert client.delete("/api/templates/1", headers=h).status_code == 404
+    assert client.patch(
+        f"/api/agents/{DEVICE}/template", json={"template_id": 1}, headers=h
+    ).status_code == 404
 
 
 def test_command_dispatch_has_no_allowed_tools_param(client: TestClient):

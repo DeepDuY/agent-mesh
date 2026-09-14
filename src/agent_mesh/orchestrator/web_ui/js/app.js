@@ -1,5 +1,9 @@
 let TOKEN = localStorage.getItem('agent_mesh_token');
-const headers = TOKEN ? { 'Authorization': `Bearer ${TOKEN}` } : {};
+// Marks requests as coming from the bundled Web UI. Management endpoints
+// (templates, node template binding) are only reachable with this header, so
+// they are effectively absent from the API surface for external callers.
+const headers = { 'X-Agent-Mesh-UI': '1' };
+if (TOKEN) headers['Authorization'] = `Bearer ${TOKEN}`;
 let refreshTimer = null;
 let refreshPaused = false;
 let currentAgents = [];

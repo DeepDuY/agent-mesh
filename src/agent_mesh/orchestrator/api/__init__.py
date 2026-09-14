@@ -62,6 +62,24 @@ def create_query_router(
             )
         return user
 
+    async def require_ui_admin(
+        request: Request,
+        user: dict[str, Any] = Depends(require_admin),
+    ) -> dict[str, Any]:
+        """Admin AND the request comes from the bundled Web UI.
+
+        Template/permission management is deliberately **not** part of the API
+        surface: any caller that does not present the page's ``X-Agent-Mesh-UI``
+        header (curl, MCP, a compromised agent token, even an admin) gets a 404
+        as if the endpoint did not exist. The Web UI sets this header on every
+        request; humans manage templates only through the page.
+        """
+        if request.headers.get("x-agent-mesh-ui") != "1":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Not Found"
+            )
+        return user
+
     async def require_any_token(
         creds: HTTPAuthorizationCredentials | None = Depends(security),
     ) -> dict[str, Any]:
@@ -123,12 +141,12 @@ def create_query_router(
 
     mount_auth_routes(router, store, require_user_token, require_admin, config)
     mount_task_routes(router, store, require_user_token)
-    mount_agent_routes(router, store, require_user_token, config, require_admin)
+    mount_agent_routes(router, store, require_user_token, config, require_admin, require_ui_admin)
     mount_edge_routes(router, store, config, require_any_token)
     mount_artifact_routes(router, artifact_store, store, config, require_user_token, require_any_token, _store_artifact_ref)
     mount_file_routes(router, store, config, require_user_token, require_any_token)
     mount_bootstrap_routes(router, config, store, require_user_token, require_any_token, require_admin)
     mount_skill_routes(router, store, config, require_user_token, require_any_token)
-    mount_template_routes(router, store, require_admin)
+    mount_template_routes(router, store, require_ui_admin)
 
     return router

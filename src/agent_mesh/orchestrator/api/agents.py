@@ -52,11 +52,14 @@ def mount_agent_routes(
     require_user_token,
     config: OrchestratorConfig | None = None,
     require_admin=None,
+    require_ui_admin=None,
 ) -> None:
     # Sensitive node-configuration endpoints (template binding, LLM credentials)
     # must be admin-only; fall back to the user guard if no admin dependency was
     # supplied (keeps direct callers/tests working).
     require_admin = require_admin or require_user_token
+    # Template binding is management-only: reachable solely from the Web UI.
+    require_ui_admin = require_ui_admin or require_admin
 
     @router.get("/agents")
     async def list_agents(
@@ -164,7 +167,7 @@ def mount_agent_routes(
     async def patch_agent_template(
         agent_id: str,
         payload: _TemplatePayload,
-        user: dict[str, Any] = Depends(require_admin),
+        user: dict[str, Any] = Depends(require_ui_admin),
     ) -> dict[str, Any]:
         agent = await _get_agent_by_numeric_or_string_id(store, agent_id)
         if agent is None:

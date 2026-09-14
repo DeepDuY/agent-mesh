@@ -53,7 +53,7 @@ sudo ./deploy/install.sh --opencode /path/opencode  # 指定本机 opencode（�
 - **模型列表可配置**：`settings.llm_models`（配置页「可用模型列表」，每行一个网关真实 id）是唯一模型来源，边沿据此生成 opencode 模型表（**无硬编码**）；派发 llm 任务时 `model` 会按列表校验，未配置默认模型则拒绝执行
 - **节点描述与角色设定**：每个节点可设 `description`（节点自身用途说明）；`effective_description` = 节点描述优先、否则取绑定模板的 `description`，主 Agent 据此选节点。节点级 `system_prompt` 注入该节点每个 llm 任务提示词顶部（**仅管理员**，页面可编辑）
 - **节点模板**：可复用的节点配置（`system_prompt` / 默认 `llm_model` / **权限 `permission`** / 说明）；节点**引用式绑定**（`agents.template_id`），改模板自动同步到所有绑定节点。生效顺序：模型 `节点 > 模板 > 全局默认`，提示词按 `内置 + 节点 + 模板` 拼接，描述 `节点 > 模板`
-- **管理接口仅管理员**：模板的读/写、节点模板绑定、节点级 `llm_config`/`system_prompt`、全局 `settings` 均要求 `admin` 角色，且约定**只在 Web 管理平台由人操作**；主 Agent（`list_agents`）只能读到 `template_name` 与 `effective_description`，**不会拿到模板的具体配置**。防止 Agent 通过改绑模板/改权限自我提权
+- **模板/权限管理只通过页面**：模板读/写与节点改绑模板接口**已从 API 移除**（`require_ui_admin`：需页面专用头 `X-Agent-Mesh-UI` 且为 admin，否则 404），任何人（含 admin）都无法用 curl/MCP 调用，只能在 Web 管理平台操作。节点级 `llm_config`/`system_prompt`、全局 `settings` 要求 `admin` 角色。主 Agent（`list_agents`）只能读到 `template_name` 与 `effective_description`，**不会拿到模板的具体配置**，防止自我提权
 - **执行权限（模板级，llm + command 共用）**：采用 OpenCode `permission` 规格（`allow|ask|deny` + 命令 glob），内置 `build`/`plan`/`readonly` 三个模板；未绑定模板的节点用全局 `default_permission`（默认 `readonly`）。llm 模式交由 opencode 强制，command 模式由 edge 在 `bash -c` 前求值；拒绝与关键动作写入 `task_events` 审计。**注意：command 匹配器只防误操作，非安全边界**
 - 数据持久化（SQLite/PostgreSQL），重启不丢失
 - Agent 一键安装脚本（PyInstaller 单二进制 + **内置 opencode**，目标机无需外网）；构建机本机无 opencode 时自动从官方 GitHub releases 下载

@@ -98,12 +98,12 @@
     - **测试**：新增 `tests/test_upgrade.py`（tar 流式抽取、manifest、保持不变跳过、临时目录清理），全量 **122 项通过**。
 27. **2026-09-14 安全：模板/权限接口提权漏洞修复**：
     - **漏洞**：主 Agent 用同一用户 token 先 `GET /templates` 读到模板的 `permission` 配置，再 `PATCH /agents/{id}/template` 把节点从只读模板改绑到 `build`，从而**自我提权**执行被禁命令。
-    - **修复**：模板的读/写（`GET/POST/PATCH/DELETE /templates`）、节点模板绑定（`PATCH /agents/{id}/template`）、节点级 `llm_config` / `system_prompt`、全局 `GET/PATCH /settings` 全部改为**要求 `admin` 角色**（`require_admin`）。Web 平台对应「模板」「配置」tab 设为 `admin-only`。约定这些管理操作**只在 Web 管理平台由人完成**。
+    - **修复**：模板读/写（`GET/POST/PATCH/DELETE /templates`）与节点改绑模板（`PATCH /agents/{id}/template`）**从 API 上移除**——通过 `require_ui_admin` 依赖，只有携带 Web 页面专用头 `X-Agent-Mesh-UI: 1` 且为 admin 的请求才能访问；任何外部调用（curl/MCP，含管理员 token）一律返回 **404**（如同不存在）。Web 平台对应「模板」「配置」tab 设为 `admin-only`。约定这些管理操作**只在 Web 管理平台由人完成**。其余管理端点（节点级 `llm_config`/`system_prompt`、全局 `GET/PATCH /settings`）要求 `admin` 角色。
     - **信息最小化**：`AgentStatus` 新增 `template_name` 与 `effective_description`（`list_agents`/`get_agent` 只暴露**模板名字**与描述，**不暴露模板的具体配置**）。
     - **节点描述模板化**：模板的 `description` 作为绑定节点的默认描述；`effective_description = 节点自身 description > 模板 description`（新增 `TaskStore.describe_agents()`，REST 与 MCP 的节点接口均已填充）。
     - **SKILL 更新**：明确禁止主 Agent 调用任何模板/权限/全局配置/节点 LLM 与提示词的写接口；遇权限拒绝如实上报，不得绕过。
     - **重要运维提醒**：若给主 Agent 用的是 **admin token**，上述 admin 校验仍挡不住它；**主 Agent 应使用普通用户（role=user）token**，管理员凭据仅保留给人使用。
-    - **测试**：新增非管理员 `403`、`effective_description` 优先级用例，全量 **125 项通过**。
+    - **测试**：新增非管理员 `403`、缺少 UI 头 `404`、`effective_description` 优先级用例，全量 **126 项通过**。
 
 ---
 
