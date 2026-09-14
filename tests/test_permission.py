@@ -236,6 +236,64 @@ def test_global_default_permission_setting(client: TestClient):
     assert poll["config"]["permission"] == {"*": "allow"}
 
 
+def _user_headers(client: TestClient, username: str = "viewer") -> dict:
+    """Create a non-admin user and return its API-token header."""
+    resp = client.post(
+        "/api/auth/users",
+        json={"username": username, "password": "secret123", "role": "user"},
+        headers=_admin_headers(),
+    )
+    assert resp.status_code == 200, resp.text
+    return {"Authorization": f"Bearer {resp.json()['token']}"}
+
+
+def test_non_admin_cannot_manage_templates(client: TestClient):
+    h = _user_headers(client)
+    assert client.get("/api/templates", headers=h).status_code == 403
+    assert client.post("/api/templates", json={"name": "x"}, headers=h).status_code == 403
+    assert client.patch("/api/templates/1", json={"name": "y"}, headers=h).status_code == 403
+    assert client.delete("/api/templates/1", headers=h).status_code == 403
+    assert client.patch("/api/settings", json={"llm_model": "m"}, headers=h).status_code == 403
+
+
+def test_non_admin_cannot_rebind_template_or_llm_config(client: TestClient):
+    _poll(client)
+    h = _user_headers(client)
+    assert client.patch(
+        f"/api/agents/{DEVICE}/template", json={"template_id": 1}, headers=h
+    ).status_code == 403
+    assert client.patch(
+        f"/api/agents/{DEVICE}/llm_config", json={"llm_model": "m"}, headers=h
+    ).status_code == 403
+
+
+def test_effective_description_node_over_template(client: TestClient):
+    _poll(client)
+    tpl = client.post(
+        "/api/templates",
+        json={"name": "desc-tpl", "description": "template desc"},
+        headers=_admin_headers(),
+    ).json()["template"]
+    client.patch(
+        f"/api/agents/{DEVICE}/template",
+        json={"template_id": tpl["id"]},
+        headers=_admin_headers(),
+    )
+    agent = client.get(f"/api/agents/{DEVICE}", headers=_admin_headers()).json()["agent"]
+    assert agent["template_name"] == "desc-tpl"
+    assert agent["effective_description"] == "template desc"
+
+    # The node's own description wins over the template's.
+    client.patch(
+        f"/api/agents/{DEVICE}/description",
+        json={"description": "node desc"},
+        headers=_admin_headers(),
+    )
+    agent = client.get(f"/api/agents/{DEVICE}", headers=_admin_headers()).json()["agent"]
+    assert agent["description"] == "node desc"
+    assert agent["effective_description"] == "node desc"
+
+
 def test_command_dispatch_has_no_allowed_tools_param(client: TestClient):
     _poll(client)
     # The dispatch surface no longer accepts allowed_tools; it is simply ignored

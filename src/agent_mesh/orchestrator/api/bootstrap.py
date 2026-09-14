@@ -16,11 +16,16 @@ def mount_bootstrap_routes(
     store: TaskStore,
     require_user_token,
     require_any_token,
+    require_admin=None,
 ) -> None:
+    # Global settings (LLM credentials, default permission, model allow-list)
+    # are admin-only: they are a privilege-escalation surface for a compromised
+    # agent token. Fall back to the user guard if none was supplied.
+    require_admin = require_admin or require_user_token
 
     @router.get("/settings")
     async def get_settings(
-        user: dict[str, Any] = Depends(require_user_token),
+        user: dict[str, Any] = Depends(require_admin),
     ) -> dict[str, Any]:
         settings = await store.store.list_settings()
         # Expose the global token to admins only, so the web UI can generate
@@ -34,7 +39,7 @@ def mount_bootstrap_routes(
     @router.patch("/settings")
     async def patch_settings(
         request: Request,
-        user: dict[str, Any] = Depends(require_user_token),
+        user: dict[str, Any] = Depends(require_admin),
     ) -> dict[str, Any]:
         body = await request.json()
         for key, value in body.items():

@@ -71,6 +71,24 @@ class TaskStore:
     async def list_agents(self) -> list[AgentStatus]:
         return await self.store.list_agents()
 
+    async def describe_agents(self, agents: list[AgentStatus]) -> None:
+        """Fill display-only fields: ``template_name`` and ``effective_description``.
+
+        Effective description precedence: node's own ``description`` > the bound
+        template's ``description``. Templates are admin-only elsewhere, but their
+        description is a human-facing label (never the permission/config), so it
+        is safe to surface to the main agent for node selection.
+        """
+        if not agents:
+            return
+        templates = {t["id"]: t for t in await self.store.list_templates()}
+        for a in agents:
+            tpl = templates.get(a.template_id) if a.template_id else None
+            a.template_name = tpl.get("name") if tpl else None
+            tpl_desc = ((tpl.get("description") if tpl else "") or "").strip() or None
+            node_desc = (a.description or "").strip() or None
+            a.effective_description = node_desc or tpl_desc
+
     async def ensure_agent_token(self, agent_id: int) -> str | None:
         """Issue a per-agent independent token on first registration.
 

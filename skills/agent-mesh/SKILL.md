@@ -1,6 +1,6 @@
 ---
 name: agent-mesh
-description: 通过 agent-mesh 编排器把命令/自然语言任务派发到远程边缘节点、监控执行、取回产物，并管理节点、模板、权限、文件库与技能库。当用户要求「在某台远程机器上执行/运行/部署/测试」「查看节点状态」「把文件传到远程并处理」「把远程产出拿回来」「管理远程 agent 集群」时使用本技能。
+description: 通过 agent-mesh 编排器把命令/自然语言任务派发到远程边缘节点、监控执行、取回产物，并查看节点、使用文件库与技能库。当用户要求「在某台远程机器上执行/运行/部署/测试」「查看节点状态」「把文件传到远程并处理」「把远程产出拿回来」时使用本技能。注意：模板、权限、全局配置与节点级 LLM/提示词等管理操作仅限管理员在 Web 管理平台完成，主 Agent 不得调用。
 ---
 
 # agent-mesh 编排器控制
@@ -17,9 +17,9 @@ agent-mesh 让你把任务委派给远程边缘节点（edge agent）执行，�
 | **取回任务产生的文件/产物** | `task.result.artifacts` → `GET /artifacts/{task_id}/{artifact_id}` | §5 |
 | 看远程任务跑到哪了 / 实时输出 | `GET /tasks/{id}/status`、`GET /tasks/{id}/logs` | §6 |
 | 停止正在跑的任务 | `POST /tasks/{id}/cancel` | §6 |
-| 查看/挑选节点（哪台在线、干啥的） | `GET /agents`（看 `description`/`online`） | §3 |
-| 给一类节点统一配置（模型/提示词/权限） | 模板 `POST /templates` + `PATCH /agents/{id}/template` | §8 |
-| 单独调某个节点的 LLM / 提示词 | `PATCH /agents/{id}/llm_config` / `system_prompt` | §9 |
+| 查看/挑选节点（哪台在线、干啥的） | `GET /agents`（看 `online`/`effective_description`/`template_name`） | §3 |
+| 给一类节点统一配置（模型/提示词/**权限**） | **仅管理员在 Web 管理平台操作**；主 Agent 不可调用 | §8 |
+| 单独调某节点的 LLM / 提示词 | **仅管理员在 Web 管理平台操作**；主 Agent 不可调用 | §9 |
 | 让远程 LLM 按需使用某个专业技能 | 技能库 `POST /skills`（上传）、边沿自主取用 | §7 |
 | 装一台新机器 / 卸载节点 | `GET /bootstrap/install.sh` / `DELETE /agents/{id}` | §11 |
 | 改全局模型/公开地址/并发/默认权限 | `PATCH /settings` | §10 |
@@ -70,7 +70,7 @@ session token 24 小时后失效。**任何请求返回 `401 Unauthorized`（或
 
 ## 3. 选节点（先看再派发）
 
-`GET /agents` 列出全部节点。**派发前先看 `online` 和 `description`**：
+`GET /agents` 列出全部节点。**派发前先看 `online` 和 `effective_description`**：
 
 ```bash
 curl -s -H "Authorization: Bearer <token>" http://<host>:8000/api/agents
@@ -81,8 +81,9 @@ curl -s -H "Authorization: Bearer <token>" http://<host>:8000/api/agents
 - `id`：数字主键，**推荐用这个派发**（唯一）。
 - `device_id`：machine-id，稳定设备标识；`agent_id`/`alias`：显示名，可能重复。
 - `online`：是否在线（心跳期内）。**离线节点派发会一直排队**。
-- `description`：运维写的用途说明（如「生产 Web 服务器」）——**据此选对节点**。
-- `template_id`：绑定的模板（决定模型/提示词/权限）。
+- `effective_description`：**选节点的依据**——节点自身描述优先，未设置时用其绑定模板的描述。
+- `description`：节点自身的描述（可能为空；`effective_description` 是其与模板描述的合并结果）。
+- `template_name`：绑定模板的**名字**（只读展示；模板的具体配置不会暴露给主 Agent）。
 - `version`：探针版本；`cpu_percent`/`mem_percent`：资源占用。
 - `current_task_id`：当前任务（多任务并发时仅供参考）。
 
@@ -260,57 +261,34 @@ curl -s -H "Authorization: Bearer <token>" http://<host>:8000/api/skills/<name>/
 
 **下载本 SKILL 的个性化版本**：`GET /api/skill-doc/agent-mesh` 会返回**已填好地址与你的 token** 的本文档，可直接复制其中的命令。
 
-## 8. 模板与权限（一类节点的统一配置）
+## 8. 模板与权限（**仅管理员，主 Agent 不可操作**）
 
-模板是可复用的节点配置，节点**引用式绑定**（`agents.template_id`）；改模板会同步到所有绑定节点。字段：`system_prompt`（提示词）、`llm_model`（默认模型）、`permission`（**权限**）、`data`（预留）。
+> ⚠️ **主 Agent 不得创建、修改、删除模板，也不得给节点改绑模板或修改权限。** 这些操作会改变节点的执行权限，属于**提权**行为，**只能在 Web 管理平台的「模板」页由管理员完成**。相关接口现在要求管理员角色，非管理员调用返回 `403`；即便如此，主 Agent 也不应尝试绕过。
 
-- **何时用**：给「同一类用途」的多个节点统一模型/提示词/权限。单节点临时调整用 §9。
+模板是节点的可复用配置（提示词 / 默认模型 / **权限** / 说明），节点**引用式绑定**；改模板会同步到所有绑定节点。主 Agent 只需要**只读**地看节点信息：
 
-```bash
-# 新建
-curl -s -X POST http://<host>:8000/api/templates \
-  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"name":"ops","description":"部署类节点","system_prompt":"你是部署专员。",
-       "llm_model":"anthropic/deepseek-v4-flash"}'
-# 列表 / 更新 / 删除
-curl -s -H "Authorization: Bearer <token>" http://<host>:8000/api/templates
-curl -s -X PATCH -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"system_prompt":"新提示词"}' http://<host>:8000/api/templates/2
-curl -s -X DELETE -H "Authorization: Bearer <token>" http://<host>:8000/api/templates/2
-# 绑定 / 解绑到节点
-curl -s -X PATCH -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"template_id":2}' http://<host>:8000/api/agents/3/template
-curl -s -X PATCH -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"template_id":null}' http://<host>:8000/api/agents/3/template
-```
+- `effective_description`：节点用途描述（节点自身描述优先，未设置时用其绑定模板的描述）——**据此选节点**。
+- `template_name`：绑定模板的名字（只读）。
 
-### 权限（llm 与 command 共用）
+### 权限（llm 与 command 共用）——了解即可，不要改
 
-- 内置模板 `build`（全放开）/`plan`（禁改文件、只读命令、可联网）/`readonly`（仅读，无 shell/网络）；**默认全局 `default_permission` 为 `readonly`**。
-- 未绑定模板的节点受该默认权限约束——**很多 command 会被拒**。要放开，给节点绑定 `build` 模板，或让 admin 改全局默认。
-- 格式即 OpenCode `permission`：`{"edit":"deny","bash":{"*":"deny","ls *":"allow"}}`（规则**最后命中者生效**；白名单=`*:"deny"`+allow 列表，黑名单=`*:"allow"`+deny 列表）。command 模式下 `ask` 视为拒绝。
-- 权限匹配器**只防误操作，不是安全边界**。
+- 内置模板 `build`（全放开）/`plan`（禁改文件、只读命令、可联网）/`readonly`（仅读，无 shell/网络）；未绑定模板的节点用全局默认（初始为 `readonly`）。
+- **若某个 command 被拒（403 或摘要含「权限被拒绝」），说明该节点权限不允许——应如实告知用户，而不是想办法改权限或换模板。**
 
 ## 9. 节点级配置与操作
+
+> 别名/描述可改；**节点级 LLM 配置、system prompt、模板绑定均为管理员操作（仅页面）**，主 Agent 不可调用。
 
 ```bash
 # 别名（null 清除）
 curl -s -X PATCH -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
   -d '{"alias":"生产节点A"}' http://<host>:8000/api/agents/3/alias
-# 描述（主 Agent 选节点依据）
+# 节点自身描述（会作为 effective_description 的首选；null 清除）
 curl -s -X PATCH -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
   -d '{"description":"生产 Web 服务器，只跑部署类命令"}' http://<host>:8000/api/agents/3/description
-# 节点级 system prompt（与模板提示词拼接，节点在前）
-curl -s -X PATCH -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"system_prompt":"你是运维专员，只操作 /opt。"}' http://<host>:8000/api/agents/3/system_prompt
-# 节点级 LLM 配置（覆盖全局）
-curl -s -X PATCH -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"llm_model":"anthropic/deepseek-v4-flash"}' http://<host>:8000/api/agents/3/llm_config
-# 手动升级（空闲时自动下载新版并重启，失败自动回滚）
-curl -s -X POST -H "Authorization: Bearer <token>" http://<host>:8000/api/agents/3/upgrade
 ```
 
-**生效优先级**：模型 `节点 > 模板 > 全局`；提示词 `内置 + 节点 + 模板`；权限 `模板 > 全局默认（无节点级）`。配置改动经心跳（约 3 秒）下发。
+**生效优先级**（了解即可）：模型 `节点 > 模板 > 全局`；提示词 `内置 + 节点 + 模板`；描述 `节点 > 模板`；权限 `模板 > 全局默认`。
 
 ## 10. 全局配置（admin）
 
@@ -378,7 +356,7 @@ MCP 通道**只接受用户 token**（session 或 API token）。工具与 REST 
 
 ## 14. 完整流程（推荐节奏）
 
-1. `GET /agents` → 选 `online=true` 且 `description` 匹配需求的节点，记下数字 `id`。
+1. `GET /agents` → 选 `online=true` 且 `effective_description` 匹配需求的节点，记下数字 `id`。
 2. 若要处理本地文件：`POST /files` 上传拿 `file_id`（§5）。
 3. `POST /tasks/dispatch` → 拿 `task_id`。
 4. 需要进度：`GET /tasks/{task_id}/logs?after_id=<next_id>` 增量看输出。
@@ -390,7 +368,7 @@ MCP 通道**只接受用户 token**（session 或 API token）。工具与 REST 
 | 现象 | 原因 / 处理 |
 |------|-------------|
 | `401 Unauthorized` | **token 过期/失效** → 向用户索取账号密码，重新 `POST /auth/login`（§1） |
-| 派发 `403` / 任务摘要含「权限被拒绝」 | 节点权限策略拒绝该命令 → 说明情况，或改绑更宽松模板（§8） |
+| 派发 `403` / 任务摘要含「权限被拒绝」 | 节点权限策略拒绝该命令 → 如实说明；**不要**尝试改模板/权限（那是管理员在页面的操作） |
 | 任务一直 `queued` | 目标节点离线或已达并发上限 → 换在线节点 / 等待 |
 | `no LLM model configured` | 节点无可用模型 → 配置全局/节点/模板模型（§8/§10） |
 | `attachment download failed` | 文件库文件被删或 md5 不符 → 重新上传（§5） |
@@ -398,6 +376,7 @@ MCP 通道**只接受用户 token**（session 或 API token）。工具与 REST 
 
 ## 16. 安全
 
+- **禁止提权**：不得创建/修改/删除模板、不得给节点改绑模板、不得修改权限/全局配置/节点 LLM 或提示词。这些接口要求管理员角色，主 Agent 即使持有管理员 token 也**不得调用**；它们只能在 Web 管理平台由人操作。遇到权限拒绝，如实上报，不要绕过。
 - 保管 token；生产用 HTTPS；控制面用用户 token，不把全局 token 用于控制接口。
 - LLM API key 仅存于服务端 DB 与节点 `edge.env`，经心跳下发；**不要写进代码/仓库/日志**。
 - 删除节点会卸载远端 agent；取消任务会杀掉进程组——都是破坏性操作，执行前和用户确认。

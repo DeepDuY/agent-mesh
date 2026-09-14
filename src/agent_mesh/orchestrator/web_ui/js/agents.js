@@ -42,6 +42,24 @@ async function showAgentDetail(agentId) {
   const memInfo = (a.mem_used_mb != null && a.mem_total_mb != null)
     ? `${a.mem_used_mb} / ${a.mem_total_mb} MB` : '-';
   document.getElementById('modal-title').textContent = '节点详情';
+  // System prompt / template binding are admin-only (control-plane) — hide for
+  // non-admins; the backend also enforces admin role (403).
+  const adminBlock = isAdmin() ? `
+    <h3>节点 System Prompt <span class="help" data-tip="拼接在该节点每个 llm 任务提示词中（模板提示词之前）；留空则只用模板/内置提示词。保存后随心跳同步到节点。">?</span></h3>
+    <form onsubmit="setAgentSystemPrompt(event, ${a.id})">
+      <textarea name="system_prompt" class="modal-textarea" placeholder="例如：你是运维专员，只允许操作 /opt 下的目录，禁止改动系统文件。" onfocus="pauseRefresh()" onblur="resumeRefresh()">${escHtml(a.system_prompt || '')}</textarea>
+      <div class="sub-actions"><button class="btn" type="submit">保存 System Prompt</button></div>
+    </form>
+
+    <h3>应用模板 <span class="help" data-tip="绑定模板后继承模板的提示词/默认模型/权限；节点自身配置优先/叠加。改模板会自动同步到绑定节点。">?</span></h3>
+    <form class="form-row" onsubmit="applyTemplate(event, ${a.id})">
+      <select name="template_id">
+        <option value="">（不绑定模板）</option>
+        ${(currentTemplates || []).map(t => `<option value="${t.id}" ${a.template_id === t.id ? 'selected' : ''}>${escHtml(t.name)}</option>`).join('')}
+      </select>
+      <button type="submit">应用</button>
+    </form>
+  ` : '';
   document.getElementById('agent-detail').innerHTML = `
     <div class="detail-grid">
       <div class="detail-item"><label>数字 ID</label><span class="mono">${a.id}</span></div>
@@ -49,8 +67,8 @@ async function showAgentDetail(agentId) {
       <div class="detail-item"><label>节点标识</label><span class="mono">${a.agent_id}</span></div>
       <div class="detail-item"><label>显示名</label><span>${a.display_name}</span></div>
       <div class="detail-item"><label>别名</label><span>${a.alias || '-'}</span></div>
-      <div class="detail-item"><label>描述</label><span>${a.description ? escHtml(a.description) : '-'}</span></div>
-      <div class="detail-item"><label>模板</label><span>${(currentTemplates || []).find(t => t.id === a.template_id)?.name || '-'}</span></div>
+      <div class="detail-item"><label>描述（节点/模板）</label><span>${a.effective_description ? escHtml(a.effective_description) : '-'}</span></div>
+      <div class="detail-item"><label>模板</label><span>${escHtml(a.template_name || (currentTemplates || []).find(t => t.id === a.template_id)?.name || '-')}</span></div>
       <div class="detail-item"><label>主机名</label><span>${a.hostname || '-'}</span></div>
       <div class="detail-item"><label>探针版本</label><span class="mono">${a.version || '-'}</span></div>
       <div class="detail-item"><label>系统</label><span>${a.distro || a.os || '-'} ${a.arch || ''}</span></div>
@@ -81,20 +99,7 @@ async function showAgentDetail(agentId) {
       <div class="sub-actions"><button class="btn" type="submit">保存描述</button></div>
     </form>
 
-    <h3>节点 System Prompt <span class="help" data-tip="拼接在该节点每个 llm 任务提示词中（模板提示词之前）；留空则只用模板/内置提示词。保存后随心跳同步到节点。">?</span></h3>
-    <form onsubmit="setAgentSystemPrompt(event, ${a.id})">
-      <textarea name="system_prompt" class="modal-textarea" placeholder="例如：你是运维专员，只允许操作 /opt 下的目录，禁止改动系统文件。" onfocus="pauseRefresh()" onblur="resumeRefresh()">${escHtml(a.system_prompt || '')}</textarea>
-      <div class="sub-actions"><button class="btn" type="submit">保存 System Prompt</button></div>
-    </form>
-
-    <h3>应用模板 <span class="help" data-tip="绑定模板后继承模板的提示词/默认模型；节点自身配置优先/叠加。改模板会自动同步到绑定节点。">?</span></h3>
-    <form class="form-row" onsubmit="applyTemplate(event, ${a.id})">
-      <select name="template_id">
-        <option value="">（不绑定模板）</option>
-        ${(currentTemplates || []).map(t => `<option value="${t.id}" ${a.template_id === t.id ? 'selected' : ''}>${escHtml(t.name)}</option>`).join('')}
-      </select>
-      <button type="submit">应用</button>
-    </form>
+    ${adminBlock}
 
     <h3>最近任务</h3>
     <table>

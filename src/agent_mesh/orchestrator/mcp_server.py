@@ -299,13 +299,16 @@ def create_mcp_server(config: OrchestratorConfig, store: TaskStore) -> MCPServer
         description=(
             "List all registered agents (nodes). Each entry includes numeric `id`, "
             "`device_id` (machine-id, the stable device key), `agent_id` (display "
-            "name), `alias`, `description` (what the node is for), `hostname`, `os`, "
-            "`runtime`, `online`, `last_seen` and `current_task_id`. Returns "
-            "{'agents': [...]}."
+            "name), `alias`, `description` (node's own note), "
+            "`effective_description` (node note, or the bound template's description "
+            "when the node has none — use this to pick a node), `template_name`, "
+            "`hostname`, `os`, `runtime`, `online`, `last_seen` and "
+            "`current_task_id`. Returns {'agents': [...]}."
         ),
     )
     async def list_agents() -> dict[str, Any]:
         agents = await store.list_agents()
+        await store.describe_agents(agents)
         return {"agents": [a.model_dump_json_safe() for a in agents]}
 
     @server.tool(
@@ -319,6 +322,7 @@ def create_mcp_server(config: OrchestratorConfig, store: TaskStore) -> MCPServer
         agent = await store.resolve_agent(agent_id)
         if agent is None:
             return {"found": False}
+        await store.describe_agents([agent])
         return {"found": True, "agent": agent.model_dump_json_safe()}
 
     @server.tool(
@@ -333,6 +337,7 @@ def create_mcp_server(config: OrchestratorConfig, store: TaskStore) -> MCPServer
         agent = await store.resolve_agent(agent_id)
         if agent is None:
             return {"found": False}
+        await store.describe_agents([agent])
         key = agent.device_id or agent.agent_id
         tasks = await store.list_tasks(agent_id=key, limit=20)
         from agent_mesh.shared.schemas import AgentDetail

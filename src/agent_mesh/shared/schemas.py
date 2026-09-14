@@ -141,8 +141,10 @@ class AgentStatus(BaseModel):
     llm_base_url: str | None = None
     llm_model: str | None = None
     description: str | None = None
+    effective_description: str | None = None
     system_prompt: str | None = None
     template_id: int | None = None
+    template_name: str | None = None
     upgrade_requested: bool = False
     upgrade_version: str | None = None
     cpu_percent: float | None = None
@@ -171,8 +173,10 @@ class AgentStatus(BaseModel):
             "llm_base_url": self.llm_base_url,
             "llm_model": self.llm_model,
             "description": self.description,
+            "effective_description": self.effective_description,
             "system_prompt": self.system_prompt,
             "template_id": self.template_id,
+            "template_name": self.template_name,
             "upgrade_requested": self.upgrade_requested,
             "upgrade_version": self.upgrade_version,
             "cpu_percent": self.cpu_percent,

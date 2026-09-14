@@ -51,13 +51,19 @@ def mount_agent_routes(
     store: TaskStore,
     require_user_token,
     config: OrchestratorConfig | None = None,
+    require_admin=None,
 ) -> None:
+    # Sensitive node-configuration endpoints (template binding, LLM credentials)
+    # must be admin-only; fall back to the user guard if no admin dependency was
+    # supplied (keeps direct callers/tests working).
+    require_admin = require_admin or require_user_token
 
     @router.get("/agents")
     async def list_agents(
         user: dict[str, Any] = Depends(require_user_token),
     ) -> dict[str, Any]:
         agents = await store.list_agents()
+        await store.describe_agents(agents)
         return {"agents": [a.model_dump_json_safe() for a in agents]}
 
     @router.get("/agents/{agent_id}")
@@ -68,6 +74,7 @@ def mount_agent_routes(
         agent = await _get_agent_by_numeric_or_string_id(store, agent_id)
         if agent is None:
             raise HTTPException(status_code=404, detail="agent not found")
+        await store.describe_agents([agent])
         return {"agent": agent.model_dump_json_safe()}
 
     @router.get("/agents/{agent_id}/detail")
@@ -78,6 +85,7 @@ def mount_agent_routes(
         agent = await _get_agent_by_numeric_or_string_id(store, agent_id)
         if agent is None:
             raise HTTPException(status_code=404, detail="agent not found")
+        await store.describe_agents([agent])
         key = agent.device_id or agent.agent_id
         tasks = await store.list_tasks(agent_id=key, limit=20)
         detail = AgentDetail(
@@ -139,7 +147,7 @@ def mount_agent_routes(
     async def patch_agent_system_prompt(
         agent_id: str,
         payload: _SystemPromptPayload,
-        user: dict[str, Any] = Depends(require_user_token),
+        user: dict[str, Any] = Depends(require_admin),
     ) -> dict[str, Any]:
         agent = await _get_agent_by_numeric_or_string_id(store, agent_id)
         if agent is None:
@@ -156,7 +164,7 @@ def mount_agent_routes(
     async def patch_agent_template(
         agent_id: str,
         payload: _TemplatePayload,
-        user: dict[str, Any] = Depends(require_user_token),
+        user: dict[str, Any] = Depends(require_admin),
     ) -> dict[str, Any]:
         agent = await _get_agent_by_numeric_or_string_id(store, agent_id)
         if agent is None:
@@ -168,6 +176,7 @@ def mount_agent_routes(
         agent.template_id = payload.template_id
         # Re-resolve the bound node's config (prompt/model may change).
         await store.bump_config_version()
+        await store.describe_agents([agent])
         logger.info(
             "agent %s bound to template %s by %s",
             agent.id, payload.template_id, user["username"],
@@ -178,7 +187,7 @@ def mount_agent_routes(
     async def patch_agent_llm_config(
         agent_id: str,
         payload: _LlmConfigPayload,
-        user: dict[str, Any] = Depends(require_user_token),
+        user: dict[str, Any] = Depends(require_admin),
     ) -> dict[str, Any]:
         agent = await _get_agent_by_numeric_or_string_id(store, agent_id)
         if agent is None:

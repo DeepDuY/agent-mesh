@@ -55,12 +55,12 @@ def _iso(value: Any) -> str | None:
 def mount_template_routes(
     router: APIRouter,
     store: TaskStore,
-    require_user_token,
+    require_admin,
 ) -> None:
 
     @router.get("/templates")
     async def list_templates(
-        user: dict[str, Any] = Depends(require_user_token),
+        user: dict[str, Any] = Depends(require_admin),
     ) -> dict[str, Any]:
         templates = await store.store.list_templates()
         return {"templates": [_public(t) for t in templates]}
@@ -68,7 +68,7 @@ def mount_template_routes(
     @router.post("/templates")
     async def create_template(
         payload: _TemplateCreate,
-        user: dict[str, Any] = Depends(require_user_token),
+        user: dict[str, Any] = Depends(require_admin),
     ) -> dict[str, Any]:
         name = payload.name.strip()
         if not _NAME_RE.match(name):
@@ -94,7 +94,7 @@ def mount_template_routes(
     @router.get("/templates/{template_id}")
     async def get_template(
         template_id: int,
-        user: dict[str, Any] = Depends(require_user_token),
+        user: dict[str, Any] = Depends(require_admin),
     ) -> dict[str, Any]:
         template = await store.store.get_template(template_id)
         if template is None:
@@ -105,7 +105,7 @@ def mount_template_routes(
     async def patch_template(
         template_id: int,
         payload: _TemplatePatch,
-        user: dict[str, Any] = Depends(require_user_token),
+        user: dict[str, Any] = Depends(require_admin),
     ) -> dict[str, Any]:
         template = await store.store.get_template(template_id)
         if template is None:
@@ -132,7 +132,7 @@ def mount_template_routes(
     @router.delete("/templates/{template_id}")
     async def delete_template(
         template_id: int,
-        user: dict[str, Any] = Depends(require_user_token),
+        user: dict[str, Any] = Depends(require_admin),
     ) -> dict[str, Any]:
         deleted = await store.store.delete_template(template_id)
         if not deleted:
