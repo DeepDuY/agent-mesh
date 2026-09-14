@@ -129,6 +129,7 @@ class AbstractStore(abc.ABC):
         self,
         name: str,
         description: str | None = None,
+        node_description: str | None = None,
         system_prompt: str | None = None,
         llm_model: str | None = None,
         permission: dict[str, Any] | None = None,

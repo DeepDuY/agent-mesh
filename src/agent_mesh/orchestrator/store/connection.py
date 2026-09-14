@@ -716,6 +716,7 @@ class PostgresDatabase(Database):
                 id SERIAL PRIMARY KEY,
                 name TEXT UNIQUE NOT NULL,
                 description TEXT,
+                node_description TEXT,
                 system_prompt TEXT,
                 llm_model TEXT,
                 permission JSONB,
@@ -732,6 +733,8 @@ class PostgresDatabase(Database):
         }
         if "permission" not in tpl_cols:
             await conn.execute("ALTER TABLE templates ADD COLUMN permission JSONB")
+        if "node_description" not in tpl_cols:
+            await conn.execute("ALTER TABLE templates ADD COLUMN node_description TEXT")
         if "allowed_tools" in tpl_cols:
             await conn.execute("ALTER TABLE templates DROP COLUMN allowed_tools")
         cols = {

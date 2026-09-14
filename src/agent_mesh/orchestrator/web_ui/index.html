@@ -167,10 +167,10 @@
             <h2>节点模板</h2>
             <button class="btn btn-success" onclick="openTemplateModal()">+ 新建模板</button>
           </div>
-          <p class="refresh-hint" style="text-align:left">模板是节点的可复用配置（提示词 / 默认模型 / 权限）。节点绑定模板后自动继承；节点自身的同名配置优先/叠加。改模板会影响所有绑定节点。内置 build/plan/readonly 三个权限模板。</p>
+          <p class="refresh-hint" style="text-align:left">模板是节点的可复用配置（提示词 / 默认模型 / 权限 / 节点描述）。节点绑定模板后自动继承；节点自身的同名配置优先/叠加。改模板会影响所有绑定节点。内置 build/plan/readonly 三个权限模板。</p>
           <table>
-            <thead><tr><th>名称</th><th>说明</th><th>默认模型</th><th class="col-desc">System Prompt</th><th>绑定节点</th><th>操作</th></tr></thead>
-            <tbody id="templates-body"><tr><td colspan="6" class="empty">加载中...</td></tr></tbody>
+            <thead><tr><th>名称</th><th>说明</th><th class="col-desc">节点描述</th><th>默认模型</th><th class="col-desc">System Prompt</th><th>绑定节点</th><th>操作</th></tr></thead>
+            <tbody id="templates-body"><tr><td colspan="7" class="empty">加载中...</td></tr></tbody>
           </table>
           <div id="templates-status" class="status-msg"></div>
         </div>
@@ -328,8 +328,12 @@
         <input id="tpl-name" type="text" placeholder="例如：部署节点">
       </div>
       <div class="form-group">
-        <label>说明</label>
-        <input id="tpl-description" type="text" placeholder="可选，供人识别">
+        <label>说明（模板自身的备注，供人识别）</label>
+        <input id="tpl-description" type="text" placeholder="可选，例如：生产部署类模板">
+      </div>
+      <div class="form-group">
+        <label>节点描述（可选，给主 Agent 看：绑定节点未单独设置描述时使用）</label>
+        <textarea id="tpl-node-description" class="modal-textarea" rows="3" placeholder="例如：生产 Web 服务器，只跑部署类命令"></textarea>
       </div>
       <div class="form-group">
         <label>默认模型（可选，节点自身未配置时使用）</label>

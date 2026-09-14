@@ -67,7 +67,7 @@ async function showAgentDetail(agentId) {
       <div class="detail-item"><label>节点标识</label><span class="mono">${a.agent_id}</span></div>
       <div class="detail-item"><label>显示名</label><span>${a.display_name}</span></div>
       <div class="detail-item"><label>别名</label><span>${a.alias || '-'}</span></div>
-      <div class="detail-item"><label>描述（节点/模板）</label><span>${a.effective_description ? escHtml(a.effective_description) : '-'}</span></div>
+      <div class="detail-item"><label>节点描述</label><span>${a.effective_description ? escHtml(a.effective_description) : '-'}</span></div>
       <div class="detail-item"><label>模板</label><span>${escHtml(a.template_name || (currentTemplates || []).find(t => t.id === a.template_id)?.name || '-')}</span></div>
       <div class="detail-item"><label>主机名</label><span>${a.hostname || '-'}</span></div>
       <div class="detail-item"><label>探针版本</label><span class="mono">${a.version || '-'}</span></div>
@@ -93,9 +93,9 @@ async function showAgentDetail(agentId) {
       <button type="submit">保存</button>
     </form>
 
-    <h3>节点描述 <span class="help" data-tip="这个节点是做什么的，主 Agent 通过 list_agents 可见；仅作为元数据，不影响执行。">?</span></h3>
+    <h3>节点描述（本节点） <span class="help" data-tip="该节点是做什么的，主 Agent 通过 list_agents 的 effective_description 看到。本节点填写优先；留空则用其绑定模板的「节点描述」。仅元数据，不影响执行。">?</span></h3>
     <form onsubmit="setAgentDescription(event, ${a.id})">
-      <textarea name="description" class="modal-textarea" placeholder="例如：生产 Web 服务器，只跑部署类命令" onfocus="pauseRefresh()" onblur="resumeRefresh()">${escHtml(a.description || '')}</textarea>
+      <textarea name="description" class="modal-textarea" placeholder="留空则使用绑定模板的节点描述；例如：生产 Web 服务器，只跑部署类命令" onfocus="pauseRefresh()" onblur="resumeRefresh()">${escHtml(a.description || '')}</textarea>
       <div class="sub-actions"><button class="btn" type="submit">保存描述</button></div>
     </form>
 

@@ -50,6 +50,7 @@ function renderTemplates() {
     <tr>
       <td>${escHtml(t.name)}</td>
       <td>${t.description ? escHtml(t.description) : '-'}</td>
+      <td class="col-desc">${t.node_description ? escHtml(t.node_description) : '-'}</td>
       <td class="mono">${t.llm_model ? escHtml(t.llm_model) : '-'}</td>
       <td class="col-desc">${t.system_prompt ? escHtml(t.system_prompt) : '-'}</td>
       <td>${templateUsage(t.id)}</td>
@@ -60,7 +61,7 @@ function renderTemplates() {
         </span>
       </td>
     </tr>
-  `).join('') || '<tr><td colspan="6" class="empty">暂无模板</td></tr>';
+  `).join('') || '<tr><td colspan="7" class="empty">暂无模板</td></tr>';
 }
 
 function renderTemplateModelOptions(current) {
@@ -78,6 +79,7 @@ function openTemplateModal(templateId) {
   document.getElementById('tpl-id').value = t ? t.id : '';
   document.getElementById('tpl-name').value = t ? (t.name || '') : '';
   document.getElementById('tpl-description').value = t ? (t.description || '') : '';
+  document.getElementById('tpl-node-description').value = t ? (t.node_description || '') : '';
   renderTemplateModelOptions(t ? (t.llm_model || '') : '');
   document.getElementById('tpl-system-prompt').value = t ? (t.system_prompt || '') : '';
   document.getElementById('tpl-permission').value =
@@ -105,6 +107,7 @@ async function saveTemplate() {
   const id = document.getElementById('tpl-id').value;
   const name = document.getElementById('tpl-name').value.trim();
   const description = document.getElementById('tpl-description').value.trim();
+  const node_description = document.getElementById('tpl-node-description').value.trim();
   const llm_model = document.getElementById('tpl-model').value.trim();
   const system_prompt = document.getElementById('tpl-system-prompt').value;
   const permissionRaw = document.getElementById('tpl-permission').value.trim();
@@ -129,6 +132,7 @@ async function saveTemplate() {
   const body = {
     name,
     description: description || null,
+    node_description: node_description || null,
     llm_model: llm_model || null,
     system_prompt: system_prompt || null,
     permission,

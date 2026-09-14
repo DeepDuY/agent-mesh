@@ -38,6 +38,7 @@ def test_template_crud(client: TestClient):
         client,
         name="ops",
         description="deploy node",
+        node_description="生产部署机",
         system_prompt="你是部署专员",
         llm_model="anthropic/deepseek-v4-pro",
         permission=permission,
@@ -46,6 +47,7 @@ def test_template_crud(client: TestClient):
     assert tpl["system_prompt"] == "你是部署专员"
     assert tpl["llm_model"] == "anthropic/deepseek-v4-pro"
     assert tpl["permission"] == permission
+    assert tpl["node_description"] == "生产部署机"
 
     listed = client.get("/api/templates", headers=_admin_headers()).json()["templates"]
     assert "ops" in [t["name"] for t in listed]

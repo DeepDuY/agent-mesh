@@ -271,9 +271,14 @@ def test_effective_description_node_over_template(client: TestClient):
     _poll(client)
     tpl = client.post(
         "/api/templates",
-        json={"name": "desc-tpl", "description": "template desc"},
+        json={
+            "name": "desc-tpl",
+            "description": "template note (说明)",
+            "node_description": "template node desc (节点描述)",
+        },
         headers=_admin_headers(),
     ).json()["template"]
+    assert tpl["node_description"] == "template node desc (节点描述)"
     client.patch(
         f"/api/agents/{DEVICE}/template",
         json={"template_id": tpl["id"]},
@@ -281,7 +286,8 @@ def test_effective_description_node_over_template(client: TestClient):
     )
     agent = client.get(f"/api/agents/{DEVICE}", headers=_admin_headers()).json()["agent"]
     assert agent["template_name"] == "desc-tpl"
-    assert agent["effective_description"] == "template desc"
+    # The template's NODE description is used (not its human-facing 说明).
+    assert agent["effective_description"] == "template node desc (节点描述)"
 
     # The node's own description wins over the template's.
     client.patch(
@@ -292,6 +298,23 @@ def test_effective_description_node_over_template(client: TestClient):
     agent = client.get(f"/api/agents/{DEVICE}", headers=_admin_headers()).json()["agent"]
     assert agent["description"] == "node desc"
     assert agent["effective_description"] == "node desc"
+
+
+def test_template_说明_does_not_leak_into_node_description(client: TestClient):
+    # A template with only its own note (说明) must NOT provide a node description.
+    _poll(client)
+    tpl = client.post(
+        "/api/templates",
+        json={"name": "note-only", "description": "just a note"},
+        headers=_admin_headers(),
+    ).json()["template"]
+    client.patch(
+        f"/api/agents/{DEVICE}/template",
+        json={"template_id": tpl["id"]},
+        headers=_admin_headers(),
+    )
+    agent = client.get(f"/api/agents/{DEVICE}", headers=_admin_headers()).json()["agent"]
+    assert agent["effective_description"] is None
 
 
 def test_templates_hidden_from_api_without_ui_header(client: TestClient):

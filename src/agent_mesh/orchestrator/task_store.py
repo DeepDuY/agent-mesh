@@ -75,9 +75,9 @@ class TaskStore:
         """Fill display-only fields: ``template_name`` and ``effective_description``.
 
         Effective description precedence: node's own ``description`` > the bound
-        template's ``description``. Templates are admin-only elsewhere, but their
-        description is a human-facing label (never the permission/config), so it
-        is safe to surface to the main agent for node selection.
+        template's ``node_description``. The template's own ``description`` (its
+        human-facing note) is NOT used here. Templates are admin-only elsewhere,
+        but these labels are safe to surface to the main agent.
         """
         if not agents:
             return
@@ -85,7 +85,7 @@ class TaskStore:
         for a in agents:
             tpl = templates.get(a.template_id) if a.template_id else None
             a.template_name = tpl.get("name") if tpl else None
-            tpl_desc = ((tpl.get("description") if tpl else "") or "").strip() or None
+            tpl_desc = ((tpl.get("node_description") if tpl else "") or "").strip() or None
             node_desc = (a.description or "").strip() or None
             a.effective_description = node_desc or tpl_desc
 

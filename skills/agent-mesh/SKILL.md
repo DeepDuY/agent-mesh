@@ -81,7 +81,7 @@ curl -s -H "Authorization: Bearer <token>" http://<host>:8000/api/agents
 - `id`：数字主键，**推荐用这个派发**（唯一）。
 - `device_id`：machine-id，稳定设备标识；`agent_id`/`alias`：显示名，可能重复。
 - `online`：是否在线（心跳期内）。**离线节点派发会一直排队**。
-- `effective_description`：**选节点的依据**——节点自身描述优先，未设置时用其绑定模板的描述。
+- `effective_description`：**选节点的依据**——节点自身描述优先，未设置时用其绑定模板的「节点描述」。
 - `description`：节点自身的描述（可能为空）。
 - `template_name`：绑定模板的**名字**（只读展示）。
 - `version`：探针版本；`cpu_percent`/`mem_percent`：资源占用。

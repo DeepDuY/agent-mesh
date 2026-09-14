@@ -11,7 +11,7 @@ from agent_mesh.orchestrator.store.sqlite.connection import (
 )
 
 _TEMPLATE_COLUMNS = (
-    "id, name, description, system_prompt, llm_model, permission, data, "
+    "id, name, description, node_description, system_prompt, llm_model, permission, data, "
     "created_at, updated_at"
 )
 
@@ -28,6 +28,7 @@ class TemplateMixin(SQLiteBase):
         self,
         name: str,
         description: str | None = None,
+        node_description: str | None = None,
         system_prompt: str | None = None,
         llm_model: str | None = None,
         permission: dict[str, Any] | None = None,
@@ -36,12 +37,13 @@ class TemplateMixin(SQLiteBase):
         rows = await self._execute(
             """
             INSERT INTO templates
-                (name, description, system_prompt, llm_model, permission, data)
-            VALUES (?, ?, ?, ?, ?, ?) RETURNING id
+                (name, description, node_description, system_prompt, llm_model, permission, data)
+            VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
             """,
             (
                 name,
                 description,
+                node_description,
                 system_prompt,
                 llm_model,
                 _dump_json(permission),
@@ -72,6 +74,7 @@ class TemplateMixin(SQLiteBase):
         allowed = {
             "name",
             "description",
+            "node_description",
             "system_prompt",
             "llm_model",
             "permission",

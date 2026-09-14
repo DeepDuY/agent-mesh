@@ -17,6 +17,7 @@ _NAME_RE = re.compile(r"^[a-zA-Z0-9_.\-]+$")
 class _TemplateCreate(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     description: str | None = None
+    node_description: str | None = None
     system_prompt: str | None = None
     llm_model: str | None = None
     permission: dict[str, Any] | None = None
@@ -26,6 +27,7 @@ class _TemplateCreate(BaseModel):
 class _TemplatePatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=64)
     description: str | None = None
+    node_description: str | None = None
     system_prompt: str | None = None
     llm_model: str | None = None
     permission: dict[str, Any] | None = None
@@ -37,6 +39,7 @@ def _public(template: dict[str, Any]) -> dict[str, Any]:
         "id": template["id"],
         "name": template["name"],
         "description": template.get("description"),
+        "node_description": template.get("node_description"),
         "system_prompt": template.get("system_prompt"),
         "llm_model": template.get("llm_model"),
         "permission": template.get("permission"),
@@ -81,6 +84,7 @@ def mount_template_routes(
         template_id = await store.store.create_template(
             name=name,
             description=payload.description,
+            node_description=payload.node_description,
             system_prompt=payload.system_prompt,
             llm_model=payload.llm_model,
             permission=payload.permission,
