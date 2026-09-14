@@ -56,12 +56,68 @@ function renderTemplates() {
       <td>${templateUsage(t.id)}</td>
       <td>
         <span class="actions">
+          <button class="btn" onclick="openTemplateNodesModal(${t.id})">应用到节点</button>
           <button class="btn" onclick="openTemplateModal(${t.id})">编辑</button>
           <button class="btn btn-danger" onclick="deleteTemplate(${t.id})">删除</button>
         </span>
       </td>
     </tr>
   `).join('') || '<tr><td colspan="7" class="empty">暂无模板</td></tr>';
+}
+
+function openTemplateNodesModal(templateId) {
+  const t = currentTemplates.find(x => x.id === templateId);
+  if (!t) return;
+  document.getElementById('modal-title').textContent = `应用模板 - ${t.name}`;
+  const nodes = currentAgents || [];
+  document.getElementById('agent-detail').innerHTML = `
+    <p class="refresh-hint" style="text-align:left">勾选要绑定模板「${escHtml(t.name)}」的节点；取消勾选会解除绑定（仅对当前绑定了该模板的节点生效）。</p>
+    <div style="max-height:50vh;overflow:auto">
+      ${nodes.map(a => `
+        <label style="display:block;margin:2px 0">
+          <input type="checkbox" name="tpl_node" value="${a.id}" ${a.template_id === templateId ? 'checked' : ''}>
+          <span class="mono">#${a.id}</span> ${escHtml(hostLabel(a))}${a.alias ? ' · ' + escHtml(a.alias) : ''}
+          <span class="muted">${a.template_name ? '（当前：' + escHtml(a.template_name) + '）' : ''}</span>
+        </label>`).join('') || '<span class="muted">暂无节点</span>'}
+    </div>
+    <div id="tpl-nodes-status" class="status-msg"></div>
+    <div class="sub-actions">
+      <button class="btn" onclick="saveTemplateNodes(${templateId})">保存</button>
+      <button class="btn btn-secondary" onclick="closeAgentModal()">取消</button>
+    </div>
+  `;
+  openModal();
+}
+
+async function saveTemplateNodes(templateId) {
+  const statusEl = document.getElementById('tpl-nodes-status');
+  const checked = new Set(Array.from(document.querySelectorAll('input[name=tpl_node]:checked'))
+    .map(c => parseInt(c.value, 10)));
+  const toBind = Array.from(checked);
+  // Unchecking a node that is currently bound to this template -> unbind it.
+  const toUnbind = (currentAgents || [])
+    .filter(a => a.template_id === templateId && !checked.has(a.id))
+    .map(a => a.id);
+  try {
+    let applied = 0;
+    for (const [ids, template_id] of [[toBind, templateId], [toUnbind, null]]) {
+      if (!ids.length) continue;
+      const res = await fetch('/api/agents/batch/template', {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_ids: ids, template_id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+      applied += data.applied || 0;
+    }
+    closeAgentModal();
+    await loadAll();
+    alert(`已更新 ${applied} 个节点的模板绑定`);
+  } catch (e) {
+    statusEl.textContent = '保存失败：' + e.message;
+    statusEl.style.color = 'var(--danger)';
+  }
 }
 
 function renderTemplateModelOptions(current) {

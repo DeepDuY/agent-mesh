@@ -12,9 +12,25 @@ async function loadTeams() {
     if (!res.ok) return;
     currentTeams = (await res.json()).teams || [];
     renderTeams();
+    renderUserTeamOptions();
   } catch (e) {
     console.error('load teams failed', e);
   }
+}
+
+function renderUserTeamOptions() {
+  const select = document.getElementById('new-user-team');
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = (currentTeams || []).map(t =>
+    `<option value="${escHtml(t.team_id)}">${escHtml(t.name)}</option>`
+  ).join('') || '<option value="">（请先创建团队）</option>';
+  if (current) select.value = current;
+}
+
+function teamNodeCount(teamId) {
+  return (currentAgents || []).filter(a =>
+    (((a.access || {}).teams) || []).includes(teamId)).length;
 }
 
 function renderTeams() {
@@ -27,14 +43,62 @@ function renderTeams() {
         <td>${escHtml(t.name)}</td>
         <td>${t.description ? escHtml(t.description) : '-'}</td>
         <td>${members ? escHtml(members) : '-'}</td>
+        <td>${teamNodeCount(t.team_id)}</td>
         <td>
           <span class="actions">
             <button class="btn" onclick="openTeamModal('${t.team_id}')">编辑</button>
+            <button class="btn" onclick="openTeamNodesModal('${t.team_id}')">分配节点</button>
             <button class="btn btn-danger" onclick="deleteTeam('${t.team_id}')">删除</button>
           </span>
         </td>
       </tr>`;
-  }).join('') || '<tr><td colspan="4" class="empty">暂无团队</td></tr>';
+  }).join('') || '<tr><td colspan="5" class="empty">暂无团队</td></tr>';
+}
+
+function openTeamNodesModal(teamId) {
+  const t = currentTeams.find(x => x.team_id === teamId);
+  if (!t) return;
+  document.getElementById('modal-title').textContent = `分配节点 - ${t.name}`;
+  const nodes = currentAgents || [];
+  document.getElementById('agent-detail').innerHTML = `
+    <p class="refresh-hint" style="text-align:left">勾选该团队可操作的节点（团队所有成员都能使用）；取消勾选即移除。管理员始终可操作。</p>
+    <div style="max-height:50vh;overflow:auto">
+      ${nodes.map(a => {
+        const checked = (((a.access || {}).teams) || []).includes(teamId);
+        return `<label style="display:block;margin:2px 0">
+          <input type="checkbox" name="team_node" value="${a.id}" ${checked ? 'checked' : ''}>
+          <span class="mono">#${a.id}</span> ${escHtml(hostLabel(a))}${a.alias ? ' · ' + escHtml(a.alias) : ''}
+        </label>`;
+      }).join('') || '<span class="muted">暂无节点</span>'}
+    </div>
+    <div id="team-nodes-status" class="status-msg"></div>
+    <div class="sub-actions">
+      <button class="btn" onclick="saveTeamNodes('${teamId}')">保存</button>
+      <button class="btn btn-secondary" onclick="closeAgentModal()">取消</button>
+    </div>
+  `;
+  openModal();
+}
+
+async function saveTeamNodes(teamId) {
+  const ids = Array.from(document.querySelectorAll('input[name=team_node]:checked'))
+    .map(c => parseInt(c.value, 10));
+  const statusEl = document.getElementById('team-nodes-status');
+  try {
+    const res = await fetch(`/api/teams/${teamId}/nodes`, {
+      method: 'PUT',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent_ids: ids }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    closeAgentModal();
+    await loadAll();
+    alert(`已保存，${data.updated} 个节点的授权发生变化`);
+  } catch (e) {
+    statusEl.textContent = '保存失败：' + e.message;
+    statusEl.style.color = 'var(--danger)';
+  }
 }
 
 function openTeamModal(teamId) {

@@ -26,6 +26,10 @@ class _MemberPayload(BaseModel):
     user_id: str
 
 
+class _TeamNodesPayload(BaseModel):
+    agent_ids: list[int] = Field(default_factory=list)
+
+
 def _new_team_id() -> str:
     return f"team-{secrets.token_hex(6)}"
 
@@ -131,6 +135,43 @@ def mount_team_routes(
             if current == team_id:
                 await store.store.set_user_team(target["user_id"], None)
         return {"team": await _public(await store.store.get_team(team_id))}
+
+    @router.put("/teams/{team_id}/nodes")
+    async def set_team_nodes(
+        team_id: str,
+        payload: _TeamNodesPayload,
+        user: dict[str, Any] = Depends(require_admin),
+    ) -> dict[str, Any]:
+        """Replace the set of nodes a team may operate (admin-only).
+
+        The node's ACL lives on the node (``agents.access.teams``); this makes
+        the team->nodes direction a first-class operation so an admin does not
+        have to open every node to grant a whole team access.
+        """
+        team = await store.store.get_team(team_id)
+        if team is None:
+            raise HTTPException(status_code=404, detail="team not found")
+        desired = set(payload.agent_ids)
+        updated = 0
+        for agent in await store.store.list_agents():
+            access = dict(agent.access or {})
+            teams = set(access.get("teams") or [])
+            has = team_id in teams
+            want = agent.id in desired
+            if has == want:
+                continue
+            if want:
+                teams.add(team_id)
+            else:
+                teams.discard(team_id)
+            access["teams"] = sorted(teams)
+            await store.store.set_agent_access_by_id(agent.id, access)
+            updated += 1
+        logger.info(
+            "team %s node access set (%d changed) by %s",
+            team_id, updated, user["username"],
+        )
+        return {"updated": updated, "total": len(desired)}
 
 
 async def _get_user_by_id(store: TaskStore, user_id: str) -> dict[str, Any] | None:

@@ -2,16 +2,50 @@ function fmtPct(x) {
   return x == null ? '-' : Number(x).toFixed(2) + '%';
 }
 
+// ---- Node list state (client-side pagination + multi-select) --------------
+let agentPage = 0;
+let agentPageSize = 20;
+let agentSearch = '';
+let agentStatusFilter = '';
+const selectedAgents = new Set();
+let selectAllAgentPages = false;
+
 async function loadAgents() {
   const res = await fetch('/api/agents', { headers });
   if (!res.ok) return;
   currentAgents = (await res.json()).agents;
-  document.getElementById('agents-body').innerHTML = currentAgents.map(a => {
+  renderAgents();
+}
+
+function filteredAgents() {
+  const q = agentSearch.toLowerCase();
+  return (currentAgents || []).filter(a => {
+    if (agentStatusFilter === 'online' && !a.online) return false;
+    if (agentStatusFilter === 'offline' && a.online) return false;
+    if (!q) return true;
+    return [a.id, a.agent_id, a.hostname, a.alias, a.display_name, a.distro,
+            a.os, a.description, a.effective_description]
+      .filter(x => x != null).join(' ').toLowerCase().includes(q);
+  });
+}
+
+function renderAgents() {
+  const list = filteredAgents();
+  const total = list.length;
+  const totalPages = Math.max(1, Math.ceil(total / agentPageSize));
+  if (total === 0) agentPage = 0;
+  else if (agentPage >= totalPages) agentPage = totalPages - 1;
+  const start = agentPage * agentPageSize;
+  const pageItems = list.slice(start, start + agentPageSize);
+
+  document.getElementById('agents-body').innerHTML = pageItems.map(a => {
     const version = a.upgrade_requested
       ? `<span title="升级到 ${a.upgrade_version}" style="color:var(--warn)">${a.version || '-'} → ${a.upgrade_version}</span>`
       : (a.version || '-');
+    const checked = selectAllAgentPages || selectedAgents.has(a.id);
     return `
     <tr>
+      <td class="col-select"><input type="checkbox" class="agent-checkbox" ${checked ? 'checked' : ''} onclick="toggleAgentSelect(${a.id}, this.checked)"></td>
       <td class="mono">${a.id}</td>
       <td title="${escHtml(a.hostname || '')}">${hostLabel(a)}</td>
       <td>${a.alias || '-'}</td>
@@ -29,7 +63,184 @@ async function loadAgents() {
         </span>
       </td>
     </tr>
-  `}).join('') || '<tr><td colspan="10" class="empty">暂无节点</td></tr>';
+  `}).join('') || '<tr><td colspan="11" class="empty">暂无节点</td></tr>';
+
+  document.getElementById('agent-page-info').textContent =
+    `第 ${agentPage + 1} / ${totalPages} 页（共 ${total} 条）`;
+  updateAgentSelectionUI();
+}
+
+function selectedAgentIds() {
+  if (selectAllAgentPages) return filteredAgents().map(a => a.id);
+  return Array.from(selectedAgents);
+}
+
+function updateAgentSelectionUI() {
+  const count = selectAllAgentPages ? filteredAgents().length : selectedAgents.size;
+  const countEl = document.getElementById('agents-selected-count');
+  if (countEl) {
+    countEl.textContent = selectAllAgentPages ? `已选全部 ${count} 项` : `已选 ${count} 项`;
+  }
+  ['agents-batch-template-btn', 'agents-batch-access-btn'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = count === 0;
+  });
+  const boxes = Array.from(document.querySelectorAll('.agent-checkbox'));
+  const all = document.getElementById('agents-select-all');
+  if (all) {
+    const pageChecked = boxes.length > 0 && boxes.every(cb => cb.checked);
+    all.checked = pageChecked;
+    all.indeterminate = boxes.some(cb => cb.checked) && !pageChecked;
+  }
+  const allPages = document.getElementById('agents-select-all-pages');
+  if (allPages) allPages.checked = selectAllAgentPages;
+}
+
+function toggleAgentSelect(id, checked) {
+  if (selectAllAgentPages) return;
+  if (checked) selectedAgents.add(id);
+  else selectedAgents.delete(id);
+  updateAgentSelectionUI();
+}
+
+function toggleSelectAllAgentsPage() {
+  const box = document.getElementById('agents-select-all');
+  const shouldCheck = box ? box.checked : false;
+  const list = filteredAgents();
+  const start = agentPage * agentPageSize;
+  list.slice(start, start + agentPageSize).forEach(a => {
+    if (shouldCheck) selectedAgents.add(a.id);
+    else selectedAgents.delete(a.id);
+  });
+  selectAllAgentPages = false;
+  renderAgents();
+}
+
+function toggleSelectAllAgentPages() {
+  selectAllAgentPages = document.getElementById('agents-select-all-pages').checked;
+  selectedAgents.clear();
+  renderAgents();
+}
+
+function applyAgentFilters() {
+  agentSearch = document.getElementById('agent-search').value.trim();
+  agentStatusFilter = document.getElementById('agent-status-filter').value;
+  agentPage = 0;
+  renderAgents();
+}
+
+function clearAgentFilters() {
+  document.getElementById('agent-search').value = '';
+  document.getElementById('agent-status-filter').value = '';
+  agentSearch = '';
+  agentStatusFilter = '';
+  agentPage = 0;
+  renderAgents();
+}
+
+function setAgentPageSize(value) {
+  agentPageSize = parseInt(value, 10) || 20;
+  agentPage = 0;
+  renderAgents();
+}
+
+function prevAgentPage() {
+  if (agentPage > 0) { agentPage--; renderAgents(); }
+}
+
+function nextAgentPage() {
+  agentPage++;
+  renderAgents();
+}
+
+function clearAgentSelection() {
+  selectedAgents.clear();
+  selectAllAgentPages = false;
+}
+
+// ---- Batch actions --------------------------------------------------------
+function openBatchTemplateModal() {
+  const ids = selectedAgentIds();
+  if (!ids.length) return alert('请先选择节点');
+  document.getElementById('modal-title').textContent = `批量应用模板（${ids.length} 个节点）`;
+  document.getElementById('agent-detail').innerHTML = `
+    <p class="refresh-hint" style="text-align:left">为选中的 ${ids.length} 个节点绑定同一个模板；无权访问或被管理员锁定的节点会自动跳过。留空 = 解除绑定。</p>
+    <div class="form-row">
+      <select id="batch-template-id">
+        <option value="">（不绑定模板 / 解除绑定）</option>
+        ${(currentTemplates || []).map(t => `<option value="${t.id}">${escHtml(t.name)}</option>`).join('')}
+      </select>
+      <button class="btn" onclick="submitBatchTemplate()">应用</button>
+    </div>
+    <div id="batch-template-status" class="status-msg"></div>
+  `;
+  openModal();
+}
+
+async function submitBatchTemplate() {
+  const ids = selectedAgentIds();
+  const raw = document.getElementById('batch-template-id').value;
+  const template_id = raw ? parseInt(raw, 10) : null;
+  const statusEl = document.getElementById('batch-template-status');
+  try {
+    const res = await fetch('/api/agents/batch/template', {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent_ids: ids, template_id }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    closeAgentModal();
+    clearAgentSelection();
+    await loadAll();
+    alert(`批量应用完成：成功 ${data.applied} 个，跳过 ${(data.skipped || []).length} 个`);
+  } catch (e) {
+    statusEl.textContent = '失败：' + e.message;
+    statusEl.style.color = 'var(--danger)';
+  }
+}
+
+function openBatchAccessModal() {
+  const ids = selectedAgentIds();
+  if (!ids.length) return alert('请先选择节点');
+  document.getElementById('modal-title').textContent = `批量分配权限（${ids.length} 个节点）`;
+  document.getElementById('agent-detail').innerHTML = `
+    <p class="refresh-hint" style="text-align:left">对选中的 ${ids.length} 个节点统一添加或移除团队/用户授权；管理员始终可操作。</p>
+    <label class="muted">团队</label>
+    <div>${(currentTeams || []).map(t => `<label style="display:block"><input type="checkbox" name="batch_team" value="${escHtml(t.team_id)}"> ${escHtml(t.name)}</label>`).join('') || '<span class="muted">暂无团队</span>'}</div>
+    <label class="muted">用户</label>
+    <div>${(currentUsers || []).map(u => `<label style="display:block"><input type="checkbox" name="batch_user" value="${escHtml(u.user_id)}"> ${escHtml(u.username)}</label>`).join('') || '<span class="muted">暂无用户</span>'}</div>
+    <div class="sub-actions">
+      <button class="btn" onclick="submitBatchAccess('add')">添加授权</button>
+      <button class="btn btn-danger" onclick="submitBatchAccess('remove')">移除授权</button>
+    </div>
+    <div id="batch-access-status" class="status-msg"></div>
+  `;
+  openModal();
+}
+
+async function submitBatchAccess(mode) {
+  const ids = selectedAgentIds();
+  const teams = Array.from(document.querySelectorAll('input[name=batch_team]:checked')).map(c => c.value);
+  const users = Array.from(document.querySelectorAll('input[name=batch_user]:checked')).map(c => c.value);
+  if (!teams.length && !users.length) return alert('请至少勾选一个团队或用户');
+  const statusEl = document.getElementById('batch-access-status');
+  try {
+    const res = await fetch('/api/agents/batch/access', {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent_ids: ids, teams, users, mode }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    closeAgentModal();
+    clearAgentSelection();
+    await loadAll();
+    alert(`已${mode === 'remove' ? '移除' : '添加'}授权，更新 ${data.updated} 个节点`);
+  } catch (e) {
+    statusEl.textContent = '失败：' + e.message;
+    statusEl.style.color = 'var(--danger)';
+  }
 }
 
 async function showAgentDetail(agentId) {

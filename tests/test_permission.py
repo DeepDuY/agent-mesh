@@ -238,9 +238,17 @@ def test_global_default_permission_setting(client: TestClient):
 
 def _make_user(client: TestClient, username: str = "viewer", ui: bool = False):
     """Create a non-admin user -> (user_id, headers)."""
+    team_id = client.post(
+        "/api/teams", json={"name": f"team-{username}"}, headers=_admin_headers()
+    ).json()["team"]["team_id"]
     resp = client.post(
         "/api/auth/users",
-        json={"username": username, "password": "secret123", "role": "user"},
+        json={
+            "username": username,
+            "password": "secret123",
+            "role": "user",
+            "team_id": team_id,
+        },
         headers=_admin_headers(),
     )
     assert resp.status_code == 200, resp.text
@@ -286,7 +294,9 @@ def test_non_admin_owns_only_own_templates(client: TestClient):
         "/api/templates", json={"name": "mine", "permission": {"*": "allow"}}, headers=h
     )
     assert mine.status_code == 200
-    assert mine.json()["template"]["owner_user_id"] is not None
+    tpl = mine.json()["template"]
+    # Non-admins own what they create: by team (they are in one) or by user.
+    assert tpl["owner_user_id"] is not None or tpl["owner_team_id"] is not None
     assert client.delete(
         f"/api/templates/{mine.json()['template']['id']}", headers=h
     ).status_code == 200

@@ -10,6 +10,30 @@ def _admin_headers() -> dict:
     return {"Authorization": f"Bearer {ADMIN_API_TOKEN}"}
 
 
+def _team_id(client: TestClient) -> str:
+    """Return a team id, creating a default team if none exists."""
+    teams = client.get("/api/teams", headers=_admin_headers()).json()["teams"]
+    if teams:
+        return teams[0]["team_id"]
+    return client.post(
+        "/api/teams", json={"name": "default"}, headers=_admin_headers()
+    ).json()["team"]["team_id"]
+
+
+def _create_user(client: TestClient, username: str, password: str = "secret123", role: str = "user"):
+    """Create a user (every user must belong to a team)."""
+    return client.post(
+        "/api/auth/users",
+        json={
+            "username": username,
+            "password": password,
+            "role": role,
+            "team_id": _team_id(client),
+        },
+        headers=_admin_headers(),
+    )
+
+
 def test_login_returns_session_token(client: TestClient):
     resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
     assert resp.status_code == 200
@@ -95,11 +119,7 @@ def test_agent_detail_and_alias(client: TestClient):
 # User management
 # ----------------------------------------------------------------------
 def test_create_user_returns_token_once(client: TestClient):
-    resp = client.post(
-        "/api/auth/users",
-        json={"username": "bob", "password": "secret123", "role": "user"},
-        headers=_admin_headers(),
-    )
+    resp = _create_user(client, "bob")
     assert resp.status_code == 200
     data = resp.json()
     assert data["username"] == "bob"
@@ -123,11 +143,7 @@ def test_create_user_returns_token_once(client: TestClient):
 
 def test_create_user_requires_admin(client: TestClient):
     # A plain user cannot create users.
-    created = client.post(
-        "/api/auth/users",
-        json={"username": "carol", "password": "secret123"},
-        headers=_admin_headers(),
-    )
+    created = _create_user(client, "carol")
     carol_token = created.json()["token"]
     resp = client.post(
         "/api/auth/users",
@@ -137,27 +153,34 @@ def test_create_user_requires_admin(client: TestClient):
     assert resp.status_code == 403
 
 
+def test_create_user_requires_team(client: TestClient):
+    # team_id is mandatory.
+    resp = client.post(
+        "/api/auth/users",
+        json={"username": "noteam", "password": "secret123", "role": "user"},
+        headers=_admin_headers(),
+    )
+    assert resp.status_code == 400
+    assert "team" in resp.json()["detail"]
+
+    # A nonexistent team is rejected too.
+    resp = client.post(
+        "/api/auth/users",
+        json={"username": "noteam", "password": "secret123", "team_id": "team-nope"},
+        headers=_admin_headers(),
+    )
+    assert resp.status_code == 400
+
+
 def test_create_user_duplicate(client: TestClient):
-    resp = client.post(
-        "/api/auth/users",
-        json={"username": "eve", "password": "secret123"},
-        headers=_admin_headers(),
-    )
+    resp = _create_user(client, "eve")
     assert resp.status_code == 200
-    resp = client.post(
-        "/api/auth/users",
-        json={"username": "eve", "password": "secret123"},
-        headers=_admin_headers(),
-    )
+    resp = _create_user(client, "eve")
     assert resp.status_code == 409
 
 
 def test_disabled_user_cannot_access(client: TestClient):
-    created = client.post(
-        "/api/auth/users",
-        json={"username": "mallory", "password": "secret123"},
-        headers=_admin_headers(),
-    )
+    created = _create_user(client, "mallory")
     mallory_token = created.json()["token"]
     # Simulate disable at the DB level (no dedicated endpoint yet).
     db_path = client.app.state.store.store._db.db_path
@@ -174,11 +197,7 @@ def test_disabled_user_cannot_access(client: TestClient):
 
 
 def test_rotate_token_invalidates_old(client: TestClient):
-    created = client.post(
-        "/api/auth/users",
-        json={"username": "frank", "password": "secret123"},
-        headers=_admin_headers(),
-    )
+    created = _create_user(client, "frank")
     old_token = created.json()["token"]
     resp = client.post(
         "/api/auth/users/frank/token",
@@ -192,11 +211,7 @@ def test_rotate_token_invalidates_old(client: TestClient):
 
 
 def test_delete_user(client: TestClient):
-    created = client.post(
-        "/api/auth/users",
-        json={"username": "trent", "password": "secret123"},
-        headers=_admin_headers(),
-    )
+    created = _create_user(client, "trent")
     trent_token = created.json()["token"]
     resp = client.delete("/api/auth/users/trent", headers=_admin_headers())
     assert resp.status_code == 200
@@ -210,11 +225,7 @@ def test_cannot_delete_admin_or_self(client: TestClient):
 
 
 def test_set_user_password(client: TestClient):
-    created = client.post(
-        "/api/auth/users",
-        json={"username": "ursula", "password": "secret123"},
-        headers=_admin_headers(),
-    )
+    created = _create_user(client, "ursula")
     ursula_token = created.json()["token"]
     resp = client.post(
         "/api/auth/users/ursula/password",
@@ -229,11 +240,7 @@ def test_set_user_password(client: TestClient):
 
 
 def test_change_own_password(client: TestClient):
-    created = client.post(
-        "/api/auth/users",
-        json={"username": "victor", "password": "secret123"},
-        headers=_admin_headers(),
-    )
+    created = _create_user(client, "victor")
     victor_token = created.json()["token"]
     headers = {"Authorization": f"Bearer {victor_token}"}
     resp = client.post(

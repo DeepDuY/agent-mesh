@@ -28,10 +28,23 @@ def _poll(client: TestClient) -> None:
     )
 
 
+def _team_id(client: TestClient, name: str) -> str:
+    return client.post(
+        "/api/teams", json={"name": name}, headers=_admin()
+    ).json()["team"]["team_id"]
+
+
 def _user(client: TestClient, username: str):
+    # Every user must belong to a team; give each its own so tests can move them.
+    team_id = _team_id(client, f"team-{username}")
     r = client.post(
         "/api/auth/users",
-        json={"username": username, "password": "secret123", "role": "user"},
+        json={
+            "username": username,
+            "password": "secret123",
+            "role": "user",
+            "team_id": team_id,
+        },
         headers=_admin(),
     )
     assert r.status_code == 200, r.text
@@ -153,3 +166,101 @@ def test_non_admin_cannot_manage_teams(client: TestClient):
     _, h = _user(client, "alice")
     assert client.get("/api/teams", headers=h).status_code == 403
     assert client.post("/api/teams", json={"name": "x"}, headers=h).status_code == 403
+
+
+# ----------------------------------------------------------------------
+# Batch node assignment (avoid opening every node one by one)
+# ----------------------------------------------------------------------
+def _admin_ui() -> dict:
+    return {"Authorization": f"Bearer {ADMIN_API_TOKEN}", "X-Agent-Mesh-UI": "1"}
+
+
+def _poll_at(client: TestClient, device_id: str, agent_id: str = "node") -> None:
+    client.post(
+        "/api/edge/poll_for_task",
+        json={
+            "agent_id": agent_id,
+            "device_id": device_id,
+            "runtime": "opencode",
+            "hostname": agent_id,
+            "os": "linux",
+            "arch": "x64",
+        },
+        headers={"Authorization": f"Bearer {GLOBAL_TOKEN}"},
+    )
+
+
+def _two_nodes(client: TestClient) -> list[int]:
+    _poll_at(client, DEVICE, "node1")
+    _poll_at(client, "00:aa:bb:cc:dd:02", "node2")
+    agents = client.get("/api/agents", headers=_admin()).json()["agents"]
+    return [a["id"] for a in agents]
+
+
+def test_batch_node_access_and_team_nodes(client: TestClient):
+    ids = _two_nodes(client)
+    assert len(ids) == 2
+    team = client.post("/api/teams", json={"name": "ops"}, headers=_admin()).json()["team"]
+    team_id = team["team_id"]
+    uid, h = _user(client, "alice")
+    client.post(f"/api/teams/{team_id}/members", json={"user_id": uid}, headers=_admin())
+
+    # Batch add a team to both nodes.
+    r = client.post(
+        "/api/agents/batch/access",
+        json={"agent_ids": ids, "teams": [team_id], "mode": "add"},
+        headers=_admin(),
+    )
+    assert r.status_code == 200 and r.json()["updated"] == 2
+    assert len(client.get("/api/agents", headers=h).json()["agents"]) == 2
+
+    # Batch remove it again.
+    r = client.post(
+        "/api/agents/batch/access",
+        json={"agent_ids": ids, "teams": [team_id], "mode": "remove"},
+        headers=_admin(),
+    )
+    assert r.json()["updated"] == 2
+    assert client.get("/api/agents", headers=h).json()["agents"] == []
+
+    # Team -> nodes direction: replace the whole set at once.
+    r = client.put(
+        f"/api/teams/{team_id}/nodes",
+        json={"agent_ids": [ids[0]]},
+        headers=_admin(),
+    )
+    assert r.status_code == 200
+    visible = client.get("/api/agents", headers=h).json()["agents"]
+    assert [a["id"] for a in visible] == [ids[0]]
+
+    # Batch access is admin-only.
+    assert client.post(
+        "/api/agents/batch/access", json={"agent_ids": ids}, headers=h
+    ).status_code == 403
+
+
+def test_batch_apply_template(client: TestClient):
+    ids = _two_nodes(client)
+    tpl = client.post(
+        "/api/templates",
+        json={"name": "prod", "system_prompt": "be careful"},
+        headers=_admin_ui(),
+    ).json()["template"]
+    r = client.post(
+        "/api/agents/batch/template",
+        json={"agent_ids": ids, "template_id": tpl["id"]},
+        headers=_admin_ui(),
+    )
+    assert r.status_code == 200 and r.json()["applied"] == 2
+    agents = client.get("/api/agents", headers=_admin()).json()["agents"]
+    assert all(a["template_id"] == tpl["id"] for a in agents)
+
+    # Unbind in one go.
+    r = client.post(
+        "/api/agents/batch/template",
+        json={"agent_ids": ids, "template_id": None},
+        headers=_admin_ui(),
+    )
+    assert r.json()["applied"] == 2
+    agents = client.get("/api/agents", headers=_admin()).json()["agents"]
+    assert all(a["template_id"] is None for a in agents)

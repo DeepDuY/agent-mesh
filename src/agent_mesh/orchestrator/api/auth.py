@@ -25,7 +25,9 @@ _USERNAME_RE = re.compile(r"^[a-zA-Z0-9_.-]+$")
 _ADMIN_USERNAME = "admin"
 
 
-def _user_public(user: dict[str, Any]) -> dict[str, Any]:
+def _user_public(
+    user: dict[str, Any], team_id: str | None = None, team_name: str | None = None
+) -> dict[str, Any]:
     """Safe projection of a user row for list/me responses (no token_hash)."""
     return {
         "user_id": user.get("user_id"),
@@ -33,6 +35,8 @@ def _user_public(user: dict[str, Any]) -> dict[str, Any]:
         "role": user.get("role"),
         "disabled": bool(user.get("disabled")),
         "created_by": user.get("created_by"),
+        "team_id": team_id,
+        "team_name": team_name,
         "created_at": _iso(user.get("created_at")),
         "last_login_at": _iso(user.get("last_login_at")),
         "token_created_at": _iso(user.get("token_created_at")),
@@ -54,6 +58,7 @@ class _CreateUserPayload(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=6, max_length=128)
     role: str = "user"
+    team_id: str | None = None
 
 
 class _SetPasswordPayload(BaseModel):
@@ -73,6 +78,13 @@ def mount_auth_routes(
     config: OrchestratorConfig | None = None,
 ) -> None:
     session_ttl_s = (config.session_ttl_s if config else 86400)
+
+    async def _team_of(user_id: str) -> tuple[str | None, str | None]:
+        team_id = await store.store.get_user_team(user_id)
+        if not team_id:
+            return None, None
+        team = await store.store.get_team(team_id)
+        return team_id, (team["name"] if team else None)
 
     @router.post("/auth/login")
     async def login(payload: _LoginPayload) -> dict[str, Any]:
@@ -103,7 +115,8 @@ def mount_auth_routes(
 
     @router.get("/auth/me")
     async def me(user: dict[str, Any] = Depends(require_user_token)):
-        return _user_public(user)
+        team_id, team_name = await _team_of(user["user_id"])
+        return _user_public(user, team_id, team_name)
 
     @router.get("/healthz")
     async def healthz() -> dict[str, str]:
@@ -127,6 +140,11 @@ def mount_auth_routes(
             raise HTTPException(status_code=400, detail="cannot create a second admin")
         if payload.role not in ("admin", "user"):
             raise HTTPException(status_code=400, detail="role must be 'admin' or 'user'")
+        team_id = (payload.team_id or "").strip()
+        if not team_id:
+            raise HTTPException(status_code=400, detail="team_id is required")
+        if await store.store.get_team(team_id) is None:
+            raise HTTPException(status_code=400, detail="team not found")
         existing = await store.store.get_user_by_username(username)
         if existing is not None:
             raise HTTPException(status_code=409, detail="username already exists")
@@ -142,12 +160,18 @@ def mount_auth_routes(
             created_by=admin["username"],
             token_created_at=now,
         )
-        logger.info("created user %s by %s (role=%s)", username, admin["username"], payload.role)
+        # Every user must belong to exactly one team.
+        await store.store.set_user_team(user_id, team_id)
+        logger.info(
+            "created user %s by %s (role=%s, team=%s)",
+            username, admin["username"], payload.role, team_id,
+        )
         # The API token is returned exactly once, at creation.
         return {
             "user_id": user_id,
             "username": username,
             "role": payload.role,
+            "team_id": team_id,
             "token": token,
             "token_type": "api",
         }
@@ -157,7 +181,22 @@ def mount_auth_routes(
         admin: dict[str, Any] = Depends(require_admin),
     ) -> dict[str, Any]:
         users = await store.store.list_users()
-        return {"users": [_user_public(u) for u in users]}
+        teams = await store.store.list_teams()
+        team_names = {t["team_id"]: t["name"] for t in teams}
+        team_of: dict[str, str] = {}
+        for team in teams:
+            for member_id in await store.store.list_team_members(team["team_id"]):
+                team_of[member_id] = team["team_id"]
+        return {
+            "users": [
+                _user_public(
+                    u,
+                    team_of.get(u["user_id"]),
+                    team_names.get(team_of.get(u["user_id"])),
+                )
+                for u in users
+            ]
+        }
 
     @router.delete("/auth/users/{username}")
     async def delete_user(

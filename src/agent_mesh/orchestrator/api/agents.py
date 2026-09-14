@@ -42,6 +42,18 @@ class _AccessPayload(BaseModel):
     users: list[str] | None = None
 
 
+class _BatchAccessPayload(BaseModel):
+    agent_ids: list[int] = []
+    teams: list[str] | None = None
+    users: list[str] | None = None
+    mode: str = "add"  # add | remove | set
+
+
+class _BatchTemplatePayload(BaseModel):
+    agent_ids: list[int] = []
+    template_id: int | None = None
+
+
 def _current_bootstrap_version(config: OrchestratorConfig) -> str | None:
     version_path = Path(config.db_path).parent / "bootstrap" / "VERSION"
     try:
@@ -81,6 +93,38 @@ def mount_agent_routes(
             data.pop("access", None)  # don't expose the ACL to non-admins
         return data
 
+    async def _bind_template_checked(
+        agent, template_id: int | None, user: dict[str, Any]
+    ) -> None:
+        """Validate ownership/b1-lock and bind a template (raises HTTPException)."""
+        is_admin = store.is_admin(user)
+        team = await store.user_team(user)
+
+        # b1 lock: a non-admin may not override a template binding that was set
+        # by an administrator (global templates have no owner).
+        if not is_admin and agent.template_id is not None:
+            current = await store.store.get_template(agent.template_id)
+            if current is not None and not current.get("owner_user_id") and not current.get("owner_team_id"):
+                raise HTTPException(
+                    status_code=403,
+                    detail="this node's template is locked by an administrator",
+                )
+
+        if template_id is not None:
+            template = await store.store.get_template(template_id)
+            if template is None:
+                raise HTTPException(status_code=404, detail="template not found")
+            if not is_admin:
+                owned = (template.get("owner_user_id") == user.get("user_id")) or bool(
+                    team and template.get("owner_team_id") == team
+                )
+                if not owned:
+                    raise HTTPException(
+                        status_code=403, detail="you do not own this template"
+                    )
+        await store.store.set_agent_template_by_id(agent.id, template_id)
+        agent.template_id = template_id
+
     @router.get("/agents")
     async def list_agents(
         user: dict[str, Any] = Depends(require_user_token),
@@ -91,6 +135,84 @@ def mount_agent_routes(
             agents = [a for a in agents if a.id in allowed]
         await store.describe_agents(agents)
         return {"agents": [_dump_agent(a, user) for a in agents]}
+
+    @router.post("/agents/batch/template")
+    async def batch_apply_template(
+        payload: _BatchTemplatePayload,
+        user: dict[str, Any] = Depends(require_ui_user),
+    ) -> dict[str, Any]:
+        """Bind one template to many nodes at once (skips inaccessible/locked)."""
+        if not payload.agent_ids:
+            return {"applied": 0, "skipped": []}
+
+        # Validate the template once so a common failure is a clean 4xx.
+        if payload.template_id is not None:
+            template = await store.store.get_template(payload.template_id)
+            if template is None:
+                raise HTTPException(status_code=404, detail="template not found")
+            if not store.is_admin(user):
+                team = await store.user_team(user)
+                owned = (template.get("owner_user_id") == user.get("user_id")) or bool(
+                    team and template.get("owner_team_id") == team
+                )
+                if not owned:
+                    raise HTTPException(
+                        status_code=403, detail="you do not own this template"
+                    )
+
+        applied = 0
+        skipped: list[int] = []
+        for agent_id in payload.agent_ids:
+            agent = await store.store.get_agent_by_id(agent_id)
+            if agent is None or not await store.can_access_agent(user, agent):
+                skipped.append(agent_id)
+                continue
+            try:
+                await _bind_template_checked(agent, payload.template_id, user)
+                applied += 1
+            except HTTPException:
+                skipped.append(agent_id)
+        if applied:
+            await store.bump_config_version()
+        logger.info(
+            "batch bound template %s to %d nodes by %s",
+            payload.template_id, applied, user["username"],
+        )
+        return {"applied": applied, "skipped": skipped}
+
+    @router.post("/agents/batch/access")
+    async def batch_set_agent_access(
+        payload: _BatchAccessPayload,
+        user: dict[str, Any] = Depends(require_admin),
+    ) -> dict[str, Any]:
+        """Add/remove/replace teams+users on many nodes at once (admin-only)."""
+        if payload.mode not in ("add", "remove", "set"):
+            raise HTTPException(status_code=400, detail="mode must be add, remove or set")
+        add_teams = set(payload.teams or [])
+        add_users = set(payload.users or [])
+        updated = 0
+        for agent_id in payload.agent_ids:
+            agent = await store.store.get_agent_by_id(agent_id)
+            if agent is None:
+                continue
+            access = dict(agent.access or {})
+            teams = set(access.get("teams") or [])
+            users = set(access.get("users") or [])
+            if payload.mode == "set":
+                new_teams, new_users = set(add_teams), set(add_users)
+            elif payload.mode == "add":
+                new_teams, new_users = teams | add_teams, users | add_users
+            else:  # remove
+                new_teams, new_users = teams - add_teams, users - add_users
+            new_access = {"teams": sorted(new_teams), "users": sorted(new_users)}
+            if new_access != access:
+                await store.store.set_agent_access_by_id(agent.id, new_access)
+                updated += 1
+        logger.info(
+            "batch access %s updated %d nodes by %s",
+            payload.mode, updated, user["username"],
+        )
+        return {"updated": updated}
 
     @router.get("/agents/{agent_id}")
     async def get_agent(
@@ -193,33 +315,7 @@ def mount_agent_routes(
         if agent is None or not await store.can_access_agent(user, agent):
             raise HTTPException(status_code=404, detail="agent not found")
 
-        is_admin = store.is_admin(user)
-        team = await store.user_team(user)
-
-        # b1 lock: a non-admin may not override a template binding that was set
-        # by an administrator (global templates have no owner).
-        if not is_admin and agent.template_id is not None:
-            current = await store.store.get_template(agent.template_id)
-            if current is not None and not current.get("owner_user_id") and not current.get("owner_team_id"):
-                raise HTTPException(
-                    status_code=403,
-                    detail="this node's template is locked by an administrator",
-                )
-
-        if payload.template_id is not None:
-            template = await store.store.get_template(payload.template_id)
-            if template is None:
-                raise HTTPException(status_code=404, detail="template not found")
-            if not is_admin:
-                owned = (template.get("owner_user_id") == user.get("user_id")) or bool(
-                    team and template.get("owner_team_id") == team
-                )
-                if not owned:
-                    raise HTTPException(
-                        status_code=403, detail="you do not own this template"
-                    )
-        await store.store.set_agent_template_by_id(agent.id, payload.template_id)
-        agent.template_id = payload.template_id
+        await _bind_template_checked(agent, payload.template_id, user)
         # Re-resolve the bound node's config (prompt/model may change).
         await store.bump_config_version()
         await store.describe_agents([agent])

@@ -53,10 +53,37 @@
             <h2>节点列表</h2>
             <button class="btn btn-success" onclick="showInstallCommand()">+ 安装新节点</button>
           </div>
+          <div class="filter-bar">
+            <input id="agent-search" type="text" placeholder="搜索 ID / 主机名 / 别名 / 描述" class="filter-input" onkeydown="if(event.key==='Enter')applyAgentFilters()">
+            <button class="btn" onclick="applyAgentFilters()">搜索</button>
+            <button class="btn btn-secondary" onclick="clearAgentFilters()">重置</button>
+            <select id="agent-status-filter" class="filter-select" onchange="applyAgentFilters()">
+              <option value="">全部状态</option>
+              <option value="online">在线</option>
+              <option value="offline">离线</option>
+            </select>
+            <select id="agent-page-size" class="filter-select" onchange="setAgentPageSize(this.value)">
+              <option value="10">10 条/页</option>
+              <option value="20" selected>20 条/页</option>
+              <option value="50">50 条/页</option>
+              <option value="100">100 条/页</option>
+            </select>
+          </div>
+          <div class="batch-bar">
+            <label><input type="checkbox" id="agents-select-all-pages" onclick="toggleSelectAllAgentPages()"> 全选所有页（跨页）</label>
+            <span id="agents-selected-count">已选 0 项</span>
+            <button class="btn" id="agents-batch-template-btn" onclick="openBatchTemplateModal()" disabled>批量应用模板</button>
+            <button class="btn admin-only hidden" id="agents-batch-access-btn" onclick="openBatchAccessModal()" disabled>批量分配权限</button>
+          </div>
           <table>
-            <thead><tr><th>ID</th><th>主机名</th><th>别名</th><th>版本</th><th>运行时</th><th>系统</th><th>CPU/内存</th><th>状态</th><th>当前任务</th><th>操作</th></tr></thead>
-            <tbody id="agents-body"><tr><td colspan="10" class="empty">加载中...</td></tr></tbody>
+            <thead><tr><th class="col-select"><input type="checkbox" id="agents-select-all" onclick="toggleSelectAllAgentsPage()" title="全选当前页"></th><th>ID</th><th>主机名</th><th>别名</th><th>版本</th><th>运行时</th><th>系统</th><th>CPU/内存</th><th>状态</th><th>当前任务</th><th>操作</th></tr></thead>
+            <tbody id="agents-body"><tr><td colspan="11" class="empty">加载中...</td></tr></tbody>
           </table>
+          <div class="pagination">
+            <button class="btn" onclick="prevAgentPage()">上一页</button>
+            <span id="agent-page-info">第 1 页</span>
+            <button class="btn" onclick="nextAgentPage()">下一页</button>
+          </div>
           <p class="refresh-hint">每 5 秒自动刷新</p>
         </div>
       </section>
@@ -170,8 +197,8 @@
           </div>
           <p class="refresh-hint" style="text-align:left">团队用于权限归属：节点访问权限、模板归属、任务可见性都可按团队。一个用户至多属于一个团队。</p>
           <table>
-            <thead><tr><th>名称</th><th>说明</th><th>成员</th><th>操作</th></tr></thead>
-            <tbody id="teams-body"><tr><td colspan="4" class="empty">加载中...</td></tr></tbody>
+            <thead><tr><th>名称</th><th>说明</th><th>成员</th><th>节点</th><th>操作</th></tr></thead>
+            <tbody id="teams-body"><tr><td colspan="5" class="empty">加载中...</td></tr></tbody>
           </table>
           <div id="teams-status" class="status-msg"></div>
         </div>
@@ -202,6 +229,7 @@
             <div class="form-row">
               <input id="new-user-username" type="text" placeholder="用户名（字母/数字/._-）" autocomplete="off">
               <input id="new-user-password" type="password" placeholder="密码（至少 6 位）" autocomplete="new-password">
+              <select id="new-user-team" title="新用户必须归属一个团队"></select>
               <select id="new-user-role">
                 <option value="user">普通用户</option>
                 <option value="admin">管理员</option>
@@ -216,10 +244,10 @@
             </div>
           </div>
           <table>
-            <thead><tr><th>用户名</th><th>角色</th><th>状态</th><th>创建时间</th><th>最近登录</th><th>Token 更新时间</th><th>操作</th></tr></thead>
-            <tbody id="users-body"><tr><td colspan="7" class="empty">加载中...</td></tr></tbody>
+            <thead><tr><th>用户名</th><th>角色</th><th>团队</th><th>状态</th><th>创建时间</th><th>最近登录</th><th>Token 更新时间</th><th>操作</th></tr></thead>
+            <tbody id="users-body"><tr><td colspan="8" class="empty">加载中...</td></tr></tbody>
           </table>
-          <p class="refresh-hint">用户 API token 用于 REST 与 MCP；丢失后可由管理员轮换（只显示一次）。</p>
+          <p class="refresh-hint">用户 API token 用于 REST 接口；丢失后可由管理员轮换（只显示一次）。新用户必须归属一个团队。</p>
         </div>
       </section>
 
