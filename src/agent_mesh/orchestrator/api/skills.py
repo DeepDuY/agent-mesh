@@ -251,11 +251,6 @@ def mount_skill_routes(
         if public_url:
             text = text.replace("http://<orchestrator-host>:8000", public_url)
             text = text.replace("http://<host>:8000", public_url)
-            if public_url.endswith(":8000"):
-                text = text.replace(
-                    "http://<orchestrator-host>:8001",
-                    f"{public_url[:-5]}:8001",
-                )
             base_line = f"`{public_url}/api`"
         else:
             base_line = "`<未配置 — 请向用户询问编排器地址>`"

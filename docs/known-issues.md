@@ -104,6 +104,15 @@
     - **SKILL 更新**：明确禁止主 Agent 调用任何模板/权限/全局配置/节点 LLM 与提示词的写接口；遇权限拒绝如实上报，不得绕过。
     - **重要运维提醒**：若给主 Agent 用的是 **admin token**，上述 admin 校验仍挡不住它；**主 Agent 应使用普通用户（role=user）token**，管理员凭据仅保留给人使用。
     - **测试**：新增非管理员 `403`、缺少 UI 头 `404`、`effective_description` 优先级用例，全量 **127 项通过**。
+28. **2026-09-14 多租户（团队/组 + 资源归属）**：
+    - **模型**：`teams(team_id PK, name, description)` + `team_members(team_id, user_id)`（**一个用户至多属于一个团队**，唯一索引）；`agents.access` JSON `{"teams":[...],"users":[...]}`（谁能操作节点，admin 恒旁路）；`tasks.user_id`/`team_id`（**由 token 自动生成**）；`templates.owner_user_id`/`owner_team_id`。迁移 `017_tenancy.sql`，PG 在 `_ensure_*` 镜像建表/加列。
+    - **鉴权**：新增 `TaskStore.can_access_agent()/accessible_agent_ids()/user_team()`。节点列表/详情/操作、派发、任务列表与增删改查/日志/事件、文件列表与下载/删除，全部按身份过滤或校验（admin 全权）。任务可见：`自己 user_id 或（有团队时）团队 team_id`；无团队则仅自己。
+    - **半自动授权**：节点安装（心跳携带**用户 token**）时，自动把该用户及其团队写入 `agents.access`；admin 可在节点详情「访问权限」增删团队/用户。
+    - **模板归属**：模板管理从 `require_ui_admin` 放宽为 `require_ui_user`（仍**仅页面可访问，API 一律 404**）：admin 管理全部；非 admin 只能看/改/删自己或本团队的模板。绑定 (b1 锁定)：非 admin 只能把**自己团队/自己的**模板绑到自己可访问的节点，且**不能覆盖管理员设的（全局无主）模板绑定**。
+    - **移除 MCP**：整条 MCP 通道（`mcp_server.py`、SSE :8001、`mcp` 依赖、SKILL/docs 相关段落）删除，避免其成为隔离绕过口。
+    - **Web**：新增「团队」页（增删团队、勾选成员，单团队约束）；节点详情新增「访问权限」编辑器；模板弹窗区分「说明」与「节点描述」；「模板/配置/团队/用户」tab 均 `admin-only`（模板页对普通用户展示其自身模板）。
+    - **存量**：现有节点默认只有 admin 可访问（半自动只影响此后用用户 token 安装/轮询的节点）。
+    - **测试**：新增 `tests/test_tenancy.py`（团队 CRUD/单团队、节点访问过滤与派发、团队授权、任务可见性、文件隔离、非 admin 禁管团队），全量 **134 项通过**。
 
 ---
 

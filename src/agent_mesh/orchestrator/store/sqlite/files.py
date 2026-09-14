@@ -40,19 +40,29 @@ class FileMixin(SQLiteBase):
         return [dict(r) for r in rows]
 
     async def find_file_by_md5(
-        self, md5: str, filename: str
+        self, md5: str, filename: str, owner: str | None = None
     ) -> dict[str, Any] | None:
-        rows = await self._execute(
-            "SELECT * FROM files WHERE md5 = ? AND filename = ?", (md5, filename)
-        )
+        sql = "SELECT * FROM files WHERE md5 = ? AND filename = ?"
+        params: list[Any] = [md5, filename]
+        if owner is not None:
+            # Deduplicate only within the owner's files (never hand back a
+            # different user's file_id).
+            sql += " AND created_by = ?"
+            params.append(owner)
+        rows = await self._execute(sql, tuple(params))
         return dict(rows[0]) if rows else None
 
-    async def list_files(self, search: str | None = None) -> list[dict[str, Any]]:
-        sql = "SELECT * FROM files"
+    async def list_files(
+        self, search: str | None = None, owner: str | None = None
+    ) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM files WHERE 1=1"
         params: list[Any] = []
+        if owner is not None:
+            sql += " AND created_by = ?"
+            params.append(owner)
         if search:
             like = f"%{search}%"
-            sql += " WHERE filename LIKE ? OR file_id LIKE ?"
+            sql += " AND (filename LIKE ? OR file_id LIKE ?)"
             params.extend([like, like])
         sql += " ORDER BY created_at DESC"
         rows = await self._execute(sql, tuple(params))

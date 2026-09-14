@@ -521,6 +521,7 @@ class PostgresDatabase(Database):
                 llm_model TEXT,
                 description TEXT,
                 system_prompt TEXT,
+                access JSONB,
                 token_hash TEXT UNIQUE,
                 upgrade_requested BOOLEAN NOT NULL DEFAULT FALSE,
                 upgrade_version TEXT,
@@ -555,6 +556,8 @@ class PostgresDatabase(Database):
                 finished_at TIMESTAMP,
                 depends_on JSONB,
                 dispatched_by TEXT,
+                user_id TEXT,
+                team_id TEXT,
                 metadata JSONB,
                 session_id TEXT,
                 skills JSONB,
@@ -720,6 +723,8 @@ class PostgresDatabase(Database):
                 system_prompt TEXT,
                 llm_model TEXT,
                 permission JSONB,
+                owner_user_id TEXT,
+                owner_team_id TEXT,
                 data JSONB,
                 created_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW()
@@ -735,6 +740,10 @@ class PostgresDatabase(Database):
             await conn.execute("ALTER TABLE templates ADD COLUMN permission JSONB")
         if "node_description" not in tpl_cols:
             await conn.execute("ALTER TABLE templates ADD COLUMN node_description TEXT")
+        if "owner_user_id" not in tpl_cols:
+            await conn.execute("ALTER TABLE templates ADD COLUMN owner_user_id TEXT")
+        if "owner_team_id" not in tpl_cols:
+            await conn.execute("ALTER TABLE templates ADD COLUMN owner_team_id TEXT")
         if "allowed_tools" in tpl_cols:
             await conn.execute("ALTER TABLE templates DROP COLUMN allowed_tools")
         cols = {
@@ -756,6 +765,7 @@ class PostgresDatabase(Database):
             "mem_total_mb": "ALTER TABLE agents ADD COLUMN mem_total_mb REAL",
             "description": "ALTER TABLE agents ADD COLUMN description TEXT",
             "system_prompt": "ALTER TABLE agents ADD COLUMN system_prompt TEXT",
+            "access": "ALTER TABLE agents ADD COLUMN access JSONB",
             "template_id": "ALTER TABLE agents ADD COLUMN template_id INTEGER REFERENCES templates(id) ON DELETE SET NULL",
         }
         for col, sql in additions.items():
@@ -771,6 +781,27 @@ class PostgresDatabase(Database):
                 PRIMARY KEY (agent_id, user_id)
             )
         """)
+        # Teams/groups + membership (a user belongs to at most one team).
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS teams (
+                team_id TEXT PRIMARY KEY,
+                name TEXT UNIQUE NOT NULL,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS team_members (
+                team_id TEXT NOT NULL REFERENCES teams(team_id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW(),
+                PRIMARY KEY (team_id, user_id)
+            )
+        """)
+        await conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_id)"
+        )
 
     async def _ensure_task_schema_upgrade(self, conn: Any) -> None:
         """Add task columns (attachments, and any older-task columns) to an existing PG schema."""
@@ -784,6 +815,8 @@ class PostgresDatabase(Database):
             "session_id": "ALTER TABLE tasks ADD COLUMN session_id TEXT",
             "skills": "ALTER TABLE tasks ADD COLUMN skills JSONB",
             "attachments": "ALTER TABLE tasks ADD COLUMN attachments JSONB",
+            "user_id": "ALTER TABLE tasks ADD COLUMN user_id TEXT",
+            "team_id": "ALTER TABLE tasks ADD COLUMN team_id TEXT",
         }.items():
             if col not in cols:
                 await conn.execute(sql)

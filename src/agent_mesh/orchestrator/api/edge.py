@@ -157,10 +157,18 @@ def mount_edge_routes(
             agent_token = await store.ensure_agent_token(agent.id)
             if agent_token:
                 resp["agent_token"] = agent_token
-            # Record which user operates this machine (many-to-many; used by
-            # the later multi-user management).
+            # Record which user operates this machine (many-to-many; audit) and
+            # auto-grant access to the installing user + their team (semi-auto).
             if auth.get("auth") == "user":
                 await store.store.add_agent_user(agent.id, auth["user_id"])
+                try:
+                    await store.grant_agent_access(
+                        agent,
+                        user_id=auth.get("user_id"),
+                        team_id=await store.user_team(auth),
+                    )
+                except Exception:
+                    logger.warning("grant agent access failed", exc_info=True)
 
         # --- LLM config sync (config_version + resolved config) ---
         config_version = await store.store.get_setting("config_version")

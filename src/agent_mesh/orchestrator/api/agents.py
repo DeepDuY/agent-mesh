@@ -37,6 +37,11 @@ class _LlmConfigPayload(BaseModel):
     llm_model: str | None = None
 
 
+class _AccessPayload(BaseModel):
+    teams: list[str] | None = None
+    users: list[str] | None = None
+
+
 def _current_bootstrap_version(config: OrchestratorConfig) -> str | None:
     version_path = Path(config.db_path).parent / "bootstrap" / "VERSION"
     try:
@@ -53,6 +58,7 @@ def mount_agent_routes(
     config: OrchestratorConfig | None = None,
     require_admin=None,
     require_ui_admin=None,
+    require_ui_user=None,
 ) -> None:
     # Sensitive node-configuration endpoints (template binding, LLM credentials)
     # must be admin-only; fall back to the user guard if no admin dependency was
@@ -60,34 +66,47 @@ def mount_agent_routes(
     require_admin = require_admin or require_user_token
     # Template binding is management-only: reachable solely from the Web UI.
     require_ui_admin = require_ui_admin or require_admin
+    require_ui_user = require_ui_user or require_admin
+
+    async def _require_agent(agent_id: str, user: dict[str, Any]):
+        """Resolve an agent the caller is allowed to see, else 404 (no leak)."""
+        agent = await _get_agent_by_numeric_or_string_id(store, agent_id)
+        if agent is None or not await store.can_access_agent(user, agent):
+            raise HTTPException(status_code=404, detail="agent not found")
+        return agent
+
+    def _dump_agent(agent, user: dict[str, Any]) -> dict[str, Any]:
+        data = agent.model_dump_json_safe()
+        if not store.is_admin(user):
+            data.pop("access", None)  # don't expose the ACL to non-admins
+        return data
 
     @router.get("/agents")
     async def list_agents(
         user: dict[str, Any] = Depends(require_user_token),
     ) -> dict[str, Any]:
         agents = await store.list_agents()
+        allowed = await store.accessible_agent_ids(user)
+        if allowed is not None:
+            agents = [a for a in agents if a.id in allowed]
         await store.describe_agents(agents)
-        return {"agents": [a.model_dump_json_safe() for a in agents]}
+        return {"agents": [_dump_agent(a, user) for a in agents]}
 
     @router.get("/agents/{agent_id}")
     async def get_agent(
         agent_id: str,
         user: dict[str, Any] = Depends(require_user_token),
     ) -> dict[str, Any]:
-        agent = await _get_agent_by_numeric_or_string_id(store, agent_id)
-        if agent is None:
-            raise HTTPException(status_code=404, detail="agent not found")
+        agent = await _require_agent(agent_id, user)
         await store.describe_agents([agent])
-        return {"agent": agent.model_dump_json_safe()}
+        return {"agent": _dump_agent(agent, user)}
 
     @router.get("/agents/{agent_id}/detail")
     async def get_agent_detail(
         agent_id: str,
         user: dict[str, Any] = Depends(require_user_token),
     ) -> dict[str, Any]:
-        agent = await _get_agent_by_numeric_or_string_id(store, agent_id)
-        if agent is None:
-            raise HTTPException(status_code=404, detail="agent not found")
+        agent = await _require_agent(agent_id, user)
         await store.describe_agents([agent])
         key = agent.device_id or agent.agent_id
         tasks = await store.list_tasks(agent_id=key, limit=20)
@@ -95,10 +114,17 @@ def mount_agent_routes(
             **agent.model_dump(),
             tasks=[t.model_dump_json_safe() for t in tasks],
             metadata={
-                "allowed_users": await store.store.list_agent_users(agent.id),
+                "allowed_users": (
+                    await store.store.list_agent_users(agent.id)
+                    if store.is_admin(user)
+                    else []
+                ),
             },
         )
-        return {"agent": detail.model_dump_json_safe()}
+        data = detail.model_dump_json_safe()
+        if not store.is_admin(user):
+            data.pop("access", None)
+        return {"agent": data}
 
     @router.post("/agents/{agent_id}/token")
     async def rotate_agent_token(
@@ -106,9 +132,7 @@ def mount_agent_routes(
         user: dict[str, Any] = Depends(require_user_token),
     ) -> dict[str, Any]:
         """Rotate the agent's independent token (returned exactly once)."""
-        agent = await _get_agent_by_numeric_or_string_id(store, agent_id)
-        if agent is None:
-            raise HTTPException(status_code=404, detail="agent not found")
+        agent = await _require_agent(agent_id, user)
         token = generate_token()
         await store.store.set_agent_token_hash(agent.id, hash_token(token))
         logger.info(
@@ -126,9 +150,7 @@ def mount_agent_routes(
         payload: _AliasPayload,
         user: dict[str, Any] = Depends(require_user_token),
     ) -> dict[str, Any]:
-        agent = await _get_agent_by_numeric_or_string_id(store, agent_id)
-        if agent is None:
-            raise HTTPException(status_code=404, detail="agent not found")
+        agent = await _require_agent(agent_id, user)
         await store.store.set_agent_alias_by_id(agent.id, payload.alias)
         agent.alias = payload.alias
         return {"agent": agent.model_dump_json_safe()}
@@ -139,9 +161,7 @@ def mount_agent_routes(
         payload: _DescriptionPayload,
         user: dict[str, Any] = Depends(require_user_token),
     ) -> dict[str, Any]:
-        agent = await _get_agent_by_numeric_or_string_id(store, agent_id)
-        if agent is None:
-            raise HTTPException(status_code=404, detail="agent not found")
+        agent = await _require_agent(agent_id, user)
         await store.store.set_agent_description_by_id(agent.id, payload.description)
         agent.description = payload.description
         return {"agent": agent.model_dump_json_safe()}
@@ -167,14 +187,37 @@ def mount_agent_routes(
     async def patch_agent_template(
         agent_id: str,
         payload: _TemplatePayload,
-        user: dict[str, Any] = Depends(require_ui_admin),
+        user: dict[str, Any] = Depends(require_ui_user),
     ) -> dict[str, Any]:
         agent = await _get_agent_by_numeric_or_string_id(store, agent_id)
-        if agent is None:
+        if agent is None or not await store.can_access_agent(user, agent):
             raise HTTPException(status_code=404, detail="agent not found")
+
+        is_admin = store.is_admin(user)
+        team = await store.user_team(user)
+
+        # b1 lock: a non-admin may not override a template binding that was set
+        # by an administrator (global templates have no owner).
+        if not is_admin and agent.template_id is not None:
+            current = await store.store.get_template(agent.template_id)
+            if current is not None and not current.get("owner_user_id") and not current.get("owner_team_id"):
+                raise HTTPException(
+                    status_code=403,
+                    detail="this node's template is locked by an administrator",
+                )
+
         if payload.template_id is not None:
-            if await store.store.get_template(payload.template_id) is None:
+            template = await store.store.get_template(payload.template_id)
+            if template is None:
                 raise HTTPException(status_code=404, detail="template not found")
+            if not is_admin:
+                owned = (template.get("owner_user_id") == user.get("user_id")) or bool(
+                    team and template.get("owner_team_id") == team
+                )
+                if not owned:
+                    raise HTTPException(
+                        status_code=403, detail="you do not own this template"
+                    )
         await store.store.set_agent_template_by_id(agent.id, payload.template_id)
         agent.template_id = payload.template_id
         # Re-resolve the bound node's config (prompt/model may change).
@@ -209,14 +252,31 @@ def mount_agent_routes(
         logger.info("updated llm_config for agent %s", agent.id)
         return {"agent": agent.model_dump_json_safe()}
 
+    @router.patch("/agents/{agent_id}/access")
+    async def patch_agent_access(
+        agent_id: str,
+        payload: _AccessPayload,
+        user: dict[str, Any] = Depends(require_admin),
+    ) -> dict[str, Any]:
+        """Set which teams/users may operate the node (admin-only)."""
+        agent = await _get_agent_by_numeric_or_string_id(store, agent_id)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="agent not found")
+        access = {
+            "teams": sorted(set(payload.teams or [])),
+            "users": sorted(set(payload.users or [])),
+        }
+        await store.store.set_agent_access_by_id(agent.id, access)
+        agent.access = access
+        logger.info("updated access for agent %s by %s", agent.id, user["username"])
+        return {"agent": _dump_agent(agent, user)}
+
     @router.post("/agents/{agent_id}/upgrade")
     async def request_agent_upgrade(
         agent_id: str,
         user: dict[str, Any] = Depends(require_user_token),
     ) -> dict[str, Any]:
-        agent = await _get_agent_by_numeric_or_string_id(store, agent_id)
-        if agent is None:
-            raise HTTPException(status_code=404, detail="agent not found")
+        agent = await _require_agent(agent_id, user)
         version = _current_bootstrap_version(config)
         if not version:
             raise HTTPException(
@@ -236,9 +296,7 @@ def mount_agent_routes(
         agent_id: str,
         user: dict[str, Any] = Depends(require_user_token),
     ) -> dict[str, Any]:
-        agent = await _get_agent_by_numeric_or_string_id(store, agent_id)
-        if agent is None:
-            raise HTTPException(status_code=404, detail="agent not found")
+        agent = await _require_agent(agent_id, user)
 
         key = agent.device_id or agent.agent_id
         instruction = (

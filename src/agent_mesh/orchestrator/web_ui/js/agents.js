@@ -59,6 +59,19 @@ async function showAgentDetail(agentId) {
       </select>
       <button type="submit">应用</button>
     </form>
+
+    <h3>访问权限 <span class="help" data-tip="允许操作该节点的团队/用户；管理员始终可操作。安装该节点的用户及其团队会自动加入。">?</span></h3>
+    <form onsubmit="setAgentAccess(event, ${a.id})">
+      <label class="muted">团队</label>
+      <div>
+        ${(currentTeams || []).map(t => `<label style="display:block"><input type="checkbox" name="access_team" value="${escHtml(t.team_id)}" ${(((a.access || {}).teams) || []).includes(t.team_id) ? 'checked' : ''}> ${escHtml(t.name)}</label>`).join('') || '<span class="muted">暂无团队</span>'}
+      </div>
+      <label class="muted">用户</label>
+      <div>
+        ${(currentUsers || []).map(u => `<label style="display:block"><input type="checkbox" name="access_user" value="${escHtml(u.user_id)}" ${(((a.access || {}).users) || []).includes(u.user_id) ? 'checked' : ''}> ${escHtml(u.username)}</label>`).join('') || '<span class="muted">暂无用户</span>'}
+      </div>
+      <div class="sub-actions"><button class="btn" type="submit">保存访问权限</button></div>
+    </form>
   ` : '';
   document.getElementById('agent-detail').innerHTML = `
     <div class="detail-grid">
@@ -249,4 +262,22 @@ async function applyTemplate(e, agentId) {
   }
   closeAgentModal();
   loadAll();
+}
+
+async function setAgentAccess(e, agentId) {
+  e.preventDefault();
+  const teams = Array.from(e.target.querySelectorAll('input[name=access_team]:checked')).map(c => c.value);
+  const users = Array.from(e.target.querySelectorAll('input[name=access_user]:checked')).map(c => c.value);
+  try {
+    const res = await fetch(`/api/agents/${agentId}/access`, {
+      method: 'PATCH',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ teams, users }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    closeAgentModal();
+    loadAll();
+  } catch (err) {
+    alert('保存失败：' + err.message);
+  }
 }

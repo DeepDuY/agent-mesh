@@ -138,7 +138,7 @@ function resumeRefresh() {
 
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
-  ['agents', 'tasks', 'files', 'skills', 'templates', 'users', 'config'].forEach(n => {
+  ['agents', 'tasks', 'files', 'skills', 'templates', 'users', 'teams', 'config'].forEach(n => {
     document.getElementById(`tab-${n}`).classList.toggle('hidden', n !== name);
   });
 }
@@ -155,7 +155,7 @@ function agentDisplayName(key) {
 
 async function loadAll() {
   await Promise.all([loadAgents(), loadTasks(), loadFiles(), loadSkills(), loadTemplates(), loadConfig()]);
-  if (isAdmin()) await loadUsers();
+  if (isAdmin()) { await loadUsers(); await loadTeams(); }
 }
 
 function openModal() {

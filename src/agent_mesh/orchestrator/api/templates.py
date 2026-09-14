@@ -22,6 +22,8 @@ class _TemplateCreate(BaseModel):
     llm_model: str | None = None
     permission: dict[str, Any] | None = None
     data: dict[str, Any] | None = None
+    owner_user_id: str | None = None  # admin-only assignment
+    owner_team_id: str | None = None  # admin-only assignment
 
 
 class _TemplatePatch(BaseModel):
@@ -32,6 +34,8 @@ class _TemplatePatch(BaseModel):
     llm_model: str | None = None
     permission: dict[str, Any] | None = None
     data: dict[str, Any] | None = None
+    owner_user_id: str | None = None  # admin-only assignment
+    owner_team_id: str | None = None  # admin-only assignment
 
 
 def _public(template: dict[str, Any]) -> dict[str, Any]:
@@ -44,6 +48,8 @@ def _public(template: dict[str, Any]) -> dict[str, Any]:
         "llm_model": template.get("llm_model"),
         "permission": template.get("permission"),
         "data": template.get("data"),
+        "owner_user_id": template.get("owner_user_id"),
+        "owner_team_id": template.get("owner_team_id"),
         "created_at": _iso(template.get("created_at")),
         "updated_at": _iso(template.get("updated_at")),
     }
@@ -58,20 +64,44 @@ def _iso(value: Any) -> str | None:
 def mount_template_routes(
     router: APIRouter,
     store: TaskStore,
-    require_admin,
+    require_ui_user,
 ) -> None:
+    """Template management, reachable only from the Web UI (require_ui_user).
+
+    Ownership: admins see/manage everything (including global templates with no
+    owner). A non-admin sees and manages only the templates owned by their user
+    or their team; anything else is a 404.
+    """
+
+    def _owner_ok(template: dict[str, Any], user: dict[str, Any], team: str | None) -> bool:
+        if store.is_admin(user):
+            return True
+        if template.get("owner_user_id") and template["owner_user_id"] == user.get("user_id"):
+            return True
+        return bool(team and template.get("owner_team_id") == team)
+
+    async def _require_owned(template_id: int, user: dict[str, Any]):
+        template = await store.store.get_template(template_id)
+        if template is None:
+            raise HTTPException(status_code=404, detail="template not found")
+        if not _owner_ok(template, user, await store.user_team(user)):
+            raise HTTPException(status_code=404, detail="template not found")
+        return template
 
     @router.get("/templates")
     async def list_templates(
-        user: dict[str, Any] = Depends(require_admin),
+        user: dict[str, Any] = Depends(require_ui_user),
     ) -> dict[str, Any]:
+        team = await store.user_team(user)
         templates = await store.store.list_templates()
+        if not store.is_admin(user):
+            templates = [t for t in templates if _owner_ok(t, user, team)]
         return {"templates": [_public(t) for t in templates]}
 
     @router.post("/templates")
     async def create_template(
         payload: _TemplateCreate,
-        user: dict[str, Any] = Depends(require_admin),
+        user: dict[str, Any] = Depends(require_ui_user),
     ) -> dict[str, Any]:
         name = payload.name.strip()
         if not _NAME_RE.match(name):
@@ -81,6 +111,13 @@ def mount_template_routes(
             )
         if await store.store.get_template_by_name(name) is not None:
             raise HTTPException(status_code=409, detail="template name already exists")
+        if store.is_admin(user):
+            owner_user_id, owner_team_id = payload.owner_user_id, payload.owner_team_id
+        else:
+            # Non-admins own what they create (team-owned if they are in a team).
+            team = await store.user_team(user)
+            owner_user_id = None if team else user.get("user_id")
+            owner_team_id = team
         template_id = await store.store.create_template(
             name=name,
             description=payload.description,
@@ -89,6 +126,8 @@ def mount_template_routes(
             llm_model=payload.llm_model,
             permission=payload.permission,
             data=payload.data,
+            owner_user_id=owner_user_id,
+            owner_team_id=owner_team_id,
         )
         await store.bump_config_version()
         template = await store.store.get_template(template_id)
@@ -98,23 +137,23 @@ def mount_template_routes(
     @router.get("/templates/{template_id}")
     async def get_template(
         template_id: int,
-        user: dict[str, Any] = Depends(require_admin),
+        user: dict[str, Any] = Depends(require_ui_user),
     ) -> dict[str, Any]:
-        template = await store.store.get_template(template_id)
-        if template is None:
-            raise HTTPException(status_code=404, detail="template not found")
+        template = await _require_owned(template_id, user)
         return {"template": _public(template)}
 
     @router.patch("/templates/{template_id}")
     async def patch_template(
         template_id: int,
         payload: _TemplatePatch,
-        user: dict[str, Any] = Depends(require_admin),
+        user: dict[str, Any] = Depends(require_ui_user),
     ) -> dict[str, Any]:
-        template = await store.store.get_template(template_id)
-        if template is None:
-            raise HTTPException(status_code=404, detail="template not found")
+        await _require_owned(template_id, user)
         fields = payload.model_dump(exclude_unset=True)
+        if not store.is_admin(user):
+            # Non-admins cannot reassign ownership.
+            fields.pop("owner_user_id", None)
+            fields.pop("owner_team_id", None)
         if "name" in fields and fields["name"] is not None:
             name = fields["name"].strip()
             if not _NAME_RE.match(name):
@@ -136,8 +175,9 @@ def mount_template_routes(
     @router.delete("/templates/{template_id}")
     async def delete_template(
         template_id: int,
-        user: dict[str, Any] = Depends(require_admin),
+        user: dict[str, Any] = Depends(require_ui_user),
     ) -> dict[str, Any]:
+        await _require_owned(template_id, user)
         deleted = await store.store.delete_template(template_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="template not found")

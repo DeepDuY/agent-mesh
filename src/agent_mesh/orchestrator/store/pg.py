@@ -96,6 +96,7 @@ class PostgresStore(AbstractStore):
             description=row.get("description"),
             system_prompt=row.get("system_prompt"),
             template_id=row.get("template_id"),
+            access=_load_json(row.get("access")),
             upgrade_requested=bool(row.get("upgrade_requested")),
             upgrade_version=row.get("upgrade_version"),
             cpu_percent=row.get("cpu_percent"),
@@ -251,12 +252,15 @@ class PostgresStore(AbstractStore):
         llm_model: str | None = None,
         permission: dict[str, Any] | None = None,
         data: dict[str, Any] | None = None,
+        owner_user_id: str | None = None,
+        owner_team_id: str | None = None,
     ) -> int:
         row = await self._db.fetchrow(
             """
             INSERT INTO templates
-                (name, description, node_description, system_prompt, llm_model, permission, data)
-            VALUES (?, ?, ?, ?, ?, ?::jsonb, ?::jsonb) RETURNING id
+                (name, description, node_description, system_prompt, llm_model,
+                 permission, data, owner_user_id, owner_team_id)
+            VALUES (?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?) RETURNING id
             """,
             (
                 name,
@@ -266,6 +270,8 @@ class PostgresStore(AbstractStore):
                 llm_model,
                 _dump_json(permission),
                 _dump_json(data),
+                owner_user_id,
+                owner_team_id,
             ),
         )
         return row["id"]
@@ -295,6 +301,8 @@ class PostgresStore(AbstractStore):
             "llm_model",
             "permission",
             "data",
+            "owner_user_id",
+            "owner_team_id",
         }
         sets: list[str] = []
         params: list[Any] = []
@@ -370,6 +378,100 @@ class PostgresStore(AbstractStore):
             "SELECT user_id FROM agent_users WHERE agent_id = ?", (agent_id,)
         )
         return [r["user_id"] for r in rows]
+
+    async def set_agent_access_by_id(
+        self, agent_id: int, access: dict[str, Any] | None
+    ) -> None:
+        await self._db.execute(
+            "UPDATE agents SET access = ?::jsonb, updated_at = ? WHERE id = ?",
+            (_dump_json(access), _utcnow(), agent_id),
+        )
+
+    # ------------------------------------------------------------------
+    # Teams / groups
+    # ------------------------------------------------------------------
+    async def create_team(
+        self, team_id: str, name: str, description: str | None = None
+    ) -> None:
+        await self._db.execute(
+            "INSERT INTO teams (team_id, name, description) VALUES (?, ?, ?)",
+            (team_id, name, description),
+        )
+
+    async def get_team(self, team_id: str) -> dict[str, Any] | None:
+        row = await self._db.fetchrow(
+            "SELECT team_id, name, description, created_at, updated_at "
+            "FROM teams WHERE team_id = ?",
+            (team_id,),
+        )
+        return dict(row) if row else None
+
+    async def get_team_by_name(self, name: str) -> dict[str, Any] | None:
+        row = await self._db.fetchrow(
+            "SELECT team_id, name, description, created_at, updated_at "
+            "FROM teams WHERE name = ?",
+            (name,),
+        )
+        return dict(row) if row else None
+
+    async def list_teams(self) -> list[dict[str, Any]]:
+        rows = await self._db.execute(
+            "SELECT team_id, name, description, created_at, updated_at "
+            "FROM teams ORDER BY name ASC"
+        )
+        return [dict(r) for r in rows]
+
+    async def update_team(
+        self,
+        team_id: str,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> bool:
+        sets: list[str] = []
+        params: list[Any] = []
+        if name is not None:
+            sets.append("name = ?")
+            params.append(name)
+        if description is not None:
+            sets.append("description = ?")
+            params.append(description)
+        if not sets:
+            return False
+        sets.append("updated_at = ?")
+        params.append(_utcnow())
+        params.append(team_id)
+        return await self._db.execute_rowcount(
+            f"UPDATE teams SET {', '.join(sets)} WHERE team_id = ?", tuple(params)
+        ) > 0
+
+    async def delete_team(self, team_id: str) -> bool:
+        await self._db.execute("DELETE FROM team_members WHERE team_id = ?", (team_id,))
+        return await self._db.execute_rowcount(
+            "DELETE FROM teams WHERE team_id = ?", (team_id,)
+        ) > 0
+
+    async def list_team_members(self, team_id: str) -> list[str]:
+        rows = await self._db.execute(
+            "SELECT user_id FROM team_members WHERE team_id = ? ORDER BY user_id",
+            (team_id,),
+        )
+        return [r["user_id"] for r in rows]
+
+    async def set_user_team(self, user_id: str, team_id: str | None) -> None:
+        await self._db.execute(
+            "DELETE FROM team_members WHERE user_id = ?", (user_id,)
+        )
+        if team_id:
+            await self._db.execute(
+                "INSERT INTO team_members (team_id, user_id) VALUES (?, ?)",
+                (team_id, user_id),
+            )
+
+    async def get_user_team(self, user_id: str) -> str | None:
+        row = await self._db.fetchrow(
+            "SELECT team_id FROM team_members WHERE user_id = ?", (user_id,)
+        )
+        return row["team_id"] if row else None
 
     async def request_agent_upgrade(self, agent_id: int, version: str) -> bool:
         now = _utcnow()
@@ -485,6 +587,8 @@ class PostgresStore(AbstractStore):
             instruction=row["instruction"],
             constraints=constraints,
             status=TaskStatus(row["status"]),
+            user_id=row.get("user_id"),
+            team_id=row.get("team_id"),
             created_at=_iso_to_dt(row.get("created_at")) or _utcnow(),
             assigned_at=_iso_to_dt(row.get("assigned_at")),
             started_at=_iso_to_dt(row.get("started_at")),
@@ -512,15 +616,21 @@ class PostgresStore(AbstractStore):
             session_id=row.get("session_id"),
         )
 
-    async def create_task(self, task: Task, dispatched_by: str | None = None) -> None:
+    async def create_task(
+        self,
+        task: Task,
+        dispatched_by: str | None = None,
+        user_id: str | None = None,
+        team_id: str | None = None,
+    ) -> None:
         await self._db.execute(
             """
             INSERT INTO tasks (
                 task_id, agent_id, mode, instruction, workdir, timeout_s, model,
                 output_limit, status, max_retries, retry_count,
                 created_at, assigned_at, started_at, finished_at, depends_on,
-                dispatched_by, metadata, session_id, skills, attachments
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                dispatched_by, user_id, team_id, metadata, session_id, skills, attachments
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task.task_id, task.agent_id, task.mode, task.instruction,
@@ -536,6 +646,8 @@ class PostgresStore(AbstractStore):
                 task.finished_at,
                 _dump_json(None),
                 dispatched_by,
+                user_id,
+                team_id,
                 _dump_json(None),
                 task.constraints.session_id,
                 _dump_json(task.constraints.skills),
@@ -559,6 +671,8 @@ class PostgresStore(AbstractStore):
         search: str | None,
         started_after: datetime | None,
         started_before: datetime | None,
+        owner_user_id: str | None = None,
+        owner_team_id: str | None = None,
     ) -> tuple[str, list[Any]]:
         where = " WHERE 1=1"
         params: list[Any] = []
@@ -581,6 +695,15 @@ class PostgresStore(AbstractStore):
         if started_before is not None:
             where += " AND started_at <= ?"
             params.append(started_before)
+        if owner_user_id is not None or owner_team_id is not None:
+            clauses = []
+            if owner_user_id is not None:
+                clauses.append("user_id = ?")
+                params.append(owner_user_id)
+            if owner_team_id is not None:
+                clauses.append("team_id = ?")
+                params.append(owner_team_id)
+            where += " AND (" + " OR ".join(clauses) + ")"
         return where, params
 
     async def list_tasks(
@@ -593,9 +716,12 @@ class PostgresStore(AbstractStore):
         started_before: datetime | None = None,
         limit: int = 100,
         offset: int = 0,
+        owner_user_id: str | None = None,
+        owner_team_id: str | None = None,
     ) -> list[Task]:
         where, params = self._tasks_where(
-            agent_id, status, mode, search, started_after, started_before
+            agent_id, status, mode, search, started_after, started_before,
+            owner_user_id, owner_team_id,
         )
         sql = f"SELECT * FROM tasks{where} ORDER BY created_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
@@ -613,9 +739,12 @@ class PostgresStore(AbstractStore):
         search: str | None = None,
         started_after: datetime | None = None,
         started_before: datetime | None = None,
+        owner_user_id: str | None = None,
+        owner_team_id: str | None = None,
     ) -> int:
         where, params = self._tasks_where(
-            agent_id, status, mode, search, started_after, started_before
+            agent_id, status, mode, search, started_after, started_before,
+            owner_user_id, owner_team_id,
         )
         row = await self._db.fetchrow(f"SELECT COUNT(*) AS n FROM tasks{where}", tuple(params))
         return int(row["n"]) if row else 0
@@ -860,20 +989,27 @@ class PostgresStore(AbstractStore):
         return [dict(row) for row in rows]
 
     async def find_file_by_md5(
-        self, md5: str, filename: str
+        self, md5: str, filename: str, owner: str | None = None
     ) -> dict[str, Any] | None:
-        row = await self._db.fetchrow(
-            "SELECT * FROM files WHERE md5 = ? AND filename = ?",
-            (md5, filename),
-        )
+        sql = "SELECT * FROM files WHERE md5 = ? AND filename = ?"
+        params: list[Any] = [md5, filename]
+        if owner is not None:
+            sql += " AND created_by = ?"
+            params.append(owner)
+        row = await self._db.fetchrow(sql, tuple(params))
         return dict(row) if row else None
 
-    async def list_files(self, search: str | None = None) -> list[dict[str, Any]]:
-        sql = "SELECT * FROM files"
+    async def list_files(
+        self, search: str | None = None, owner: str | None = None
+    ) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM files WHERE 1=1"
         params: list[Any] = []
+        if owner is not None:
+            sql += " AND created_by = ?"
+            params.append(owner)
         if search:
             like = f"%{search}%"
-            sql += " WHERE filename ILIKE ? OR file_id ILIKE ?"
+            sql += " AND (filename ILIKE ? OR file_id ILIKE ?)"
             params.extend([like, like])
         sql += " ORDER BY created_at DESC"
         rows = await self._db.execute(sql, tuple(params))

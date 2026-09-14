@@ -37,9 +37,13 @@ def _normalize_dt(dt: datetime | None) -> datetime | None:
 
 
 async def _resolve_attachment_refs(
-    store: TaskStore, file_ids: list[str]
+    store: TaskStore, file_ids: list[str], user: dict[str, Any] | None = None
 ) -> list[FileRef]:
-    """Resolve file-library ids into authoritative FileRefs; raise on missing."""
+    """Resolve file-library ids into authoritative FileRefs; raise on missing.
+
+    A non-admin may only attach files they own (created_by), so attachments
+    cannot be used to reference (and thereby read) another user's files.
+    """
     rows = await store.store.get_files_by_ids(file_ids)
     found = {r["file_id"]: r for r in rows}
     for fid in file_ids:
@@ -48,6 +52,11 @@ async def _resolve_attachment_refs(
     refs: list[FileRef] = []
     for fid in file_ids:
         r = found[fid]
+        if user is not None and not store.is_admin(user):
+            owner_ids = {user.get("user_id"), user.get("username")}
+            if r.get("created_by") not in owner_ids:
+                # Do not reveal the existence of another user's file.
+                raise HTTPException(status_code=400, detail=f"attachment file not found: {fid}")
         refs.append(
             FileRef(
                 file_id=r["file_id"],
@@ -78,6 +87,26 @@ def mount_task_routes(
     require_user_token,
 ) -> None:
 
+    async def _owner_filter(user: dict[str, Any]):
+        """(owner_user_id, owner_team_id) for a non-admin, else (None, None)."""
+        if store.is_admin(user):
+            return None, None
+        return user.get("user_id"), await store.user_team(user)
+
+    async def _require_task(task_id: str, user: dict[str, Any]):
+        task = await store.get_task(task_id)
+        if task is None or not await _can_see_task(task, user):
+            raise HTTPException(status_code=404, detail="task not found")
+        return task
+
+    async def _can_see_task(task, user: dict[str, Any]) -> bool:
+        if store.is_admin(user):
+            return True
+        user_id, team = await _owner_filter(user)
+        if user_id and task.user_id == user_id:
+            return True
+        return bool(team and task.team_id == team)
+
     @router.get("/tasks")
     async def list_tasks(
         agent_id: str | None = None,
@@ -100,6 +129,7 @@ def mount_task_routes(
             raise HTTPException(status_code=400, detail="mode must be 'command' or 'llm'")
         after = _parse_dt(started_after, "started_after")
         before = _parse_dt(started_before, "started_before")
+        owner_user_id, owner_team_id = await _owner_filter(user)
         tasks = await store.list_tasks(
             agent_id=agent_id,
             status=task_status,
@@ -109,6 +139,8 @@ def mount_task_routes(
             started_before=before,
             limit=limit,
             offset=offset,
+            owner_user_id=owner_user_id,
+            owner_team_id=owner_team_id,
         )
         total = await store.store.count_tasks(
             agent_id=agent_id,
@@ -117,6 +149,8 @@ def mount_task_routes(
             search=search or None,
             started_after=after,
             started_before=before,
+            owner_user_id=owner_user_id,
+            owner_team_id=owner_team_id,
         )
         return {
             "tasks": [t.model_dump_json_safe() for t in tasks],
@@ -130,9 +164,7 @@ def mount_task_routes(
         task_id: str,
         user: dict[str, Any] = Depends(require_user_token),
     ) -> dict[str, Any]:
-        task = await store.get_task(task_id)
-        if task is None:
-            raise HTTPException(status_code=404, detail="task not found")
+        task = await _require_task(task_id, user)
         return {"task": task.model_dump_json_safe()}
 
     @router.post("/tasks/dispatch")
@@ -144,6 +176,13 @@ def mount_task_routes(
         mode = body.get("mode")
         if mode not in ("command", "llm"):
             raise HTTPException(status_code=400, detail="mode must be 'command' or 'llm'")
+
+        # Tenancy: the caller must be allowed to operate the target node.
+        target = await store.resolve_agent(body.get("agent_id", ""))
+        if target is None:
+            raise HTTPException(status_code=404, detail="agent not found")
+        if not await store.can_access_agent(user, target):
+            raise HTTPException(status_code=403, detail="no access to this node")
 
         model_error = await store.validate_llm_model(
             body.get("agent_id", ""), mode, body.get("model")
@@ -181,8 +220,9 @@ def mount_task_routes(
             skills=body.get("skills"),
         )
         attachments = await _resolve_attachment_refs(
-            store, body.get("attachments") or []
+            store, body.get("attachments") or [], user
         )
+        team_id = await store.user_team(user)
         task_id = await store.dispatch(
             agent_id=body.get("agent_id", ""),
             instruction=body.get("instruction", ""),
@@ -192,6 +232,8 @@ def mount_task_routes(
             depends_on=body.get("depends_on"),
             dispatched_by=user["username"],
             attachments=attachments,
+            user_id=user.get("user_id"),
+            team_id=team_id,
         )
         logger.info("REST dispatched task %s by %s", task_id, user["username"])
         await store.store.append_task_event(
@@ -209,6 +251,7 @@ def mount_task_routes(
         limit: int = Query(200, ge=1, le=1000),
         user: dict[str, Any] = Depends(require_user_token),
     ) -> dict[str, Any]:
+        await _require_task(task_id, user)
         events = await store.store.list_task_events(task_id, limit=limit)
         return {"task_id": task_id, "events": events}
 
@@ -219,6 +262,7 @@ def mount_task_routes(
         limit: int = Query(500, ge=1, le=2000),
         user: dict[str, Any] = Depends(require_user_token),
     ) -> dict[str, Any]:
+        await _require_task(task_id, user)
         logs = await store.store.list_task_logs(task_id, after_id=after_id, limit=limit)
         next_id = logs[-1]["id"] if logs else after_id
         return {"task_id": task_id, "logs": logs, "next_id": next_id}
@@ -229,7 +273,7 @@ def mount_task_routes(
         user: dict[str, Any] = Depends(require_user_token),
     ) -> dict[str, Any]:
         task = await store.get_task(task_id)
-        if task is None:
+        if task is None or not await _can_see_task(task, user):
             return {"found": False}
         return {"found": True, "task": task.model_dump_json_safe()}
 
@@ -238,9 +282,7 @@ def mount_task_routes(
         task_id: str,
         user: dict[str, Any] = Depends(require_user_token),
     ) -> dict[str, Any]:
-        task = await store.get_task(task_id)
-        if task is None:
-            raise HTTPException(status_code=404, detail="task not found")
+        await _require_task(task_id, user)
         accepted = await store.cancel_task(task_id)
         if not accepted:
             return {"accepted": False, "error": "task is already in a terminal state"}
@@ -258,6 +300,7 @@ def mount_task_routes(
         task_id: str,
         user: dict[str, Any] = Depends(require_user_token),
     ) -> dict[str, Any]:
+        await _require_task(task_id, user)
         deleted = await store.store.delete_task(task_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="task not found")
@@ -269,6 +312,7 @@ def mount_task_routes(
         payload: _BatchDeletePayload,
         user: dict[str, Any] = Depends(require_user_token),
     ) -> dict[str, Any]:
+        owner_user_id, owner_team_id = await _owner_filter(user)
         if payload.all_matching:
             task_status = None
             if payload.status is not None:
@@ -291,10 +335,17 @@ def mount_task_routes(
                 started_before=_normalize_dt(payload.started_before),
                 limit=10000,
                 offset=0,
+                owner_user_id=owner_user_id,
+                owner_team_id=owner_team_id,
             )
             task_ids = [t.task_id for t in tasks]
         else:
-            task_ids = payload.task_ids
+            # Explicit ids: keep only those the caller may see.
+            task_ids = []
+            for tid in payload.task_ids:
+                t = await store.get_task(tid)
+                if t is not None and await _can_see_task(t, user):
+                    task_ids.append(tid)
 
         if not task_ids:
             return {"deleted": 0}

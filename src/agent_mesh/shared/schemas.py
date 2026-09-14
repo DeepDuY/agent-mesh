@@ -95,6 +95,8 @@ class Task(BaseModel):
     instruction: str
     constraints: Constraints = Field(default_factory=Constraints)
     status: TaskStatus = TaskStatus.QUEUED
+    user_id: str | None = None
+    team_id: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     assigned_at: datetime | None = None
     started_at: datetime | None = None
@@ -112,6 +114,8 @@ class Task(BaseModel):
             "instruction": self.instruction,
             "constraints": self.constraints.model_dump(),
             "status": self.status.value,
+            "user_id": self.user_id,
+            "team_id": self.team_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "assigned_at": self.assigned_at.isoformat() if self.assigned_at else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
@@ -145,6 +149,7 @@ class AgentStatus(BaseModel):
     system_prompt: str | None = None
     template_id: int | None = None
     template_name: str | None = None
+    access: dict[str, Any] | None = None
     upgrade_requested: bool = False
     upgrade_version: str | None = None
     cpu_percent: float | None = None
@@ -177,6 +182,7 @@ class AgentStatus(BaseModel):
             "system_prompt": self.system_prompt,
             "template_id": self.template_id,
             "template_name": self.template_name,
+            "access": self.access,
             "upgrade_requested": self.upgrade_requested,
             "upgrade_version": self.upgrade_version,
             "cpu_percent": self.cpu_percent,

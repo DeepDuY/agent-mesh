@@ -43,6 +43,7 @@
       <div class="tab" data-tab="skills" onclick="switchTab('skills')">技能</div>
       <div class="tab admin-only hidden" data-tab="templates" onclick="switchTab('templates')">模板</div>
       <div class="tab admin-only hidden" data-tab="users" onclick="switchTab('users')">用户</div>
+      <div class="tab admin-only hidden" data-tab="teams" onclick="switchTab('teams')">团队</div>
       <div class="tab admin-only hidden" data-tab="config" onclick="switchTab('config')">配置</div>
     </div>
     <div class="container">
@@ -158,6 +159,21 @@
             <tbody id="skills-body"><tr><td colspan="5" class="empty">加载中...</td></tr></tbody>
           </table>
           <div id="skill-upload-status" class="status-msg"></div>
+        </div>
+      </section>
+
+      <section id="tab-teams" class="tab-panel hidden">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>团队 / 组</h2>
+            <button class="btn btn-success" onclick="openTeamModal()">+ 新建团队</button>
+          </div>
+          <p class="refresh-hint" style="text-align:left">团队用于权限归属：节点访问权限、模板归属、任务可见性都可按团队。一个用户至多属于一个团队。</p>
+          <table>
+            <thead><tr><th>名称</th><th>说明</th><th>成员</th><th>操作</th></tr></thead>
+            <tbody id="teams-body"><tr><td colspan="4" class="empty">加载中...</td></tr></tbody>
+          </table>
+          <div id="teams-status" class="status-msg"></div>
         </div>
       </section>
 
@@ -316,6 +332,33 @@
     </div>
   </div>
 
+  <div id="team-modal" class="modal hidden" onclick="onTeamBackdrop(event)">
+    <div class="modal-content" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h2 id="team-modal-title">新建团队</h2>
+        <span class="close" onclick="closeTeamModal()">&times;</span>
+      </div>
+      <input id="team-id" type="hidden">
+      <div class="form-group">
+        <label>名称</label>
+        <input id="team-name" type="text" placeholder="例如：运维组">
+      </div>
+      <div class="form-group">
+        <label>说明</label>
+        <input id="team-desc" type="text" placeholder="可选">
+      </div>
+      <div class="form-group">
+        <label>成员（一个用户至多属于一个团队；勾选会将其从原团队移入本团队）</label>
+        <div id="team-members" class="checkbox-list"></div>
+      </div>
+      <div id="team-status" class="status-msg"></div>
+      <div class="sub-actions">
+        <button class="btn" onclick="saveTeam()">保存</button>
+        <button class="btn btn-secondary" onclick="closeTeamModal()">取消</button>
+      </div>
+    </div>
+  </div>
+
   <div id="template-modal" class="modal hidden" onclick="onTemplateBackdrop(event)">
     <div class="modal-content" onclick="event.stopPropagation()">
       <div class="modal-header">
@@ -408,6 +451,7 @@
   <script src="/static/js/skills.js"></script>
   <script src="/static/js/users.js"></script>
   <script src="/static/js/templates.js"></script>
+  <script src="/static/js/teams.js"></script>
   <script src="/static/js/config.js"></script>
 </body>
 </html>

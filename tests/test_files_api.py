@@ -189,7 +189,6 @@ def test_skill_doc_download(client: TestClient):
     resp = client.get("/api/skill-doc/agent-mesh", headers=headers)
     assert resp.status_code == 200
     assert "http://10.0.0.1:8000/api" in resp.text
-    assert "http://10.0.0.1:8001" in resp.text  # MCP derived :8001
     assert "未配置" not in resp.text
     # Example <token> placeholders replaced with the real token.
     assert "<token>" not in resp.text

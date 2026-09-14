@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from agent_mesh.orchestrator.store.sqlite.connection import _dt_to_iso, _dump_json, _iso_to_dt, SQLiteBase
+from agent_mesh.orchestrator.store.sqlite.connection import _dt_to_iso, _dump_json, _iso_to_dt, _load_json, SQLiteBase
 from agent_mesh.shared.schemas import (
     METRIC_FIELDS,
     SYSTEM_FIELDS,
@@ -39,6 +39,7 @@ class AgentMixin(SQLiteBase):
             description=_row_get(row, "description"),
             system_prompt=_row_get(row, "system_prompt"),
             template_id=_row_get(row, "template_id"),
+            access=_load_json(_row_get(row, "access")),
             upgrade_requested=bool(_row_get(row, "upgrade_requested")),
             upgrade_version=_row_get(row, "upgrade_version"),
             cpu_percent=_row_get(row, "cpu_percent"),
@@ -199,6 +200,14 @@ class AgentMixin(SQLiteBase):
         await self._execute(
             "UPDATE agents SET template_id = ?, updated_at = ? WHERE id = ?",
             (template_id, _dt_to_iso(datetime.now(timezone.utc)), agent_id),
+        )
+
+    async def set_agent_access_by_id(
+        self, agent_id: int, access: dict[str, Any] | None
+    ) -> None:
+        await self._execute(
+            "UPDATE agents SET access = ?, updated_at = ? WHERE id = ?",
+            (_dump_json(access), _dt_to_iso(datetime.now(timezone.utc)), agent_id),
         )
 
     async def delete_agent(self, agent_id: int) -> bool:

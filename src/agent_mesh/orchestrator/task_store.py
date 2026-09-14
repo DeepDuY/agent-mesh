@@ -56,6 +56,8 @@ class TaskStore:
         started_before: datetime | None = None,
         limit: int = 100,
         offset: int = 0,
+        owner_user_id: str | None = None,
+        owner_team_id: str | None = None,
     ) -> list[Task]:
         return await self.store.list_tasks(
             agent_id=agent_id,
@@ -66,6 +68,8 @@ class TaskStore:
             started_before=started_before,
             limit=limit,
             offset=offset,
+            owner_user_id=owner_user_id,
+            owner_team_id=owner_team_id,
         )
 
     async def list_agents(self) -> list[AgentStatus]:
@@ -88,6 +92,74 @@ class TaskStore:
             tpl_desc = ((tpl.get("node_description") if tpl else "") or "").strip() or None
             node_desc = (a.description or "").strip() or None
             a.effective_description = node_desc or tpl_desc
+
+    # ------------------------------------------------------------------
+    # Tenancy / access control
+    # ------------------------------------------------------------------
+    @staticmethod
+    def is_admin(user: dict[str, Any] | None) -> bool:
+        return bool(user) and user.get("role") == "admin"
+
+    async def user_team(self, user: dict[str, Any] | None) -> str | None:
+        user_id = (user or {}).get("user_id")
+        if not user_id:
+            return None
+        return await self.store.get_user_team(user_id)
+
+    async def can_access_agent(self, user: dict[str, Any] | None, agent) -> bool:
+        """Whether ``user`` may operate ``agent`` (admin always may)."""
+        if self.is_admin(user):
+            return True
+        if agent is None:
+            return False
+        access = agent.access or {}
+        user_id = (user or {}).get("user_id")
+        if user_id and user_id in (access.get("users") or []):
+            return True
+        team = await self.user_team(user)
+        return bool(team and team in (access.get("teams") or []))
+
+    async def accessible_agent_ids(
+        self, user: dict[str, Any] | None
+    ) -> set[int] | None:
+        """Numeric ids the user may access, or None for admin (all)."""
+        if self.is_admin(user):
+            return None
+        user_id = (user or {}).get("user_id")
+        team = await self.user_team(user)
+        ids: set[int] = set()
+        for a in await self.store.list_agents():
+            access = a.access or {}
+            if (user_id and user_id in (access.get("users") or [])) or (
+                team and team in (access.get("teams") or [])
+            ):
+                ids.add(a.id)
+        return ids
+
+    async def grant_agent_access(
+        self,
+        agent,
+        *,
+        user_id: str | None = None,
+        team_id: str | None = None,
+    ) -> bool:
+        """Add a user and/or team to a node's access list. Returns True if changed."""
+        access = dict(agent.access or {})
+        users = set(access.get("users") or [])
+        teams = set(access.get("teams") or [])
+        changed = False
+        if user_id and user_id not in users:
+            users.add(user_id)
+            changed = True
+        if team_id and team_id not in teams:
+            teams.add(team_id)
+            changed = True
+        if changed:
+            access["users"] = sorted(users)
+            access["teams"] = sorted(teams)
+            await self.store.set_agent_access_by_id(agent.id, access)
+            agent.access = access
+        return changed
 
     async def ensure_agent_token(self, agent_id: int) -> str | None:
         """Issue a per-agent independent token on first registration.
@@ -217,6 +289,8 @@ class TaskStore:
         depends_on: list[str] | None = None,
         dispatched_by: str | None = None,
         attachments: list[FileRef] | None = None,
+        user_id: str | None = None,
+        team_id: str | None = None,
     ) -> str:
         if mode not in ("command", "llm"):
             raise ValueError(f"invalid task mode: {mode}")
@@ -240,8 +314,12 @@ class TaskStore:
             status=TaskStatus.QUEUED,
             max_retries=max_retries,
             attachments=attachments or [],
+            user_id=user_id,
+            team_id=team_id,
         )
-        await self.store.create_task(task, dispatched_by=dispatched_by)
+        await self.store.create_task(
+            task, dispatched_by=dispatched_by, user_id=user_id, team_id=team_id
+        )
         await self.store.enqueue(task.task_id, queue_key)
         logger.info("dispatched task %s for agent=%s mode=%s", task.task_id, queue_key, mode)
         return task.task_id

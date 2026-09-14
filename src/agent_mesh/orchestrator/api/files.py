@@ -43,11 +43,23 @@ def _file_to_ref(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _delete_file(store: TaskStore, config: OrchestratorConfig, file_id: str) -> bool:
-    """Delete a file's DB row + on-disk blob. Returns False if not found."""
+async def _delete_file(
+    store: TaskStore,
+    config: OrchestratorConfig,
+    file_id: str,
+    user: dict[str, Any] | None = None,
+) -> bool:
+    """Delete a file's DB row + on-disk blob. Returns False if not found.
+
+    A non-admin may only delete files they own.
+    """
     row = await store.store.get_file(file_id)
     if row is None:
         return False
+    if user is not None and not store.is_admin(user):
+        owner_ids = {user.get("user_id"), user.get("username")}
+        if row.get("created_by") not in owner_ids:
+            return False
     deleted = await store.store.delete_file(file_id)
     if deleted:
         path = _files_dir(config) / f"{file_id}_{row['filename']}"
@@ -93,7 +105,9 @@ def mount_file_routes(
                 )
             md5 = hashlib.md5(content).hexdigest()
             safe_name = Path(upload.filename or "unnamed").name
-            existing = await store.store.find_file_by_md5(md5, safe_name)
+            owner_id = user.get("user_id") or user.get("username")
+            dedup_owner = None if store.is_admin(user) else owner_id
+            existing = await store.store.find_file_by_md5(md5, safe_name, dedup_owner)
             if existing:
                 refs.append(_file_to_ref(existing))
                 continue
@@ -114,7 +128,7 @@ def mount_file_routes(
                 size=len(content),
                 content_type=row["content_type"],
                 md5=md5,
-                created_by=user["username"],
+                created_by=owner_id,
             )
             logger.info(
                 "uploaded file %s (%s, %d bytes) by %s",
@@ -128,7 +142,8 @@ def mount_file_routes(
         search: str | None = None,
         user: dict[str, Any] = Depends(require_user_token),
     ) -> dict[str, Any]:
-        rows = await store.store.list_files(search=search or None)
+        owner = None if store.is_admin(user) else (user.get("user_id") or user.get("username"))
+        rows = await store.store.list_files(search=search or None, owner=owner)
         for r in rows:
             r.setdefault("download_url", f"/api/files/{r['file_id']}")
         return {"files": rows}
@@ -136,16 +151,21 @@ def mount_file_routes(
     @router.get("/files/{file_id}")
     async def download_file(
         file_id: str,
-        _auth: None = Depends(require_any_token),
+        auth: dict[str, Any] = Depends(require_any_token),
     ):
         """Download a library file. Auth: user token or the edge's own token.
 
         The edge fetches attached files with its own token before executing a
-        task and verifies integrity against ``X-File-Md5``.
+        task and verifies integrity against ``X-File-Md5``. User callers may
+        only download files they own (admin: all).
         """
         row = await store.store.get_file(file_id)
         if row is None:
             raise HTTPException(status_code=404, detail="file not found")
+        if auth.get("auth") == "user" and not store.is_admin(auth):
+            owner_ids = {auth.get("user_id"), auth.get("username")}
+            if row.get("created_by") not in owner_ids:
+                raise HTTPException(status_code=404, detail="file not found")
         path = _files_dir(config) / f"{file_id}_{row['filename']}"
         if not path.exists():
             raise HTTPException(status_code=404, detail="file not found")
@@ -164,7 +184,7 @@ def mount_file_routes(
     ) -> dict[str, Any]:
         """Delete a library file. References are not checked; a task that later
         references a deleted file will fail at attachment-download time."""
-        deleted = await _delete_file(store, config, file_id)
+        deleted = await _delete_file(store, config, file_id, user)
         if not deleted:
             raise HTTPException(status_code=404, detail="file not found")
         return {"deleted": deleted}
@@ -177,7 +197,7 @@ def mount_file_routes(
         """Delete multiple library files (DB rows + on-disk blobs)."""
         deleted = 0
         for file_id in payload.file_ids:
-            if await _delete_file(store, config, file_id):
+            if await _delete_file(store, config, file_id, user):
                 deleted += 1
         logger.info(
             "batch-deleted %d files (requested %d) by %s",
@@ -194,6 +214,9 @@ def mount_file_routes(
         if not payload.file_ids:
             raise HTTPException(status_code=400, detail="no files selected")
         rows = await store.store.get_files_by_ids(payload.file_ids)
+        if not store.is_admin(user):
+            owner_ids = {user.get("user_id"), user.get("username")}
+            rows = [r for r in rows if r.get("created_by") in owner_ids]
         files_dir = _files_dir(config)
         buf = io.BytesIO()
         used: set[str] = set()

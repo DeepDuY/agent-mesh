@@ -116,6 +116,48 @@ class AbstractStore(abc.ABC):
     async def list_agent_users(self, agent_id: int) -> list[str]: ...
 
     @abc.abstractmethod
+    async def set_agent_access_by_id(
+        self, agent_id: int, access: dict[str, Any] | None
+    ) -> None: ...
+
+    # ------------------------------------------------------------------
+    # Teams / groups
+    # ------------------------------------------------------------------
+    @abc.abstractmethod
+    async def create_team(
+        self, team_id: str, name: str, description: str | None = None
+    ) -> None: ...
+
+    @abc.abstractmethod
+    async def get_team(self, team_id: str) -> dict[str, Any] | None: ...
+
+    @abc.abstractmethod
+    async def get_team_by_name(self, name: str) -> dict[str, Any] | None: ...
+
+    @abc.abstractmethod
+    async def list_teams(self) -> list[dict[str, Any]]: ...
+
+    @abc.abstractmethod
+    async def update_team(
+        self,
+        team_id: str,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> bool: ...
+
+    @abc.abstractmethod
+    async def delete_team(self, team_id: str) -> bool: ...
+
+    @abc.abstractmethod
+    async def list_team_members(self, team_id: str) -> list[str]: ...
+
+    @abc.abstractmethod
+    async def set_user_team(self, user_id: str, team_id: str | None) -> None: ...
+
+    @abc.abstractmethod
+    async def get_user_team(self, user_id: str) -> str | None: ...
+
+    @abc.abstractmethod
     async def request_agent_upgrade(self, agent_id: int, version: str) -> bool: ...
 
     @abc.abstractmethod
@@ -134,6 +176,8 @@ class AbstractStore(abc.ABC):
         llm_model: str | None = None,
         permission: dict[str, Any] | None = None,
         data: dict[str, Any] | None = None,
+        owner_user_id: str | None = None,
+        owner_team_id: str | None = None,
     ) -> int: ...
 
     @abc.abstractmethod
@@ -193,6 +237,8 @@ class AbstractStore(abc.ABC):
         self,
         task: Task,
         dispatched_by: str | None = None,
+        user_id: str | None = None,
+        team_id: str | None = None,
     ) -> None: ...
 
     @abc.abstractmethod

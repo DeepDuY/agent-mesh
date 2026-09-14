@@ -62,6 +62,21 @@ def create_query_router(
             )
         return user
 
+    async def require_ui_user(
+        request: Request,
+        user: dict[str, Any] = Depends(require_user_token),
+    ) -> dict[str, Any]:
+        """Any authenticated user, but only from the bundled Web UI.
+
+        Used for management endpoints that owners (not just admins) may use, e.g.
+        template management and node template binding. API/agent callers get 404.
+        """
+        if request.headers.get("x-agent-mesh-ui") != "1":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Not Found"
+            )
+        return user
+
     async def require_ui_admin(
         request: Request,
         user: dict[str, Any] = Depends(require_admin),
@@ -137,16 +152,18 @@ def create_query_router(
     from agent_mesh.orchestrator.api.files import mount_file_routes
     from agent_mesh.orchestrator.api.skills import mount_skill_routes
     from agent_mesh.orchestrator.api.tasks import mount_task_routes
+    from agent_mesh.orchestrator.api.teams import mount_team_routes
     from agent_mesh.orchestrator.api.templates import mount_template_routes
 
     mount_auth_routes(router, store, require_user_token, require_admin, config)
     mount_task_routes(router, store, require_user_token)
-    mount_agent_routes(router, store, require_user_token, config, require_admin, require_ui_admin)
+    mount_agent_routes(router, store, require_user_token, config, require_admin, require_ui_admin, require_ui_user)
     mount_edge_routes(router, store, config, require_any_token)
     mount_artifact_routes(router, artifact_store, store, config, require_user_token, require_any_token, _store_artifact_ref)
     mount_file_routes(router, store, config, require_user_token, require_any_token)
     mount_bootstrap_routes(router, config, store, require_user_token, require_any_token, require_admin)
     mount_skill_routes(router, store, config, require_user_token, require_any_token)
-    mount_template_routes(router, store, require_ui_admin)
+    mount_template_routes(router, store, require_ui_user)
+    mount_team_routes(router, store, require_admin)
 
     return router

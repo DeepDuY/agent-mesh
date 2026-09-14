@@ -99,8 +99,8 @@ def test_delete_task_cascades_logs(client: TestClient):
         headers=_edge_headers(),
     )
     assert client.delete(f"/api/tasks/{task_id}", headers=_admin_headers()).status_code == 200
-    logs = client.get(f"/api/tasks/{task_id}/logs", headers=_admin_headers()).json()
-    assert logs["logs"] == []
+    # The task (and its logs) are gone: the logs endpoint now 404s.
+    assert client.get(f"/api/tasks/{task_id}/logs", headers=_admin_headers()).status_code == 404
 
 
 def test_opencode_line_classification():

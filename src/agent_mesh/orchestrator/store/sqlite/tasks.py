@@ -30,6 +30,8 @@ class TaskMixin(SQLiteBase):
             instruction=row["instruction"],
             constraints=constraints,
             status=TaskStatus(row["status"]),
+            user_id=row["user_id"] if "user_id" in row.keys() else None,
+            team_id=row["team_id"] if "team_id" in row.keys() else None,
             created_at=_iso_to_dt(row["created_at"]) or datetime.now(timezone.utc),
             assigned_at=_iso_to_dt(row["assigned_at"]),
             started_at=_iso_to_dt(row["started_at"]),
@@ -64,6 +66,8 @@ class TaskMixin(SQLiteBase):
         self,
         task: Task,
         dispatched_by: str | None = None,
+        user_id: str | None = None,
+        team_id: str | None = None,
     ) -> None:
         await self._execute(
             """
@@ -71,8 +75,8 @@ class TaskMixin(SQLiteBase):
                 task_id, agent_id, mode, instruction, workdir, timeout_s, model,
                 output_limit, status, max_retries, retry_count,
                 created_at, assigned_at, started_at, finished_at, depends_on,
-                dispatched_by, metadata, session_id, skills, attachments
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                dispatched_by, user_id, team_id, metadata, session_id, skills, attachments
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task.task_id, task.agent_id, task.mode, task.instruction,
@@ -88,6 +92,8 @@ class TaskMixin(SQLiteBase):
                 _dt_to_iso(task.finished_at),
                 _dump_json(None),
                 dispatched_by,
+                user_id,
+                team_id,
                 _dump_json(None),
                 task.constraints.session_id,
                 _dump_json(task.constraints.skills),
@@ -113,6 +119,8 @@ class TaskMixin(SQLiteBase):
         search: str | None,
         started_after: datetime | None,
         started_before: datetime | None,
+        owner_user_id: str | None = None,
+        owner_team_id: str | None = None,
     ) -> tuple[str, list[Any]]:
         where = " WHERE 1=1"
         params: list[Any] = []
@@ -135,6 +143,16 @@ class TaskMixin(SQLiteBase):
         if started_before is not None:
             where += " AND started_at <= ?"
             params.append(_dt_to_iso(started_before))
+        # Tenancy: a non-admin sees their own tasks and (if in a team) their team's.
+        if owner_user_id is not None or owner_team_id is not None:
+            clauses = []
+            if owner_user_id is not None:
+                clauses.append("user_id = ?")
+                params.append(owner_user_id)
+            if owner_team_id is not None:
+                clauses.append("team_id = ?")
+                params.append(owner_team_id)
+            where += " AND (" + " OR ".join(clauses) + ")"
         return where, params
 
     async def list_tasks(
@@ -147,9 +165,12 @@ class TaskMixin(SQLiteBase):
         started_before: datetime | None = None,
         limit: int = 100,
         offset: int = 0,
+        owner_user_id: str | None = None,
+        owner_team_id: str | None = None,
     ) -> list[Task]:
         where, params = self._tasks_where(
-            agent_id, status, mode, search, started_after, started_before
+            agent_id, status, mode, search, started_after, started_before,
+            owner_user_id, owner_team_id,
         )
         sql = f"SELECT * FROM tasks{where} ORDER BY created_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
@@ -167,9 +188,12 @@ class TaskMixin(SQLiteBase):
         search: str | None = None,
         started_after: datetime | None = None,
         started_before: datetime | None = None,
+        owner_user_id: str | None = None,
+        owner_team_id: str | None = None,
     ) -> int:
         where, params = self._tasks_where(
-            agent_id, status, mode, search, started_after, started_before
+            agent_id, status, mode, search, started_after, started_before,
+            owner_user_id, owner_team_id,
         )
         sql = f"SELECT COUNT(*) AS n FROM tasks{where}"
         rows = await self._execute(sql, tuple(params))

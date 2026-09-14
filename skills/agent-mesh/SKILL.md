@@ -64,13 +64,12 @@ session token 24 小时后失效。**任何请求返回 `401 Unauthorized` 就�
 ## 2. 地址
 
 - **REST Base URL**：`http://<host>:8000/api`
-- **MCP（SSE）**：`http://<orchestrator-host>:8001/`
 
 不知道地址就问用户；配置页的「公开地址」即 REST 地址。
 
 ## 3. 选节点（先看再派发）
 
-`GET /agents` 列出全部节点。**派发前先看 `online` 和 `effective_description`**：
+`GET /agents` 列出**你有权访问的**节点（按团队/用户授权过滤）。**派发前先看 `online` 和 `effective_description`**：
 
 ```bash
 curl -s -H "Authorization: Bearer <token>" http://<host>:8000/api/agents
@@ -272,23 +271,7 @@ TOKEN='<长期 token>' bash <(curl -fsSL -H "Authorization: Bearer $TOKEN" \
 - 目标机自动按 OS/ARCH 下载探针、注册开机自启并启动，以 device_id 注册为节点。
 - 删除节点会卸载远端 agent，谨慎操作（见 §8）。
 
-## 10. MCP 工具（SSE :8001）
-
-MCP 通道**只接受用户 token**。工具：
-
-| 工具 | 用途 |
-|------|------|
-| `list_agents` / `get_agent` / `get_agent_detail` | 节点列表 / 单个 / 详情+最近任务 |
-| `set_agent_alias` | 设置别名 |
-| `list_models` | 可用 LLM 模型 id（llm 任务选 `model`） |
-| `dispatch_task` | 派发任务 |
-| `list_tasks` / `get_task_status` / `get_task_logs` | 任务列表 / 状态 / 实时输出 |
-| `cancel_task` | 终止任务 |
-| `list_skills` | 技能库摘要 |
-
-> 文件库、节点安装等仅在 REST。`poll_for_task` / `submit_result` 是边沿内部心跳，主 Agent 不用。
-
-## 11. 完整流程（推荐节奏）
+## 10. 完整流程（推荐节奏）
 
 1. `GET /agents` → 选 `online=true` 且 `effective_description` 匹配需求的节点，记下数字 `id`。
 2. 若要处理本地文件：`POST /files` 上传拿 `file_id`（§5）。
@@ -297,7 +280,7 @@ MCP 通道**只接受用户 token**。工具：
 5. 每 2–3 秒 `GET /tasks/{task_id}/status` 直到终态；用户要停就 `POST /tasks/{task_id}/cancel`。
 6. 读 `task.result`；有 `artifacts` 就下载给用户（§5.4）。
 
-## 12. 故障速查
+## 11. 故障速查
 
 | 现象 | 原因 / 处理 |
 |------|-------------|
@@ -307,8 +290,9 @@ MCP 通道**只接受用户 token**。工具：
 | `no LLM model configured` | 节点无可用模型 → 让管理员在管理平台配置 |
 | `attachment download failed` | 文件库文件被删或 md5 不符 → 重新上传（§5） |
 
-## 13. 安全
+## 12. 安全
 
+- **可见性按身份隔离**：你只能看到/操作被授权的节点，以及自己（或本团队）的任务与文件；无权访问的资源返回 404（如同不存在）。若需要访问某节点/数据，请让管理员在管理平台授权，**不要尝试绕过**。
 - 保管 token；生产用 HTTPS。
 - LLM API key 仅存于服务端 DB 与节点 `edge.env`，经心跳下发；**不要写进代码/仓库/日志**。
 - 删除节点会卸载远端 agent；取消任务会杀掉进程组——都是破坏性操作，执行前和用户确认。

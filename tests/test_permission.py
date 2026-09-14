@@ -236,31 +236,87 @@ def test_global_default_permission_setting(client: TestClient):
     assert poll["config"]["permission"] == {"*": "allow"}
 
 
-def _user_headers(client: TestClient, username: str = "viewer") -> dict:
-    """Create a non-admin user and return its API-token header."""
+def _make_user(client: TestClient, username: str = "viewer", ui: bool = False):
+    """Create a non-admin user -> (user_id, headers)."""
     resp = client.post(
         "/api/auth/users",
         json={"username": username, "password": "secret123", "role": "user"},
         headers=_admin_headers(),
     )
     assert resp.status_code == 200, resp.text
-    return {"Authorization": f"Bearer {resp.json()['token']}"}
+    data = resp.json()
+    h = {"Authorization": f"Bearer {data['token']}"}
+    if ui:
+        h["X-Agent-Mesh-UI"] = "1"
+    return data["user_id"], h
 
 
-def test_non_admin_cannot_manage_templates(client: TestClient):
-    h = _user_headers(client)
-    assert client.get("/api/templates", headers=h).status_code == 403
-    assert client.post("/api/templates", json={"name": "x"}, headers=h).status_code == 403
-    assert client.patch("/api/templates/1", json={"name": "y"}, headers=h).status_code == 403
-    assert client.delete("/api/templates/1", headers=h).status_code == 403
-    assert client.patch("/api/settings", json={"llm_model": "m"}, headers=h).status_code == 403
-
-
-def test_non_admin_cannot_rebind_template_or_llm_config(client: TestClient):
+def test_non_admin_api_cannot_touch_templates(client: TestClient):
+    # Without the Web-UI header, management endpoints are 404 for any user.
+    _, h = _make_user(client)
+    assert client.get("/api/templates", headers=h).status_code == 404
+    assert client.post("/api/templates", json={"name": "x"}, headers=h).status_code == 404
     _poll(client)
-    h = _user_headers(client)
     assert client.patch(
         f"/api/agents/{DEVICE}/template", json={"template_id": 1}, headers=h
+    ).status_code == 404
+    assert client.patch(
+        "/api/settings", json={"llm_model": "m"}, headers=h
+    ).status_code == 403
+
+
+def test_non_admin_owns_only_own_templates(client: TestClient):
+    global_tpl = client.post(
+        "/api/templates", json={"name": "glob", "permission": {"*": "deny"}},
+        headers=_admin_headers(),
+    ).json()["template"]
+    _, h = _make_user(client, ui=True)
+    # An admin/global template is invisible and untouchable for a non-admin.
+    listed = client.get("/api/templates", headers=h).json()["templates"]
+    assert all(t["name"] != "glob" for t in listed)
+    assert client.patch(
+        f"/api/templates/{global_tpl['id']}", json={"name": "z"}, headers=h
+    ).status_code == 404
+    assert client.delete(
+        f"/api/templates/{global_tpl['id']}", headers=h
+    ).status_code == 404
+
+    # A non-admin can create and manage their own template.
+    mine = client.post(
+        "/api/templates", json={"name": "mine", "permission": {"*": "allow"}}, headers=h
+    )
+    assert mine.status_code == 200
+    assert mine.json()["template"]["owner_user_id"] is not None
+    assert client.delete(
+        f"/api/templates/{mine.json()['template']['id']}", headers=h
+    ).status_code == 200
+
+
+def test_non_admin_cannot_override_admin_template_binding(client: TestClient):
+    _poll(client)
+    # Admin binds a global (admin-owned) template -> the binding is locked.
+    glob = client.post(
+        "/api/templates", json={"name": "locked", "permission": {"*": "deny"}},
+        headers=_admin_headers(),
+    ).json()["template"]
+    client.patch(
+        f"/api/agents/{DEVICE}/template", json={"template_id": glob["id"]},
+        headers=_admin_headers(),
+    )
+    uid, h = _make_user(client, ui=True)
+    client.patch(
+        f"/api/agents/{DEVICE}/access", json={"users": [uid]}, headers=_admin_headers()
+    )
+    mine = client.post(
+        "/api/templates", json={"name": "mine2", "permission": {"*": "allow"}}, headers=h
+    ).json()["template"]
+    # Cannot override the admin's locked binding...
+    assert client.patch(
+        f"/api/agents/{DEVICE}/template", json={"template_id": mine["id"]}, headers=h
+    ).status_code == 403
+    # ...nor bind the admin's global template.
+    assert client.patch(
+        f"/api/agents/{DEVICE}/template", json={"template_id": glob["id"]}, headers=h
     ).status_code == 403
     assert client.patch(
         f"/api/agents/{DEVICE}/llm_config", json={"llm_model": "m"}, headers=h
