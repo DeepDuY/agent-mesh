@@ -22,7 +22,7 @@ agent-mesh 让你把任务委派给远程边缘节点（edge agent）执行，�
 | 单独调某节点的 LLM / 提示词 | **仅管理员在 Web 管理平台操作**；主 Agent 不可调用 | §9 |
 | 让远程 LLM 按需使用某个专业技能 | 技能库 `POST /skills`（上传）、边沿自主取用 | §7 |
 | 装一台新机器 / 卸载节点 | `GET /bootstrap/install.sh` / `DELETE /agents/{id}` | §11 |
-| 改全局模型/公开地址/并发/默认权限 | `PATCH /settings` | §10 |
+| 改全局模型/公开地址/并发/默认权限 | **仅管理员在 Web 管理平台操作**；主 Agent 不可调用 | §10 |
 
 **一句话判断**：任务本身要「在别处执行」→ §4 派发；任务要用到**文件**→ §5；只是查询/管理→ §3/§6/§9。
 
@@ -290,20 +290,14 @@ curl -s -X PATCH -H "Authorization: Bearer <token>" -H "Content-Type: applicatio
 
 **生效优先级**（了解即可）：模型 `节点 > 模板 > 全局`；提示词 `内置 + 节点 + 模板`；描述 `节点 > 模板`；权限 `模板 > 全局默认`。
 
-## 10. 全局配置（admin）
+## 10. 全局配置（**仅管理员，主 Agent 不可操作**）
 
-```bash
-curl -s -H "Authorization: Bearer <token>" http://<host>:8000/api/settings
-curl -s -X PATCH http://<host>:8000/api/settings \
-  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"llm_model":"anthropic/deepseek-v4-flash","llm_base_url":"https://api.example.com/v1",
-       "llm_api_key":"sk-...","llm_models":"anthropic/deepseek-v4-flash\nanthropic/deepseek-v4-pro",
-       "default_permission":"{\"*\":\"allow\"}"}'
-```
-
-- `llm_models` 是**可用模型的唯一来源**（每行一个，llm 任务的 `model` 必须命中）。
-- `public_url`：节点安装/回连用的对外地址。
-- `max_concurrent`：每节点并发上限（默认 2）；`auto_upgrade`：自动升级开关；`default_permission`：未绑定模板节点的默认权限。
+> ⚠️ 全局配置属于管理面：`GET/PATCH /api/settings` 要求 `admin` 角色，且约定**只在 Web 管理平台由人操作**。主 Agent **不得**调用（全局模型/网关凭据/默认权限都可能被用于提权）。
+>
+> 主 Agent 只需知道（只读理解，不操作）：
+> - `llm_models`：可用模型的唯一来源（llm 任务的 `model` 必须命中）；
+> - `default_permission`：未绑定模板节点的默认权限（初始 `readonly`）；
+> - `public_url`：节点安装/回连地址；`max_concurrent`：每节点并发上限。
 
 ## 11. 安装 / 删除节点
 
