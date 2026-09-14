@@ -31,8 +31,8 @@ sudo ./deploy/install.sh --opencode /path/opencode  # 指定本机 opencode（�
 
 ## 核心特性
 
-- 主 Agent 可通过 **MCP**（SSE :8001）或 **REST API** 控制 orchestrator
-- **多进程架构**：默认按 CPU 核数启动多个 uvicorn worker（`AGENT_MESH_WORKERS`），sweeper 与 MCP SSE 在主进程，`=1` 可切回单进程
+- 主 Agent 通过 **REST API** 控制 orchestrator
+- **多进程架构**：默认按 CPU 核数启动多个 uvicorn worker（`AGENT_MESH_WORKERS`），sweeper 在主进程，`=1` 可切回单进程
 - **存储层可插拔**：默认 SQLite（WAL 模式），可选 PostgreSQL（`AGENT_MESH_DB_TYPE=pg`）
 - 边沿 Agent 通过 **REST** 心跳拉取任务、提交结果
 - 任务双模式：`command`（shell 原样执行，不走 LLM）和 `llm`（opencode 自然语言任务）
@@ -42,18 +42,18 @@ sudo ./deploy/install.sh --opencode /path/opencode  # 指定本机 opencode（�
 - **资源指标**：心跳上报探针版本、CPU、内存使用率，节点详情页可视化展示
 - **多任务并发执行**：每个节点默认最多同时执行 2 个任务（`max_concurrent` 可在配置页调整，随心跳下发）；未显式指定 `workdir` 的任务自动落到独立子目录 `<EDGE_WORKDIR>/tasks/<task_id>/`
 - **LLM 实时执行输出**：边沿把 opencode 实时输出（文本/错误/完成事件）流式上报，任务详情页实时展示 `GET /api/tasks/{id}/logs`（增量 `?after_id=`），LLM 任务全程可控
-- **任务终止**：REST / MCP / Web 看板均可取消任务（排队/执行中/已分配），执行中的子进程会被终止
+- **任务终止**：REST / Web 看板均可取消任务（排队/执行中/已分配），执行中的子进程会被终止
 - 产物按模式精准收集：command 只收新增文件，llm 只收声明的 artifacts
 - 节点以 **数字 id + device_id（machine-id）** 唯一标识，重复上线只更新不重复注册
 - 任务状态机：`queued → assigned → working → completed/failed/timed_out`，另有 `cancelled`（人为终止）
 - 内置中文 Web 看板（节点/任务/配置），任务列表支持分页、**模糊搜索、状态下拉、模式下拉、开始时间区间（之后/之间/之前）**、弹窗详情、一键终止、批量删除（当前页/跨页全选）、带鉴权的产物下载；文件库支持搜索与**批量删除/批量打包下载**；前端结构拆分为 html/css/js
-- 用户账号系统：创建用户时**随机生成 API token**（SHA-256 哈希入库，仅返回一次），可同时用于 REST 与 MCP；登录返回短期 session token 供 Web/脚本使用；默认账号 `admin/admin`（**务必首登后修改密码**，看板右上角「修改密码」）；admin 可在看板「用户」页创建/删除用户、重置密码、轮换 token
+- 用户账号系统：创建用户时**随机生成 API token**（SHA-256 哈希入库，仅返回一次），用于 REST；登录返回短期 session token 供 Web/脚本使用；默认账号 `admin/admin`（**务必首登后修改密码**，看板右上角「修改密码」）；admin 可在看板「用户」页创建/删除用户、重置密码、轮换 token
 - **Agent 自升级**：看板/`POST /api/agents/{id}/upgrade` 下发升级指令，节点空闲时自动下载新版安装包、原子替换二进制（`.bin.old` 备份）、失败自动回滚、重启生效
 - **LLM 配置同步**：配置页保存 LLM 配置（或设置节点级 `llm_config`）后 `config_version` 自增，通过心跳推送给所有在线节点，边沿自动更新并持久化到 `edge.env`（节点级配置优先）
 - **模型列表可配置**：`settings.llm_models`（配置页「可用模型列表」，每行一个网关真实 id）是唯一模型来源，边沿据此生成 opencode 模型表（**无硬编码**）；派发 llm 任务时 `model` 会按列表校验，未配置默认模型则拒绝执行
 - **节点描述与角色设定**：每个节点可设 `description`（节点自身用途说明）；`effective_description` = 节点描述优先、否则取绑定模板的 `node_description`（模板专用于「节点描述」的字段，与模板自身的「说明」`description` 区分开），主 Agent 据此选节点。节点级 `system_prompt` 注入该节点每个 llm 任务提示词顶部（**仅管理员**，页面可编辑）
 - **节点模板**：可复用的节点配置（`system_prompt` / 默认 `llm_model` / **权限 `permission`** / `node_description` 节点描述 / `description` 说明）；节点**引用式绑定**（`agents.template_id`），改模板自动同步到所有绑定节点。生效顺序：模型 `节点 > 模板 > 全局默认`，提示词按 `内置 + 节点 + 模板` 拼接，节点描述 `节点 > 模板`
-- **模板/权限管理只通过页面**：模板读/写与节点改绑模板接口**已从 API 移除**（`require_ui_admin`：需页面专用头 `X-Agent-Mesh-UI` 且为 admin，否则 404），任何人（含 admin）都无法用 curl/MCP 调用，只能在 Web 管理平台操作。节点级 `llm_config`/`system_prompt`、全局 `settings` 要求 `admin` 角色。主 Agent（`list_agents`）只能读到 `template_name` 与 `effective_description`，**不会拿到模板的具体配置**，防止自我提权
+- **模板/权限管理只通过页面**：模板读/写与节点改绑模板接口**已从 API 移除**（`require_ui_admin`：需页面专用头 `X-Agent-Mesh-UI` 且为 admin，否则 404），任何人都无法用 curl 等外部调用，只能在 Web 管理平台操作。节点级 `llm_config`/`system_prompt`、全局 `settings` 要求 `admin` 角色。主 Agent（`list_agents`）只能读到 `template_name` 与 `effective_description`，**不会拿到模板的具体配置**，防止自我提权
 - **多租户（团队/组 + 资源归属）**：`teams`/`team_members`（**一个用户至多属一个团队**）；节点 `access` JSON 声明可操作的团队/用户（admin 恒旁路，安装节点的用户及其团队**自动加入**）；任务按 `user_id`/`team_id`（**由 token 自动生成**）过滤——可见 `自己 + 自己团队`（无团队则仅自己）；文件按创建者隔离。admin 在「团队」页与节点「访问权限」维护
 - **执行权限（模板级，llm + command 共用）**：采用 OpenCode `permission` 规格（`allow|ask|deny` + 命令 glob），内置 `build`/`plan`/`readonly` 三个模板；未绑定模板的节点用全局 `default_permission`（默认 `readonly`）。llm 模式交由 opencode 强制，command 模式由 edge 在 `bash -c` 前求值；拒绝与关键动作写入 `task_events` 审计。**注意：command 匹配器只防误操作，非安全边界**
 - 数据持久化（SQLite/PostgreSQL），重启不丢失
@@ -86,7 +86,6 @@ uv sync
 
 默认监听：
 - REST/Web：`http://0.0.0.0:8000`
-- MCP SSE：`http://0.0.0.0:8001`
 
 > 默认按 CPU 核数启动多个 uvicorn worker（多进程）。单进程部署：`AGENT_MESH_WORKERS=1 uv run --no-sync python -m agent_mesh.orchestrator.main`
 > 使用 PostgreSQL：`AGENT_MESH_DB_TYPE=pg AGENT_MESH_PG_DSN='postgresql://user:pass@host/db'`（统一连接层 `store/connection.py` 为每进程惰性建 asyncpg 池，**多 worker 自动重建各自连接池**，无需单进程限制）
@@ -158,24 +157,6 @@ curl -s -X POST http://127.0.0.1:8000/api/tasks/dispatch \
 ```
 
 任务完成后的 `result.session_id` 即为本次实际使用的会话 ID。
-
-**MCP 方式：**
-
-参考 `mcp-config.example.json`，在主 Agent 客户端配置 SSE MCP（端口 8001）。MCP 通道**强制 Bearer 鉴权**：仅接受用户 token（登录返回的 session token 或创建用户/轮换时返回的 API token），全局 `AGENT_MESH_TOKEN` 不适用于 MCP。长期使用的 MCP 配置建议用创建用户时下发的 API token：
-
-```json
-{
-  "mcpServers": {
-    "agent-mesh": {
-      "type": "sse",
-      "baseUrl": "http://127.0.0.1:8001",
-      "customHeaders": {
-        "Authorization": "Bearer <用户 API token>"
-      }
-    }
-  }
-}
-```
 
 > 如何拿到用户 API token：首次启动 orchestrator 时日志会打印一次 admin 的 token；或通过 `POST /api/auth/users`（admin）创建用户 / `POST /api/auth/users/{username}/token` 轮换 token 获取。API token 只显示一次，请妥善保存。
 
@@ -327,7 +308,6 @@ agent-mesh/
 ├── tests/                   # 测试
 ├── pyproject.toml
 ├── docs/                      # 设计文档（docs/README.md 索引）
-└── mcp-config.example.json  # MCP 配置示例
 ```
 
 ## 配置
@@ -337,8 +317,8 @@ agent-mesh/
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `AGENT_MESH_HOST` | `0.0.0.0` | 监听地址 |
-| `AGENT_MESH_PORT` | `8000` | REST/Web 端口（MCP SSE = port+1） |
-| `AGENT_MESH_TOKEN` | `change-me-shared-secret` | 全局 MCP/Edge token |
+| `AGENT_MESH_PORT` | `8000` | REST/Web 端口 |
+| `AGENT_MESH_TOKEN` | `change-me-shared-secret` | 全局 Edge token |
 | `AGENT_MESH_PUBLIC_URL` | - | 对外 URL（用于 Agent 安装脚本） |
 | `AGENT_MESH_WORKERS` | `cpu 核数` | uvicorn worker 数；1=单进程 |
 | `AGENT_MESH_DB_TYPE` | `sqlite` | 存储后端：`sqlite` / `pg` |
@@ -363,7 +343,7 @@ agent-mesh/
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `EDGE_AGENT_ID` | hostname | 边沿显示名 |
-| `EDGE_ORCHESTRATOR_URL` | `http://127.0.0.1:8000/mcp` | orchestrator 地址（edge 建 REST 客户端时自动 `replace("/mcp","")`，见 `edge/agent.py`） |
+| `EDGE_ORCHESTRATOR_URL` | `http://127.0.0.1:8000` | orchestrator 地址 |
 | `EDGE_TOKEN` | `change-me-shared-secret` | 认证 token（全局 token / 独立 agent token） |
 | `EDGE_HEARTBEAT_S` | `3` | 心跳间隔 |
 | `EDGE_RUNTIME` | `opencode` | CLI 运行时 |
@@ -449,24 +429,6 @@ agent-mesh/
 | POST | `/api/edge/get_task_status` | 查询任务状态 |
 | POST | `/api/edge/task_log` | 上报任务实时执行输出（llm/command 增量流） |
 
-### MCP 工具（SSE :8001）
-
-| 工具名 | 说明 |
-|--------|------|
-| `list_agents` | 列出所有节点（含 `description` 用途说明） |
-| `get_agent` | 单个节点 |
-| `get_agent_detail` | 节点详情 + 最近任务 |
-| `set_agent_alias` | 设置/清除别名 |
-| `list_models` | 列出可用的 LLM 模型 id（`settings.llm_models`），派发 llm 任务时从中选 `model` |
-| `dispatch_task` | 下发任务（`agent_id`、`instruction`、`mode`、可选 `model`/`session_id`/`skills`/`attachments`） |
-| `cancel_task` | 终止任务 |
-| `get_task_status` | 查询任务状态 |
-| `list_tasks` | 任务列表 |
-| `get_task_logs` | 任务实时执行输出（`task_id`、`after_id` 增量拉取） |
-| `list_skills` | 列出技能库摘要（主 Agent 浏览后可在指令中提示边沿使用某技能） |
-| `poll_for_task` | 边沿心跳（内部用） |
-| `submit_result` | 边沿提交结果（内部用，含 `session_id`） |
-
 ## 技能库
 
 管理端在 Web 看板「技能」页上传技能 zip（zip 内需含带 frontmatter 的 `SKILL.md`，`name` 需匹配 `^[a-z0-9]+(-[a-z0-9]+)*$` 且 `description` 必填），或通过 REST：
@@ -506,7 +468,6 @@ curl -s -X POST http://127.0.0.1:8000/api/tasks/dispatch \
 
 - 附件以原文件名写入工作目录；llm 模式提示词会提示"工作目录可能已放入附件"。
 - 文件库独立于任务，可在 Web 看板「文件」页管理（上传/下载/删除）；删除不校验引用，被删文件的任务执行时会因下载失败而标记失败。
-- MCP 派发 `dispatch_task` 同样支持 `attachments`（`f-...` id 列表）；上传本身只走 REST（Web 看板或 curl）。
 - 最新版 agent-mesh 使用指南可从看板「配置」页或 `GET /api/skill-doc/agent-mesh` 下载，会**自动填充配置的公开地址和你的用户 token**，示例可直接复制执行。
 
 ## 测试
@@ -520,11 +481,10 @@ uv run --no-sync python -m pytest tests/ -q
 - 生产环境务必修改默认 `admin` 密码（`POST /api/auth/change-password`），并通过用户管理接口创建专用账号
 - 用户 API token 只在创建/轮换时返回一次，丢失后需 admin 轮换（`POST /api/auth/users/{username}/token`）
 - API token 以 SHA-256 哈希存库；登录返回的 session token 默认 24h 过期
-- MCP SSE（:8001）已强制 Bearer 鉴权，仅接受用户 token；全局 `AGENT_MESH_TOKEN` 仅用于边沿 REST 协议
 - 使用 HTTPS 网关终止 TLS
 - 边沿 Agent 使用低权限账号运行
 - LLM API key 存于 orchestrator `settings`（DB，配置页写入）并经心跳下发到节点 `etc/edge.env`；安装脚本不内嵌任何凭据，`edge.env`/`orchestrator.env` 建议 600 权限
-- REST API 使用用户 token 认证；MCP SSE 与 Edge 协议使用用户 token / 全局 `AGENT_MESH_TOKEN`
+- REST API 使用用户 token 认证；Edge 协议使用用户 token / 全局 `AGENT_MESH_TOKEN`
 - 删除节点会卸载目标机器上的 agent，谨慎操作
 
 ## 文档
@@ -533,7 +493,6 @@ uv run --no-sync python -m pytest tests/ -q
 - `docs/standards/edge-reporting.md` — **上报接口标准**：边沿 Agent 上报字段规范与治理流程
 - `skills/agent-mesh/SKILL.md` — OpenCode skill（主 Agent 操作指南）
 - `deploy/README.md` — 部署指南
-- `mcp-config.example.json` — MCP 配置示例
 
 ## License
 
