@@ -192,10 +192,15 @@ async def test_task_events_roundtrip(tmp_path):
         await backend.append_task_event(
             "t1", "permission_denied", agent_id="node", details={"instruction": "rm -rf /"}
         )
+        # Numeric agent refs must be coerced to text (PG TEXT columns reject ints).
+        await backend.append_task_event("t2", "dispatched", agent_id=3, user_id=5)
         events = await backend.list_task_events("t1")
         assert [e["event_type"] for e in events] == ["dispatched", "permission_denied"]
         assert events[1]["details"]["instruction"] == "rm -rf /"
         assert events[0]["created_at"] is not None
+        numeric = await backend.list_task_events("t2")
+        assert numeric[0]["agent_id"] == "3"
+        assert numeric[0]["user_id"] == "5"
     finally:
         await backend.close()
 

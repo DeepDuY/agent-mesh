@@ -6,6 +6,7 @@ import os
 import shutil
 import signal
 import tarfile
+import time
 
 from pathlib import Path
 
@@ -83,6 +84,7 @@ class EdgeAgent:
         self._last_cpu_sample = None
         self._running: dict[str, asyncio.Task] = {}
         self._max_concurrent = 2
+        self._last_upgrade_attempt = 0.0
 
     async def run(self) -> None:
         loop = asyncio.get_event_loop()
@@ -163,8 +165,16 @@ class EdgeAgent:
                         logger.warning("apply llm config failed: %s", e)
 
                 # Self-upgrade only when completely idle (no tasks executing).
+                # Back off between attempts so a persistently failing upgrade
+                # does not re-download the (~100 MB) package every heartbeat.
                 upg = resp.get("upgrade")
-                if upg and not self._running and not task_data_list:
+                if (
+                    upg
+                    and not self._running
+                    and not task_data_list
+                    and (time.monotonic() - self._last_upgrade_attempt) >= 300
+                ):
+                    self._last_upgrade_attempt = time.monotonic()
                     try:
                         await self._perform_upgrade(upg)
                     except Exception as e:
@@ -354,37 +364,53 @@ class EdgeAgent:
         finally:
             shutil.rmtree(staging, ignore_errors=True)
 
-        # Restart into the new version. Prefer the service manager so the
-        # running process is actually replaced by the new binary (in-place
-        # os.execv has proven unreliable for PyInstaller onefile binaries).
+        # Restart into the new version. Prefer the service manager: it replaces
+        # the process with a *clean* environment. We must NOT self-exec after a
+        # successful service-manager restart — a PyInstaller onefile binary that
+        # execv's itself inherits the parent's `_PYI_*`/`_MEIPASS` env and aborts
+        # with "Security validation failure: unexpected name of application's
+        # home directory", which made systemd see a failed start and the wrapper
+        # roll back, looping the upgrade forever.
+        restarted = False
         try:
             import subprocess
 
             os_name = get_os()
             if os_name == "linux":
-                subprocess.run(
+                result = subprocess.run(
                     ["systemctl", "restart", "agent-mesh-edge"],
                     check=False,
                     timeout=15,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
-                # systemctl restart will SIGTERM this process (it is the
-                # service), so reaching here is unlikely.
+                restarted = result.returncode == 0
             elif os_name == "darwin":
-                subprocess.run(
+                result = subprocess.run(
                     ["launchctl", "kickstart", "-k", "system/com.agentmesh.edge"],
                     check=False,
                     timeout=15,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
+                restarted = result.returncode == 0
         except Exception as e:
             logger.warning("service restart failed (%s); falling back to execv", e)
 
-        # Fallback for non-service installs (dev mode / plain process).
+        if restarted:
+            # The service manager will SIGTERM us and start the new binary with a
+            # clean environment. Just wait to be replaced; do not self-exec.
+            logger.info("service manager restart issued; waiting to be replaced")
+            await asyncio.sleep(60)
+            return
+
+        # Fallback for non-service installs (dev mode / plain process). Scrub
+        # PyInstaller's onefile env before execv so the new binary starts clean.
+        env = os.environ.copy()
+        for key in [k for k in env if k.startswith("_PYI_") or k == "_MEIPASS"]:
+            env.pop(key, None)
         try:
-            os.execv(str(wrapper), [str(wrapper)])
+            os.execve(str(wrapper), [str(wrapper)], env)
         except OSError as e:
             logger.exception("restart failed: %s", e)
 

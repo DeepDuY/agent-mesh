@@ -281,7 +281,13 @@ class TaskMixin(SQLiteBase):
         await self._execute(
             "INSERT INTO task_events (task_id, event_type, agent_id, user_id, details) "
             "VALUES (?, ?, ?, ?, ?)",
-            (task_id, event_type, agent_id, user_id, _dump_json(details)),
+            (
+                task_id,
+                event_type,
+                str(agent_id) if agent_id is not None else None,
+                str(user_id) if user_id is not None else None,
+                _dump_json(details),
+            ),
         )
 
     async def list_task_events(
