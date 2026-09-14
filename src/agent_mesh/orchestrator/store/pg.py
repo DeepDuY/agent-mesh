@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 def _row_to_template(row: dict[str, Any]) -> dict[str, Any]:
-    row["allowed_tools"] = _load_json(row.get("allowed_tools"))
+    row["permission"] = _load_json(row.get("permission"))
     row["data"] = _load_json(row.get("data"))
     return row
 
@@ -248,13 +248,13 @@ class PostgresStore(AbstractStore):
         description: str | None = None,
         system_prompt: str | None = None,
         llm_model: str | None = None,
-        allowed_tools: list[str] | None = None,
+        permission: dict[str, Any] | None = None,
         data: dict[str, Any] | None = None,
     ) -> int:
         row = await self._db.fetchrow(
             """
             INSERT INTO templates
-                (name, description, system_prompt, llm_model, allowed_tools, data)
+                (name, description, system_prompt, llm_model, permission, data)
             VALUES (?, ?, ?, ?, ?::jsonb, ?::jsonb) RETURNING id
             """,
             (
@@ -262,7 +262,7 @@ class PostgresStore(AbstractStore):
                 description,
                 system_prompt,
                 llm_model,
-                _dump_json(allowed_tools),
+                _dump_json(permission),
                 _dump_json(data),
             ),
         )
@@ -290,7 +290,7 @@ class PostgresStore(AbstractStore):
             "description",
             "system_prompt",
             "llm_model",
-            "allowed_tools",
+            "permission",
             "data",
         }
         sets: list[str] = []
@@ -298,7 +298,7 @@ class PostgresStore(AbstractStore):
         for key, value in fields.items():
             if key not in allowed:
                 continue
-            if key in ("allowed_tools", "data"):
+            if key in ("permission", "data"):
                 sets.append(f"{key}=?::jsonb")
                 params.append(_dump_json(value))
             else:
@@ -468,7 +468,6 @@ class PostgresStore(AbstractStore):
             workdir=row["workdir"],
             timeout_s=row["timeout_s"],
             model=row["model"],
-            allowed_tools=_load_json(row.get("allowed_tools")),
             output_limit=row.get("output_limit", 200_000),
             session_id=row.get("session_id"),
             skills=_load_json(row.get("skills")),
@@ -515,16 +514,15 @@ class PostgresStore(AbstractStore):
             """
             INSERT INTO tasks (
                 task_id, agent_id, mode, instruction, workdir, timeout_s, model,
-                allowed_tools, output_limit, status, max_retries, retry_count,
+                output_limit, status, max_retries, retry_count,
                 created_at, assigned_at, started_at, finished_at, depends_on,
                 dispatched_by, metadata, session_id, skills, attachments
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task.task_id, task.agent_id, task.mode, task.instruction,
                 task.constraints.workdir, task.constraints.timeout_s,
                 task.constraints.model,
-                _dump_json(task.constraints.allowed_tools),
                 task.constraints.output_limit,
                 task.status.value,
                 task.max_retries,
@@ -693,6 +691,41 @@ class PostgresStore(AbstractStore):
                 result.duration_ms, result.summary, result.session_id,
             ),
         ) > 0
+
+    async def append_task_event(
+        self,
+        task_id: str,
+        event_type: str,
+        agent_id: str | None = None,
+        user_id: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        await self._db.execute(
+            "INSERT INTO task_events (task_id, event_type, agent_id, user_id, details) "
+            "VALUES (?, ?, ?, ?, ?::jsonb)",
+            (task_id, event_type, agent_id, user_id, _dump_json(details)),
+        )
+
+    async def list_task_events(
+        self, task_id: str, limit: int = 200
+    ) -> list[dict[str, Any]]:
+        rows = await self._db.execute(
+            "SELECT event_id, task_id, event_type, agent_id, user_id, details, created_at "
+            "FROM task_events WHERE task_id = ? ORDER BY event_id ASC LIMIT ?",
+            (task_id, limit),
+        )
+        return [
+            {
+                "event_id": r["event_id"],
+                "task_id": r["task_id"],
+                "event_type": r["event_type"],
+                "agent_id": r["agent_id"],
+                "user_id": r["user_id"],
+                "details": _load_json(r["details"]),
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            }
+            for r in rows
+        ]
 
     # ------------------------------------------------------------------
     # Queue

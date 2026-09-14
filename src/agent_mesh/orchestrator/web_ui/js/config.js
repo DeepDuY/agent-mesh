@@ -29,6 +29,11 @@ async function loadConfig() {
     const autoUp = document.getElementById('auto-upgrade');
     autoUp.checked = (settings.auto_upgrade ?? '1') !== '0';
 
+    const permInput = document.getElementById('default-permission');
+    if (document.activeElement !== permInput) {
+      permInput.value = settings.default_permission || '';
+    }
+
     const mcInput = document.getElementById('max-concurrent');
     if (document.activeElement !== mcInput) mcInput.value = settings.max_concurrent || '2';
 
@@ -140,6 +145,38 @@ async function saveTaskLogPoll() {
     document.getElementById('task-log-poll').value = String(n);
     window.TASK_LOG_POLL_S = n;
     el.textContent = '已保存（刷新间隔 ' + n + ' 秒）';
+    el.style.color = '';
+  } catch (e) {
+    el.textContent = '保存失败：' + e.message;
+    el.style.color = 'var(--danger)';
+  }
+  setTimeout(() => el.textContent = '', 3000);
+}
+
+function applyDefaultPermissionPreset(name) {
+  if (!name) return;
+  document.getElementById('default-permission').value =
+    JSON.stringify(PERMISSION_PRESETS[name], null, 2);
+}
+
+async function saveDefaultPermission() {
+  const el = document.getElementById('default-permission-status');
+  const raw = document.getElementById('default-permission').value.trim();
+  if (raw) {
+    try {
+      const obj = JSON.parse(raw);
+      if (typeof obj !== 'object' || Array.isArray(obj) || obj === null) {
+        throw new Error('必须是对象');
+      }
+    } catch (e) {
+      el.textContent = 'permission 需为 JSON 对象，如 {"*":"deny"}';
+      el.style.color = 'var(--danger)';
+      return;
+    }
+  }
+  try {
+    await patchSettings({ default_permission: raw });
+    el.textContent = '已保存，将随心跳同步到节点';
     el.style.color = '';
   } catch (e) {
     el.textContent = '保存失败：' + e.message;

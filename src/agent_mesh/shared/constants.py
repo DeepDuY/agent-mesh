@@ -1,6 +1,6 @@
 import enum
 
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 
 # Initial gateway model ids seeded into `settings.llm_models` on a fresh
 # database. This is only a default value, not a hardcoded allow-list: the edge

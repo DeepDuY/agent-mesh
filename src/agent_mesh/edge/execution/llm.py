@@ -45,6 +45,7 @@ async def run_llm(
     log_callback=None,
     system_prompt: str = "",
     llm_models: list[str] | None = None,
+    permission: dict | None = None,
 ) -> ExecutionOutcome:
     runtime_path = find_runtime(runtime)
     pre_snapshot = _snapshot_files(workdir)
@@ -61,7 +62,7 @@ async def run_llm(
         api_key=llm_api_key,
         base_url=llm_base_url,
         model=model,
-        allowed_tools=task.constraints.allowed_tools,
+        permission=permission,
         models=llm_models,
     )
 

@@ -54,7 +54,8 @@
 
 ## 6. 执行隔离
 
-- 任务级 `allowed_tools` + opencode `permission` 配置；生产建议低权限账号/容器。
+- 模板级 `permission`（OpenCode `permission` 规格）+ edge 共享匹配器（llm 与 command 共用）；内置 `build`/`plan`/`readonly`，默认 `readonly`。**匹配器只防误操作，不是安全边界**；生产建议低权限账号/容器。
+- 拒绝与关键动作写入 `task_events` 审计（`GET /api/tasks/{id}/events`）。
 - `delete_agent` 下发自毁命令属于高风险操作，Web 端需二次确认。
 
 ## 7. Agent 独立 token 与设备-用户关联

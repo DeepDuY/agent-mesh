@@ -33,21 +33,24 @@ def _create(client: TestClient, **body) -> dict:
 
 
 def test_template_crud(client: TestClient):
+    permission = {"edit": "deny", "bash": {"*": "deny", "ls *": "allow"}}
     tpl = _create(
         client,
         name="ops",
         description="deploy node",
         system_prompt="你是部署专员",
         llm_model="anthropic/deepseek-v4-pro",
-        allowed_tools=["bash", "edit"],
+        permission=permission,
     )
     assert tpl["name"] == "ops"
     assert tpl["system_prompt"] == "你是部署专员"
     assert tpl["llm_model"] == "anthropic/deepseek-v4-pro"
-    assert tpl["allowed_tools"] == ["bash", "edit"]
+    assert tpl["permission"] == permission
 
     listed = client.get("/api/templates", headers=_admin_headers()).json()["templates"]
-    assert [t["name"] for t in listed] == ["ops"]
+    assert "ops" in [t["name"] for t in listed]
+    # The three built-in permission templates are always seeded.
+    assert {"build", "plan", "readonly"} <= {t["name"] for t in listed}
 
     got = client.get(f"/api/templates/{tpl['id']}", headers=_admin_headers()).json()["template"]
     assert got["id"] == tpl["id"]

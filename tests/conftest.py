@@ -35,6 +35,10 @@ async def init_sqlite_file(db_path: str) -> None:
     # Tests exercise llm dispatch, which is force-configured (no hardcoded
     # fallback model), so seed a default model that is on the seeded allow-list.
     await backend.set_setting("llm_model", "anthropic/deepseek-v4-flash")
+    # The built-in default permission is `readonly` (command mode denied). Tests
+    # that dispatch command tasks opt into full access here; permission-specific
+    # behaviour is asserted explicitly in test_permission.py.
+    await backend.set_setting("default_permission", '{"*": "allow"}')
     await backend.close()
     conn = sqlite3.connect(db_path)
     try:

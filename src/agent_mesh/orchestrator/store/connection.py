@@ -118,6 +118,7 @@ class SQLiteDatabase(Database):
         self._execute_sync("PRAGMA journal_mode=WAL")
         self._execute_sync("PRAGMA busy_timeout=5000")
         await self._run_migrations()
+        await self._ensure_default_templates()
         await self._ensure_session_secret()
         await self._ensure_admin_user()
 
@@ -224,6 +225,26 @@ class SQLiteDatabase(Database):
                         logger.info("applied migration %s", f.name)
                 finally:
                     conn.close()
+
+    async def _ensure_default_templates(self) -> None:
+        """Seed the built-in permission templates + global default (idempotent)."""
+        from agent_mesh.shared import permissions
+
+        for name in permissions.PROFILES:
+            permission = permissions.expand_profile(name)
+            await self.execute(
+                "INSERT OR IGNORE INTO templates (name, description, permission) "
+                "VALUES (?, ?, ?)",
+                (
+                    name,
+                    permissions.PROFILE_DESCRIPTIONS.get(name, ""),
+                    permissions.dumps(permission),
+                ),
+            )
+        await self.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('default_permission', ?)",
+            (permissions.dumps(permissions.default_permission()),),
+        )
 
     async def _ensure_session_secret(self) -> None:
         from agent_mesh.orchestrator.auth import generate_token
@@ -349,6 +370,7 @@ class PostgresDatabase(Database):
             await self._ensure_task_schema_upgrade(conn)
             await self._ensure_session_secret(conn)
             await self._ensure_settings(conn)
+            await self._ensure_default_templates(conn)
             await self._ensure_admin_user(conn)
         finally:
             await conn.close()
@@ -523,7 +545,6 @@ class PostgresDatabase(Database):
                 workdir TEXT DEFAULT '.',
                 timeout_s INTEGER DEFAULT 300,
                 model TEXT,
-                allowed_tools JSONB,
                 output_limit INTEGER DEFAULT 200000,
                 status TEXT DEFAULT 'queued',
                 max_retries INTEGER DEFAULT 0,
@@ -629,6 +650,25 @@ class PostgresDatabase(Database):
         # (nodes get their prompt from the node + template layers).
         await conn.execute("DELETE FROM settings WHERE key = 'system_prompt'")
 
+    async def _ensure_default_templates(self, conn: Any) -> None:
+        """Seed the built-in permission templates + global default (idempotent)."""
+        from agent_mesh.shared import permissions
+
+        for name in permissions.PROFILES:
+            permission = permissions.expand_profile(name)
+            await conn.execute(
+                "INSERT INTO templates (name, description, permission) "
+                "VALUES ($1, $2, $3::jsonb) ON CONFLICT (name) DO NOTHING",
+                name,
+                permissions.PROFILE_DESCRIPTIONS.get(name, ""),
+                permissions.dumps(permission),
+            )
+        await conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('default_permission', $1) "
+            "ON CONFLICT (key) DO NOTHING",
+            permissions.dumps(permissions.default_permission()),
+        )
+
     async def _ensure_session_secret(self, conn: Any) -> None:
         from agent_mesh.orchestrator.auth import generate_token
 
@@ -678,12 +718,22 @@ class PostgresDatabase(Database):
                 description TEXT,
                 system_prompt TEXT,
                 llm_model TEXT,
-                allowed_tools JSONB,
+                permission JSONB,
                 data JSONB,
                 created_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW()
             )
         """)
+        tpl_cols = {
+            r["column_name"]
+            for r in await conn.fetch(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'templates'"
+            )
+        }
+        if "permission" not in tpl_cols:
+            await conn.execute("ALTER TABLE templates ADD COLUMN permission JSONB")
+        if "allowed_tools" in tpl_cols:
+            await conn.execute("ALTER TABLE templates DROP COLUMN allowed_tools")
         cols = {
             r["column_name"]
             for r in await conn.fetch(
@@ -734,6 +784,8 @@ class PostgresDatabase(Database):
         }.items():
             if col not in cols:
                 await conn.execute(sql)
+        if "allowed_tools" in cols:
+            await conn.execute("ALTER TABLE tasks DROP COLUMN allowed_tools")
 
         res_cols = {
             r["column_name"]

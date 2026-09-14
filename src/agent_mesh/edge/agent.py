@@ -22,6 +22,7 @@ from agent_mesh.edge.config_writer import (
     read_agent_version,
     read_edge_token,
     read_llm_models,
+    read_permission,
     read_system_prompt,
 )
 from agent_mesh.edge.execution import Executor, resolve_workdir
@@ -47,6 +48,7 @@ class EdgeAgent:
         install_dir: str | None = None,
         llm_models: str = "",
         system_prompt: str = "",
+        permission: dict | None = None,
     ):
         self.agent_id = agent_id
         self.runtime = runtime
@@ -61,6 +63,7 @@ class EdgeAgent:
         # Prefer config persisted by a previous config-sync (survives restarts).
         system_prompt = system_prompt or read_system_prompt(self.install_dir) or ""
         llm_models = llm_models or read_llm_models(self.install_dir) or ""
+        permission = permission or read_permission(self.install_dir)
         self.client = EdgeRestClient(
             orchestrator_url.replace("/mcp", ""), token
         )
@@ -74,6 +77,7 @@ class EdgeAgent:
             default_workdir=workdir,
             system_prompt=system_prompt,
             llm_models=parse_model_list(llm_models),
+            permission=permission,
         )
         self._stop_event = asyncio.Event()
         self._last_cpu_sample = None
@@ -215,6 +219,8 @@ class EdgeAgent:
             self.executor.system_prompt = (config.get("system_prompt") or "")
         if "llm_models" in config:
             self.executor.llm_models = parse_model_list(config.get("llm_models") or "")
+        if "permission" in config:
+            self.executor.permission = config.get("permission")
         apply_llm_config(self.install_dir, config, str(config_version))
         logger.info(
             "applied LLM config v%s (model=%s base_url=%s)",

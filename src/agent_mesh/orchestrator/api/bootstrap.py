@@ -39,10 +39,17 @@ def mount_bootstrap_routes(
         body = await request.json()
         for key, value in body.items():
             await store.store.set_setting(key, str(value))
-        # Any change to LLM defaults must be pushed to edges via config sync.
+        # Any change to LLM defaults or the fallback permission must be pushed to
+        # edges via config sync.
         if any(
             k in body
-            for k in ("llm_api_key", "llm_base_url", "llm_model", "llm_models")
+            for k in (
+                "llm_api_key",
+                "llm_base_url",
+                "llm_model",
+                "llm_models",
+                "default_permission",
+            )
         ):
             await store.bump_config_version()
         return {"settings": await store.store.list_settings()}

@@ -119,7 +119,7 @@ queued ──心跳领取──▶ assigned ──mark_started──▶ working 
 - `apply_llm_config(install_dir, config, version)`：LLM 配置同步持久化——更新 `etc/edge.env` 的 `EDGE_LLM_*`（缺失追加）并写 `etc/config_version`（见 [auth-security.md §9](./auth-security.md#9-llm-配置同步)）。
 - `persist_edge_token(install_dir, token)` / `read_edge_token()`：把 agent 独立 token 写/读 `edge.env` 的 `EDGE_TOKEN`（见 [auth-security.md §7](./auth-security.md#7-agent-独立-token-与设备-用户关联)）。
 - `WRAPPER_SCRIPT`：回滚感知的启动 wrapper（`bin/agent-mesh-edge` → `exec bin/agent-mesh-edge.bin`），含两阶段升级回滚逻辑（见 [auth-security.md §8](./auth-security.md#8-agent-自升级)）。
-- `build_opencode_config(api_key, base_url, model, allowed_tools, models)`：`provider.anthropic` + `models`（**无硬编码**，完全由 orchestrator 配置的 `llm_models` 生成：map 键 = 去 `anthropic/` 前缀的完整 id、`name` = `_canonical_model_id()` 末段；请求的 `model` 也会 `setdefault` 补入）；模型为空时 `run_llm` 直接返回 `no LLM model configured`，不启动运行时；`permission` 默认 `edit/bash: allow`、`webfetch: ask`、`mcp__*: deny`，`allowed_tools` 追加 `allow`。
+- `build_opencode_config(api_key, base_url, model, permission, models)`：`provider.anthropic` + `models`（**无硬编码**，完全由 orchestrator 配置的 `llm_models` 生成：map 键 = 去 `anthropic/` 前缀的完整 id、`name` = `_canonical_model_id()` 末段；请求的 `model` 也会 `setdefault` 补入）；模型为空时 `run_llm` 直接返回 `no LLM model configured`，不启动运行时；`permission` 由模板/全局解析后随 config-sync 下发（缺省回退内置 `readonly`），直接写入生成的 `opencode.json`。
 - `find_runtime()`：`shutil.which` → `~/.opencode/bin/{runtime}` 回退。
 
 ## 4. orchestrator 侧任务处理（api/edge.py 之外）

@@ -42,6 +42,7 @@ class Executor:
         default_workdir: str = ".",
         system_prompt: str = "",
         llm_models: list[str] | None = None,
+        permission: dict | None = None,
     ):
         self.runtime = runtime
         self.llm_api_key = llm_api_key
@@ -52,6 +53,7 @@ class Executor:
         self.default_workdir = default_workdir or "."
         self.system_prompt = system_prompt or ""
         self.llm_models = list(llm_models or [])
+        self.permission = permission
 
     async def run_task(
         self, task: Task, cancel_event: asyncio.Event | None = None,
@@ -60,13 +62,17 @@ class Executor:
         workdir = resolve_workdir(task, self.default_workdir)
 
         if task.mode == "command":
-            return await run_command(task, workdir, cancel_event, log_callback)
+            return await run_command(
+                task, workdir, cancel_event, log_callback,
+                permission=self.permission,
+            )
         return await run_llm(
             task, workdir, self.runtime, self.llm_api_key, self.llm_base_url,
             self.llm_model, cancel_event, self.edge_token, self.orchestrator_base_url,
             log_callback,
             system_prompt=self.system_prompt,
             llm_models=self.llm_models,
+            permission=self.permission,
         )
 
     def build_task_result(self, outcome: ExecutionOutcome) -> TaskResult:

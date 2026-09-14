@@ -27,7 +27,29 @@ async def run_command(
     workdir: Path,
     cancel_event: asyncio.Event | None = None,
     log_callback=None,
+    permission: dict | None = None,
 ) -> ExecutionOutcome:
+    # Command mode does not go through OpenCode, so the shared permission policy
+    # is evaluated here before the shell is spawned. Any sub-command that is not
+    # explicitly allowed (deny/ask) rejects the whole task. This is a guard
+    # against destructive/accidental commands, not a security sandbox.
+    from agent_mesh.shared import permissions
+
+    if permissions.evaluate_command(permission, task.instruction) != "allow":
+        logger.warning(
+            "command task=%s denied by permission policy: %s",
+            task.task_id,
+            task.instruction,
+        )
+        if log_callback is not None:
+            try:
+                await log_callback(
+                    [{"kind": "error", "content": f"权限被拒绝: {task.instruction}"}]
+                )
+            except Exception:
+                logger.debug("denied-log upload failed", exc_info=True)
+        return _error_outcome("command", f"权限被拒绝: {task.instruction}")
+
     pre_snapshot = _snapshot_files(workdir)
     start = datetime.now(timezone.utc)
 

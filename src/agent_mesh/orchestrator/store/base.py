@@ -131,7 +131,7 @@ class AbstractStore(abc.ABC):
         description: str | None = None,
         system_prompt: str | None = None,
         llm_model: str | None = None,
-        allowed_tools: list[str] | None = None,
+        permission: dict[str, Any] | None = None,
         data: dict[str, Any] | None = None,
     ) -> int: ...
 
@@ -243,6 +243,21 @@ class AbstractStore(abc.ABC):
     async def set_task_result(
         self, task_id: str, result: TaskResult
     ) -> bool: ...
+
+    @abc.abstractmethod
+    async def append_task_event(
+        self,
+        task_id: str,
+        event_type: str,
+        agent_id: str | None = None,
+        user_id: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    @abc.abstractmethod
+    async def list_task_events(
+        self, task_id: str, limit: int = 200
+    ) -> list[dict[str, Any]]: ...
 
     # ------------------------------------------------------------------
     # Task queue

@@ -290,11 +290,13 @@ async function showTaskDetail(taskId) {
     <p><strong>指令：</strong></p><pre>${t.instruction}</pre>
     <p><strong>摘要：</strong> ${r.summary || '-'}</p>
     ${artifacts}
+    <p><strong>审计事件：</strong></p><div id="task-events" class="muted">加载中...</div>
     ${isLive ? `<p><strong>实时输出：</strong></p><div id="task-live-log" class="task-live-log"><p class="muted">等待输出...</p></div>` : ''}
     <p><strong>标准输出：</strong></p><pre>${r.stdout_tail || '(空)'}</pre>
     <p><strong>标准错误：</strong></p><pre>${r.stderr_tail || '(空)'}</pre>
   `;
   openModal();
+  loadTaskEvents(taskId);
   if (isLive) {
     taskLogTaskId = taskId;
     taskLogNextId = 0;
@@ -302,6 +304,26 @@ async function showTaskDetail(taskId) {
     pollTaskLogs();
     const pollS = window.TASK_LOG_POLL_S || 5;
     taskLogTimer = setInterval(pollTaskLogs, pollS * 1000);
+  }
+}
+
+async function loadTaskEvents(taskId) {
+  const box = document.getElementById('task-events');
+  if (!box) return;
+  try {
+    const res = await fetch(`/api/tasks/${taskId}/events`, { headers });
+    if (!res.ok) { box.textContent = ''; return; }
+    const events = (await res.json()).events || [];
+    if (!events.length) { box.textContent = '(无)'; return; }
+    box.classList.remove('muted');
+    box.innerHTML = '<ul class="task-events">' + events.map(e => {
+      const detail = e.details && Object.keys(e.details).length
+        ? ' ' + escHtml(JSON.stringify(e.details)) : '';
+      return `<li><span class="mono">${formatTime(e.created_at)}</span> ` +
+        `<strong>${escHtml(e.event_type)}</strong>${detail}</li>`;
+    }).join('') + '</ul>';
+  } catch (e) {
+    box.textContent = '';
   }
 }
 

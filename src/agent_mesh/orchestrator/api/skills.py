@@ -268,9 +268,15 @@ def mount_skill_routes(
             f"- **REST Base URL**: {base_line}\n"
             f"- **用户 token**: `{token or '<未获取 — 请向用户索取>'}`\n"
             "本页示例中的地址与 token 已填入真实值，可直接复制执行；"
-            "token 即本次调用使用的用户凭据，请注意保管，不要外泄/提交到仓库。\n\n"
+            "token 有效期有限（session token 默认 24h），**过期后请向用户重新索取账号密码登录**"
+            "（详见「认证」一节）。请注意保管，不要外泄/提交到仓库。\n\n"
         )
-        text = text.replace("\n## 何时使用\n", f"\n{info}## 何时使用\n", 1)
+        # Inject right after the frontmatter, before the document title.
+        marker = "# agent-mesh 编排器控制"
+        if marker in text:
+            text = text.replace(marker, f"{info}{marker}", 1)
+        else:
+            text = f"{info}{text}"
 
         return Response(
             content=text,

@@ -106,7 +106,7 @@ MCP Server：`name="agent-mesh-orchestrator"`、`version=VERSION`（`shared/cons
 | `submit_result` | 边沿提交结果（内部用） | `task_id`, `agent_id`, `status`, `exit_code`, `stdout_tail?`, `stderr_tail?`, `artifacts?`, `duration_ms?`, `summary?` |
 | `get_task_status` | 查询任务（含 result） | `task_id` → `{found, task}` |
 | `list_tasks` | 任务列表 | `agent_id?`, `status?`, `limit=100` |
-| `dispatch_task` | 派发任务 | `agent_id`, `instruction`, `mode="llm"`, `timeout_s=300`, `workdir="."`, `max_retries=0`, `depends_on?`, `allowed_tools?`, `model?`, `output_limit=200_000`, `session_id?`（续用 opencode 会话）, `skills?`, `attachments?`（文件库 file_id 列表） |
+| `dispatch_task` | 派发任务 | `agent_id`, `instruction`, `mode="llm"`, `timeout_s=300`, `workdir="."`, `max_retries=0`, `depends_on?`, `model?`, `output_limit=200_000`, `session_id?`（续用 opencode 会话）, `skills?`, `attachments?`（文件库 file_id 列表） |
 | `cancel_task` | 终止任务 | `task_id` → `{accepted}`；非终态才生效 |
 | `list_agents` | 列出所有节点 | - |
 | `get_agent` | 单个节点 | `agent_id` → `{found, agent}` |

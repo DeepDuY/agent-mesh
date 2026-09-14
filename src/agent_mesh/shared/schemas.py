@@ -49,7 +49,6 @@ class Constraints(BaseModel):
     workdir: str = "."
     timeout_s: int = 300
     model: str | None = None
-    allowed_tools: list[str] | None = None
     output_limit: int = 200_000
     session_id: str | None = None
     skills: list[str] | None = None

@@ -143,6 +143,50 @@ class TaskStore:
         return None
 
     # ------------------------------------------------------------------
+    # Permission (template > global default > built-in readonly)
+    # ------------------------------------------------------------------
+    async def effective_permission(
+        self, agent: AgentStatus | None, template: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Resolve the permission object governing a node.
+
+        Permission is a template-level capability (no node/task override):
+        bound template > global ``default_permission`` setting > built-in readonly.
+        """
+        from agent_mesh.shared import permissions
+
+        if template is not None and template.get("permission"):
+            return template["permission"]
+        permission = permissions.loads(
+            await self.store.get_setting("default_permission")
+        )
+        return permission if permission is not None else permissions.default_permission()
+
+    async def check_command_permission(
+        self, agent_ref: str, instruction: str
+    ) -> str | None:
+        """Return a denial reason when a command task is not permitted, else None.
+
+        Server-side pre-check for immediate feedback; the edge re-evaluates as the
+        enforcement point. Returns None when the agent is unknown (the normal
+        "agent not found" path handles that).
+        """
+        from agent_mesh.shared import permissions
+
+        agent = await self._resolve_agent(agent_ref)
+        if agent is None:
+            return None
+        template = (
+            await self.store.get_template(agent.template_id)
+            if agent.template_id
+            else None
+        )
+        permission = await self.effective_permission(agent, template)
+        if permissions.evaluate_command(permission, instruction) != "allow":
+            return "command denied by permission policy"
+        return None
+
+    # ------------------------------------------------------------------
     # Dispatch
     # ------------------------------------------------------------------
     async def dispatch(

@@ -52,7 +52,8 @@ sudo ./deploy/install.sh --opencode /path/opencode  # 指定本机 opencode（�
 - **LLM 配置同步**：配置页保存 LLM 配置（或设置节点级 `llm_config`）后 `config_version` 自增，通过心跳推送给所有在线节点，边沿自动更新并持久化到 `edge.env`（节点级配置优先）
 - **模型列表可配置**：`settings.llm_models`（配置页「可用模型列表」，每行一个网关真实 id）是唯一模型来源，边沿据此生成 opencode 模型表（**无硬编码**）；派发 llm 任务时 `model` 会按列表校验，未配置默认模型则拒绝执行
 - **节点描述与角色设定**：每个节点可设 `description`（主 Agent 通过 `list_agents` 识别用途）与节点级 `system_prompt`（注入该节点每个 llm 任务提示词顶部，配置页/节点详情可编辑）
-- **节点模板**：可复用的节点配置（`system_prompt` / 默认 `llm_model` / 预留权限 `allowed_tools`）；节点**引用式绑定**（`agents.template_id`），改模板自动同步到所有绑定节点。生效顺序：模型 `节点 > 模板 > 全局默认`，提示词按 `内置 + 节点 + 模板` 拼接
+- **节点模板**：可复用的节点配置（`system_prompt` / 默认 `llm_model` / **权限 `permission`**）；节点**引用式绑定**（`agents.template_id`），改模板自动同步到所有绑定节点。生效顺序：模型 `节点 > 模板 > 全局默认`，提示词按 `内置 + 节点 + 模板` 拼接
+- **执行权限（模板级，llm + command 共用）**：采用 OpenCode `permission` 规格（`allow|ask|deny` + 命令 glob），内置 `build`/`plan`/`readonly` 三个模板；未绑定模板的节点用全局 `default_permission`（默认 `readonly`）。llm 模式交由 opencode 强制，command 模式由 edge 在 `bash -c` 前求值；拒绝与关键动作写入 `task_events` 审计。**注意：command 匹配器只防误操作，非安全边界**
 - 数据持久化（SQLite/PostgreSQL），重启不丢失
 - Agent 一键安装脚本（PyInstaller 单二进制 + **内置 opencode**，目标机无需外网）；构建机本机无 opencode 时自动从官方 GitHub releases 下载
 - 节点删除：一键下发卸载任务，自动清理安装目录与 systemd 服务
@@ -411,7 +412,7 @@ agent-mesh/
 | POST | `/api/agents/{id}/upgrade` | 请求升级节点（空闲时自动执行并回滚） |
 | DELETE | `/api/agents/{id}` | 删除节点（下发卸载任务） |
 | GET | `/api/templates` | 节点模板列表 |
-| POST | `/api/templates` | 创建模板（name/system_prompt/llm_model/allowed_tools/data） |
+| POST | `/api/templates` | 创建模板（name/system_prompt/llm_model/permission/data） |
 | GET | `/api/templates/{id}` | 单个模板 |
 | PATCH | `/api/templates/{id}` | 更新模板（改动自动同步到绑定节点） |
 | DELETE | `/api/templates/{id}` | 删除模板（绑定节点自动解绑） |

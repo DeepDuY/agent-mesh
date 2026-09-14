@@ -85,19 +85,15 @@ def build_opencode_config(
     api_key: str,
     base_url: str,
     model: str,
-    allowed_tools: list[str] | None = None,
+    permission: dict[str, Any] | None = None,
     models: list[str] | None = None,
 ) -> dict[str, Any]:
-    permission: dict[str, Any] = {
-        "edit": "allow",
-        "bash": "allow",
-        "webfetch": "ask",
-        "mcp__*": "deny",
-    }
-    if allowed_tools:
-        # v1: simple mapping for demo; deeper tool gating can be added later.
-        for tool in allowed_tools:
-            permission[tool] = "allow"
+    # Permission is resolved by the orchestrator (template > global default) and
+    # delivered via config-sync. The edge never invents a policy: falling back to
+    # the built-in conservative default only happens if none arrived yet.
+    from agent_mesh.shared import permissions
+
+    effective_permission = permission if permission is not None else permissions.default_permission()
     # The models map is built entirely from the orchestrator-configured list
     # (settings.llm_models); nothing is hardcoded here. The map keys must be the
     # gateway's EXACT model ids minus the provider prefix, because opencode
@@ -121,7 +117,7 @@ def build_opencode_config(
                 "models": model_map,
             }
         },
-        "permission": permission,
+        "permission": effective_permission,
     }
 
 
@@ -234,7 +230,26 @@ def apply_llm_config(install_dir: str, config: dict[str, str], version: str) -> 
     # Multi-line / list values: dedicated files (raw text, newlines preserved).
     (etc / "system_prompt").write_text(config.get("system_prompt", "") or "", encoding="utf-8")
     (etc / "llm_models").write_text(config.get("llm_models", "") or "", encoding="utf-8")
+    # Permission is a JSON object; store it in its own file so shell sourcing of
+    # edge.env is unaffected.
+    from agent_mesh.shared import permissions
+
+    if "permission" in config:
+        (etc / "permission.json").write_text(
+            permissions.dumps(config.get("permission")), encoding="utf-8"
+        )
     (etc / "config_version").write_text(str(version), encoding="utf-8")
+
+
+def read_permission(install_dir: str) -> dict[str, Any] | None:
+    """Permission object persisted by config-sync (or None when unset)."""
+    from agent_mesh.shared import permissions
+
+    try:
+        raw = (Path(install_dir) / "etc" / "permission.json").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    return permissions.loads(raw)
 
 
 def read_system_prompt(install_dir: str) -> str:

@@ -1,368 +1,407 @@
 ---
 name: agent-mesh
-description: Control the agent-mesh orchestrator via REST/MCP to dispatch tasks to remote edge agents, monitor live logs, cancel tasks, check node status/CPU/memory, manage node descriptions/templates, install or remove an edge agent, upgrade agents, sync LLM config/models, and use the skill library / file library for attachments. Use when the user wants to run work on another machine or inspect/manage the remote agent fleet.
+description: 通过 agent-mesh 编排器把命令/自然语言任务派发到远程边缘节点、监控执行、取回产物，并管理节点、模板、权限、文件库与技能库。当用户要求「在某台远程机器上执行/运行/部署/测试」「查看节点状态」「把文件传到远程并处理」「把远程产出拿回来」「管理远程 agent 集群」时使用本技能。
 ---
 
 # agent-mesh 编排器控制
 
-通过编排器 REST API（或 MCP SSE）把任务委派给边缘节点（edge agent）、监控执行并管理节点与资源。
+agent-mesh 让你把任务委派给远程边缘节点（edge agent）执行，并统一监控、管理。本 SKILL 面向**主 Agent**：目标是让主 Agent 在读完后**知道什么需求该调用哪个接口**，而不是死记端点。
 
-## 何时使用
+## 0. 能力总览：什么需求用什么
 
-- 用户想在远程边缘节点上运行命令、脚本、测试或自然语言任务。
-- 用户想查看有哪些节点在线、状态、CPU/内存，或给节点改名/升级/删除/安装。
-- 用户想查看/筛选之前派发的任务，实时看输出，或**终止**正在跑的任务。
-- 用户想给 llm 任务附文件（文件库）或让边沿按需使用技能库。
-- 用户想给某节点单独配置 LLM（节点级覆盖全局）。
+| 用户诉求 | 用什么 | 详见 |
+|----------|--------|------|
+| 在远程机器跑命令/脚本/测试 | `POST /tasks/dispatch`（`mode=command`） | §4 |
+| 让远程机器上的 LLM 完成自然语言任务 | `POST /tasks/dispatch`（`mode=llm`） | §4 |
+| **把本地文件交给远程任务处理** | 先 `POST /files` 上传，再派发带 `attachments` | §5 |
+| **取回任务产生的文件/产物** | `task.result.artifacts` → `GET /artifacts/{task_id}/{artifact_id}` | §5 |
+| 看远程任务跑到哪了 / 实时输出 | `GET /tasks/{id}/status`、`GET /tasks/{id}/logs` | §6 |
+| 停止正在跑的任务 | `POST /tasks/{id}/cancel` | §6 |
+| 查看/挑选节点（哪台在线、干啥的） | `GET /agents`（看 `description`/`online`） | §3 |
+| 给一类节点统一配置（模型/提示词/权限） | 模板 `POST /templates` + `PATCH /agents/{id}/template` | §8 |
+| 单独调某个节点的 LLM / 提示词 | `PATCH /agents/{id}/llm_config` / `system_prompt` | §9 |
+| 让远程 LLM 按需使用某个专业技能 | 技能库 `POST /skills`（上传）、边沿自主取用 | §7 |
+| 装一台新机器 / 卸载节点 | `GET /bootstrap/install.sh` / `DELETE /agents/{id}` | §11 |
+| 改全局模型/公开地址/并发/默认权限 | `PATCH /settings` | §10 |
 
-## Base URL 与认证
+**一句话判断**：任务本身要「在别处执行」→ §4 派发；任务要用到**文件**→ §5；只是查询/管理→ §3/§6/§9。
 
-- **REST Base URL**: `http://<orchestrator-host>:8000/api`
-- **MCP SSE**: `http://<orchestrator-host>:8001/`
-- **认证**: 先登录拿 session token，之后所有请求带 `Authorization: Bearer <token>`；MCP 同样要求用户 token
+---
 
-登录获取 session token（默认 24h 有效）：
+## 1. 认证：token 会过期（务必先读）
+
+编排器的控制接口（REST/MCP）需要**用户 token**。注意全局 token（`AGENT_MESH_TOKEN`）**只能**给边缘节点做心跳/上报，**不能**用于控制接口。
+
+有两种用户 token：
+
+| 类型 | 来源 | 有效期 | 用途 |
+|------|------|--------|------|
+| **session token** | `POST /auth/login`（账号+密码） | **默认 24 小时** | 交互式使用；推荐主 Agent 使用 |
+| **API token** | 创建用户时一次性下发，或 admin 轮换 | 长期有效 | 长期脚本/自动化 |
+
+登录：
 
 ```bash
-curl -X POST http://<host>:8000/api/auth/login \
+curl -s -X POST http://<host>:8000/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin"}'
-# => {"username":"admin","token":"<session-token>","role":"admin","token_type":"session"}
+  -d '{"username":"<用户名>","password":"<密码>"}'
+# => {"username":"...","token":"<token>","role":"admin","token_type":"session"}
 ```
 
-之后的请求都带：
+之后所有请求带 `Authorization: Bearer <token>`。
 
-```
-Authorization: Bearer <token>
-```
+### ⚠️ token 过期怎么处理（重要）
 
-长期使用的 API token 在创建用户时一次性下发（`POST /api/auth/users`，admin），或由 admin 通过 `POST /api/auth/users/{username}/token` 轮换获取；API token 以 SHA-256 哈希入库。注意：全局 token（`AGENT_MESH_TOKEN`）只用于 edge 节点的心跳/上报端点，REST 控制接口与 MCP 必须用**用户 token**。
+session token 24 小时后失效。**任何请求返回 `401 Unauthorized`（或 `{"detail":"..."}` 表示未认证）时，就是 token 过期或失效**。此时：
 
-## 节点标识（重要）
+1. **不要**反复重试或尝试绕过。
+2. **明确向用户索取账号密码**（例如：「编排器 token 已过期，请提供用户名和密码，我重新登录」）。不要猜测密码，也不要把密码写进日志/仓库。
+3. 重新 `POST /auth/login` 拿到新 token，替换后继续。
+4. 如果用户希望免去反复登录，可让 admin 用 `POST /auth/users` 创建用户拿**长期 API token**，或 `POST /auth/users/{username}/token` 轮换获得长期 token。
 
-一个节点由**数字 id**（自增主键）唯一标识，同时上报 **device_id**（`/etc/machine-id`，或安装目录持久化的随机 id）。`agent_id` 是显示名/别名，不唯一。
+> 主 Agent 建议：把「登录」封装成一个函数，遇到 401 自动重新登录；若登录也需要凭证且本地没有，就停下来问用户。
 
-引用节点时可传以下任一：
-- 数字 id，如 `3`
-- device_id（machine-id），如 `a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e`
-- 显示名 `agent_id`
+## 2. 地址
 
-## 核心端点（主 Agent 常用）
+- **REST Base URL**：`http://<host>:8000/api`
+- **MCP（SSE）**：`http://<orchestrator-host>:8001/`
 
-| Method | Path | 用途 |
-|--------|------|------|
-| GET | `/healthz` | 健康检查 |
-| POST | `/auth/login` | 登录拿 token |
-| GET | `/agents` | 列出所有节点（在线/离线、版本、CPU/内存） |
-| GET | `/agents/{id}` | 单个节点 |
-| GET | `/agents/{id}/detail` | 节点详情 + 最近任务 |
-| PATCH | `/agents/{id}/alias` | 设置/清除别名 |
-| PATCH | `/agents/{id}/description` | 设置/清除节点描述（供主 Agent 识别节点用途） |
-| PATCH | `/agents/{id}/system_prompt` | 设置**节点级** system prompt（与模板拼接，心跳同步） |
-| PATCH | `/agents/{id}/template` | 绑定/解绑节点模板（`template_id`，null 解绑） |
-| PATCH | `/agents/{id}/llm_config` | 设置**节点级** LLM 配置（覆盖全局，心跳同步） |
-| GET | `/templates` | 模板列表 |
-| POST | `/templates` | 新建模板（name/system_prompt/llm_model/allowed_tools/data） |
-| GET | `/templates/{id}` | 模板详情 |
-| PATCH | `/templates/{id}` | 更新模板（改动自动同步到所有绑定节点） |
-| DELETE | `/templates/{id}` | 删除模板（绑定节点自动解绑） |
-| POST | `/agents/{id}/upgrade` | 请求升级该节点（空闲时自动执行+回滚） |
-| DELETE | `/agents/{id}` | 删除节点（下发卸载任务） |
-| POST | `/tasks/dispatch` | 派发任务（command/llm；可带 `session_id`/`attachments`） |
-| GET | `/tasks` | 任务列表（分页 + 状态/模式/搜索/开始时间筛选） |
-| GET | `/tasks/{task_id}` | 任务详情 |
-| GET | `/tasks/{task_id}/status` | 查询任务状态 |
-| GET | `/tasks/{task_id}/logs` | 任务实时执行输出（增量 `?after_id=`） |
-| POST | `/tasks/{task_id}/cancel` | 终止任务（edge 会杀掉整棵进程树） |
-| DELETE | `/tasks/{task_id}` | 删除单个任务 |
-| POST | `/tasks/batch-delete` | 批量删除（按 id 或按筛选条件） |
-| POST | `/files` | 上传文件到文件库（multipart，返回 `file_id`+`md5`，同内容去重） |
-| GET | `/files` | 文件库列表（可 `?search=`） |
-| GET | `/files/{file_id}` | 下载文件库文件 |
-| POST | `/files/batch-delete` | 批量删除文件库文件 |
-| POST | `/files/batch-download` | 批量打包下载（ZIP） |
-| GET | `/skills` | 技能库摘要（name/description/version/enabled） |
-| GET | `/skills/{name}/download` | 下载技能 zip（给边沿按需取用） |
-| GET | `/skill-doc/agent-mesh` | 下载**个性化**的 agent-mesh SKILL.md（已填地址+你的 token） |
-| GET | `/settings` | 全局配置 |
-| PATCH | `/settings` | 更新全局配置（LLM/公开地址/自动升级/并发数） |
-| GET | `/bootstrap/install.sh` | 获取新节点安装命令脚本 |
-| POST | `/auth/users`（admin） | 创建用户，返回一次性 API token |
-| GET | `/auth/users`（admin） | 用户列表 |
-| POST | `/auth/users/{username}/token`（admin） | 轮换用户 API token |
-| POST | `/auth/change-password` | 修改自己的密码 |
+如果不知道地址，向用户询问；配置页的「公开地址」即为 REST 地址。
 
-## 派发任务
+## 3. 选节点（先看再派发）
 
-`POST /tasks/dispatch` 请求体：
+`GET /agents` 列出全部节点。**派发前先看 `online` 和 `description`**：
 
-```json
-{
-  "agent_id": 3,
-  "mode": "command",
-  "instruction": "echo hello && uname -a",
-  "workdir": "/tmp",
-  "timeout_s": 120,
-  "max_retries": 0
-}
+```bash
+curl -s -H "Authorization: Bearer <token>" http://<host>:8000/api/agents
 ```
 
-- `agent_id`: 必填，节点的数字 id / device_id / 显示名。
-- `mode`: 必填。
-  - `command`: `instruction` 作为 shell 命令原样执行（`bash -c`），**不经过 LLM**。结果会**自动收集工作目录下新增文件**为产物。
-  - `llm`: 交给节点本机的 opencode 运行时，`instruction` 是自然语言任务；只收集 LLM 声明的 artifacts。
-- 可选：`workdir`、`timeout_s`（默认 300）、`model`（per-task 覆盖，须为网关真实完整 id 且命中 `list_models`；**留空用节点/模板/全局默认模型，没有默认模型时 llm 任务会被拒绝**）、`allowed_tools`、`output_limit`（默认 200000）、`max_retries`、`depends_on`、`session_id`、`skills`、`attachments`（文件库 `file_id` 列表）。
-- 未显式 `workdir` 的任务自动落在独立子目录 `<EDGE_WORKDIR>/tasks/<task_id>/`，互不干扰。
+关键字段：
 
-**复用 LLM 会话（选填）**：若新任务要续用上一个 llm 任务的会话，先读该任务 `result.session_id`，派发时带上 `session_id`（节点 opencode 会 `--session <id>` 续跑）。任务完成后的 `result.session_id` 为本次实际使用的会话 ID。
+- `id`：数字主键，**推荐用这个派发**（唯一）。
+- `device_id`：machine-id，稳定设备标识；`agent_id`/`alias`：显示名，可能重复。
+- `online`：是否在线（心跳期内）。**离线节点派发会一直排队**。
+- `description`：运维写的用途说明（如「生产 Web 服务器」）——**据此选对节点**。
+- `template_id`：绑定的模板（决定模型/提示词/权限）。
+- `version`：探针版本；`cpu_percent`/`mem_percent`：资源占用。
+- `current_task_id`：当前任务（多任务并发时仅供参考）。
 
-响应：`{"task_id": "t-xxxxx", "status": "queued"}`，然后轮询状态直到终态。
+引用节点时，`agent_id` 参数可传数字 `id`、`device_id` 或显示名——但**优先用数字 `id`**，最不易混淆。
 
-## 任务状态与轮询
+## 4. 派发任务（核心）
 
-状态机：`queued → assigned → working → completed / failed / timed_out`，另有 `cancelled`（人为终止）。
+`POST /tasks/dispatch`：
 
-轮询 `GET /tasks/{task_id}/status`：
+```bash
+curl -s -X POST http://<host>:8000/api/tasks/dispatch \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"agent_id":3,"mode":"command","instruction":"echo hello && uname -a","timeout_s":120}'
+# => {"task_id":"t-xxxxx","status":"queued"}
+```
+
+### 选 `command` 还是 `llm`？
+
+- **`mode=command`**：`instruction` 就是一条 shell 命令（`bash -c` 原样执行），**不经过 LLM**。适合明确、确定性的操作（部署、跑测试、看系统信息、文件操作）。
+  - 工作目录下**新增的文件会自动作为产物**收集。
+  - **受节点权限约束**：节点若绑定只读/plan 权限，危险或非白名单命令会被**拒绝**（返回 403 或任务失败，摘要含「权限被拒绝」）。遇到被拒，向用户说明是权限策略，而不是命令本身有错。
+- **`mode=llm`**：`instruction` 是**自然语言任务**，交给节点本机的 opencode 处理。适合需要推理/多步/写代码的模糊任务。
+  - 需要节点已配置可用模型，否则被拒。
+  - 只会收集 LLM 主动声明的产物。
+
+> 能用明确命令做的事，优先 `command`（更快、更可控、更省 token）；需要「动脑」才用 `llm`。
+
+### 常用可选参数
+
+| 参数 | 说明 |
+|------|------|
+| `workdir` | 工作目录。**不填**则自动落在独立子目录 `<EDGE_WORKDIR>/tasks/<task_id>/`（推荐，互不干扰） |
+| `timeout_s` | 超时秒数，默认 300；超时任务置 `timed_out` |
+| `model` | 仅 llm：指定模型，须命中可用模型列表；不填用节点/模板/全局默认 |
+| `max_retries` | 超时后自动重试次数 |
+| `depends_on` | 依赖的任务 id 列表（当前仅校验存在，不阻塞执行） |
+| `session_id` | 仅 llm：续用上一个 llm 任务的会话 |
+| `attachments` | **文件库 file_id 列表**，见 §5 |
+| `skills` | 提示该任务可参考的技能名（预留） |
+| `output_limit` | 输出截断字节数，默认 200000 |
+
+**续用 LLM 会话**：给需要上下文的连续任务，先读上一任务 `result.session_id`，派发时带上 `session_id`；返回的 `result.session_id` 是本次实际会话。
+
+派发后轮询直到终态（见 §6）。
+
+## 5. 文件模块：任务输入与产物的搬运
+
+文件模块解决一件事：**在「主 Agent 所在机器」和「边缘节点工作目录」之间搬运文件**。
+
+### 5.1 何时用
+
+- **任务需要读取/处理某个本地文件**（配置、数据、脚本、压缩包）→ 走「上传 + `attachments`」。
+- **任务产出了文件，用户想拿回来**（报告、构建产物、日志、打包结果）→ 走「产物下载」。
+
+### 5.2 何时**不**用
+
+- 只是一小段文本内容 → 直接写进 `instruction`，不必上传。
+- command 模式产生的文件 → 已自动作为 **task 产物**收集，**不需要**手动上传文件库（见下）。
+
+### 5.3 上传本地文件给任务用
+
+```bash
+# 1) 上传（可多文件；服务端返回 file_id + md5，同内容自动去重）
+curl -s -X POST http://<host>:8000/api/files \
+  -H "Authorization: Bearer <token>" \
+  -F "files=@./data.csv" -F "files=@./config.yaml"
+# => {"files":[{"file_id":"f-xxxx","filename":"data.csv","size":123,
+#              "content_type":"text/csv","md5":"...","download_url":"/api/files/f-xxxx"}]}
+
+# 2) 派发时引用 file_id
+curl -s -X POST http://<host>:8000/api/tasks/dispatch \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"agent_id":3,"mode":"llm","instruction":"分析工作目录下的 data.csv，输出 summary.md",
+      "attachments":["f-xxxx","f-yyyy"]}'
+```
+
+- 附件以**原文件名**写入任务工作目录；探针下载后会**按 md5 校验**，不一致则任务直接失败（`summary: attachment download failed`）。
+- `mode=command` 也可以用 `attachments`：文件先落到工作目录，命令即可直接引用文件名。
+
+### 5.4 取回任务产物
+
+任务完成后，`task.result.artifacts` 是产物列表（`artifact_id`/`filename`/`size`）：
+
+```bash
+# 先看任务详情的产物列表
+curl -s -H "Authorization: Bearer <token>" http://<host>:8000/api/tasks/t-xxxxx
+# result.artifacts: [{"artifact_id":"a-1","filename":"summary.md","size":123,"download_url":...}, ...]
+
+# 下载单个产物
+curl -s -H "Authorization: Bearer <token>" \
+  http://<host>:8000/api/artifacts/t-xxxxx/a-1 -o summary.md
+```
+
+- **command 模式**：工作目录下新增的文件自动进产物。
+- **llm 模式**：只收集 LLM 在最终 JSON 里 `declared_artifacts` 声明的文件。
+- 大文件/多文件：LLM 被要求打包成 `.tar.gz`/`.zip` 再声明。
+
+### 5.5 文件库管理
+
+```bash
+curl -s -H "Authorization: Bearer <token>" "http://<host>:8000/api/files?search=csv"   # 列表/搜索
+curl -s -H "Authorization: Bearer <token>" http://<host>:8000/api/files/f-xxxx -o f    # 下载
+curl -s -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"file_ids":["f-xxxx"]}' http://<host>:8000/api/files/batch-delete
+curl -s -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"file_ids":["f-xxxx","f-yyyy"]}' http://<host>:8000/api/files/batch-download -o files.zip
+```
+
+- 文件库是**去重**的（同 md5+文件名复用）；删除不做引用校验，被删文件的任务执行时会因下载失败而失败。
+
+## 6. 监控、取消与审计
+
+### 6.1 任务状态
+
+状态机：`queued → assigned → working → completed / failed / timed_out`，另有 `cancelled`。
 
 ```bash
 curl -s -H "Authorization: Bearer <token>" http://<host>:8000/api/tasks/t-xxxxx/status
 ```
 
-终态：`completed` / `failed` / `timed_out` / `cancelled`。结束后读 `task.result`。
+终态为 `completed`/`failed`/`timed_out`/`cancelled`；结束后读 `task.result`（`summary`/`exit_code`/`stdout_tail`/`stderr_tail`/`artifacts`/`session_id`）。轮询间隔建议 2–3 秒。
 
-## 取消任务（重要）
+### 6.2 实时输出
 
-`POST /tasks/{task_id}/cancel`：
+边沿会把执行过程流式上报（LLM 的文本/工具调用，command 的原始输出行）：
 
-- 排队中（`queued`）：直接从队列移除，任务置 `cancelled`，不会执行。
-- 已分配/执行中（`assigned`/`working`）：任务置 `cancelled`，**edge 在下次轮询（约 3s 内）检测到后终止整个执行进程组**（SIGTERM→SIGKILL，含 `bash -c` 派生的后台子进程与 opencode 的工具子进程），并**不提交结果**。
-- 已是终态（completed/failed/timed_out/cancelled）：返回 `{"accepted": false}`（幂等）。
+```bash
+curl -s -H "Authorization: Bearer <token>" \
+  "http://<host>:8000/api/tasks/t-xxxxx/logs?after_id=0"
+# => {"task_id":"...","logs":[{"id":1,"kind":"text","content":"..."}],"next_id":2}
+# 下次用 after_id=next_id 增量拉取
+```
+
+`kind`：`text`（LLM 文本）/`error`/`complete`/`raw`（command 原始行）。
+
+### 6.3 取消
 
 ```bash
 curl -s -X POST -H "Authorization: Bearer <token>" http://<host>:8000/api/tasks/t-xxxxx/cancel
-# => {"accepted": true, "task_id": "t-xxxxx", "status": "cancelled"}
 ```
 
-## 任务列表 / 筛选 / 批量删除
+- `queued`：直接移出队列，不会执行。
+- `assigned`/`working`：edge 在约 3 秒内检测到并**杀掉整个进程组**（SIGTERM→SIGKILL），且不提交结果。
+- 已终态：返回 `{"accepted": false}`（幂等）。
 
-`GET /tasks` 支持分页与筛选，返回 `{"tasks": [...], "total": N, "limit": 20, "offset": 0}`：
+### 6.4 查找 / 清理 / 审计
 
 ```bash
-# 只看某状态，模糊搜指令，按开始时间区间
+# 列表（分页+筛选）
 curl -s -H "Authorization: Bearer <token>" \
-  "http://<host>:8000/api/tasks?status=working&mode=llm&search=hello&started_after=2026-08-01T00:00:00Z&limit=50&offset=0"
-```
-
-- `status`: queued/assigned/working/completed/failed/timed_out/cancelled；`mode`: command/llm。
-- `search`: 指令/任务ID/节点模糊；`started_after`/`started_before`: ISO 时间，可组合出"之后/之间/之前"。
-
-批量删除：
-
-```bash
-# 按 id
-curl -s -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"task_ids":["t-1","t-2"]}' http://<host>:8000/api/tasks/batch-delete
-
-# 按筛选条件全删（如清空所有已终止任务）
+  "http://<host>:8000/api/tasks?status=working&mode=llm&search=hello&limit=50"
+# 批量删除（按 id 或按条件）
 curl -s -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
   -d '{"all_matching":true,"status":"cancelled"}' http://<host>:8000/api/tasks/batch-delete
+# 审计事件（dispatched / cancelled / permission_denied，含命中原因）
+curl -s -H "Authorization: Bearer <token>" http://<host>:8000/api/tasks/t-xxxxx/events
 ```
 
-## 查看节点 / 管理节点
+- `search` 匹配指令/任务 id/节点；`started_after`/`started_before` 为 ISO 时间。
+- **审计事件**用于回答「这个任务为什么被拒/谁派的/何时取消」。
 
-`GET /agents` 返回每个节点（含资源与版本信息）：
+## 7. 技能库（给远程 LLM 用的专业知识）
 
-```json
-{"agents": [{
-  "id": 3, "device_id": "a1b2c3...", "agent_id": "node-3", "alias": null,
-  "display_name": "node-3", "runtime": "opencode",
-  "hostname": "host-3", "os": "linux", "distro": "centos 7", "arch": "x64",
-  "version": "1.4.2", "online": true, "last_seen": "...",
-  "current_task_id": null,
-  "cpu_percent": 3.4, "mem_percent": 45.6, "mem_used_mb": 5405.5, "mem_total_mb": 11850.9,
-  "llm_api_key": null, "llm_base_url": null, "llm_model": null,
-  "description": "生产 Web 服务器", "system_prompt": null, "template_id": 2,
-  "upgrade_requested": false, "upgrade_version": null
-}]}
-```
+技能是打包好的 `SKILL.md` 指南，供**边缘节点的 LLM 在任务中自主取用**。
 
-- `online`: 心跳期内是否在线；`version`: 探针当前版本；`display_name`: 别名 > 主机名 > agent_id。
-- `description`: 节点用途说明（运维设置，主 Agent 选节点前先看）；`template_id`: 绑定的模板 id；`system_prompt`: 节点级提示词。
-- 每节点默认最多同时执行 2 个任务（`max_concurrent`，配置页或 `PATCH /api/settings` 可调，随心跳下发）。派发到同一节点会在并发上限内并行执行。
-
-节点级操作：
+- **何时用**：希望远程 llm 任务按某个专业流程/规范工作时。你通常**只需在 `instruction` 里提示**，边沿会自行浏览并下载技能。
+- **何时不用**：任务简单、无需额外知识时。
 
 ```bash
-# 改别名（null 清除）
-curl -s -X PATCH -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"alias":"生产节点A"}' http://<host>:8000/api/agents/3/alias
-
-# 改节点描述（供主 Agent 识别用途；null 清除）
-curl -s -X PATCH -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"description":"生产 Web 服务器，只跑部署类命令"}' http://<host>:8000/api/agents/3/description
-
-# 节点级 system prompt（与绑定模板的提示词拼接，节点在前；null 清除）
-curl -s -X PATCH -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"system_prompt":"你是运维专员，只操作 /opt 下的目录。"}' http://<host>:8000/api/agents/3/system_prompt
-
-# 绑定/解绑模板
-curl -s -X PATCH -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"template_id":2}' http://<host>:8000/api/agents/3/template
-curl -s -X PATCH -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"template_id":null}' http://<host>:8000/api/agents/3/template
-
-# 节点级 LLM 配置（覆盖全局；提交任意子集或 null）
-curl -s -X PATCH -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"llm_model":"anthropic/deepseek-v4-flash","llm_base_url":"https://api.example.com/v1","llm_api_key":"sk-..."}' \
-  http://<host>:8000/api/agents/3/llm_config
-
-# 手动升级（空闲时自动下载新版并重启，失败自动回滚）
-curl -s -X POST -H "Authorization: Bearer <token>" http://<host>:8000/api/agents/3/upgrade
-# => {"requested": true, "version": "1.5.0", ...}
+curl -s -H "Authorization: Bearer <token>" http://<host>:8000/api/skills          # 摘要
+curl -s -H "Authorization: Bearer <token>" http://<host>:8000/api/skills/<name>/download -o skill.zip
 ```
 
-## 节点模板
+管理（Web「技能」页或 REST）：`POST /api/skills`（上传 zip，需含带 `name`/`description` frontmatter 的 `SKILL.md`；重传同名 version+1）、`PATCH /api/skills/{name}`、`DELETE /api/skills/{name}`。
 
-模板是可复用的节点配置，节点**引用式绑定**（`agents.template_id`）。改模板会 `config_version` 自增并同步到所有绑定节点。字段：`system_prompt`（提示词）、`llm_model`（默认模型）、`allowed_tools`/`data`（预留，后续权限用）。
+**下载本 SKILL 的个性化版本**：`GET /api/skill-doc/agent-mesh` 会返回**已填好地址与你的 token** 的本文档，可直接复制其中的命令。
 
-生效规则：
-- 模型：`节点 llm_model > 模板 llm_model > 全局 settings.llm_model`（无默认兜底，都没有则 llm 任务被拒）。
-- 提示词：`内置 wrapper + 节点 system_prompt + 模板 system_prompt`（节点在前）。
+## 8. 模板与权限（一类节点的统一配置）
+
+模板是可复用的节点配置，节点**引用式绑定**（`agents.template_id`）；改模板会同步到所有绑定节点。字段：`system_prompt`（提示词）、`llm_model`（默认模型）、`permission`（**权限**）、`data`（预留）。
+
+- **何时用**：给「同一类用途」的多个节点统一模型/提示词/权限。单节点临时调整用 §9。
 
 ```bash
-# 新建模板
-curl -s -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"name":"ops","description":"部署类节点","system_prompt":"你是部署专员。","llm_model":"anthropic/deepseek-v4-flash"}' \
-  http://<host>:8000/api/templates
-
+# 新建
+curl -s -X POST http://<host>:8000/api/templates \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"name":"ops","description":"部署类节点","system_prompt":"你是部署专员。",
+       "llm_model":"anthropic/deepseek-v4-flash"}'
 # 列表 / 更新 / 删除
 curl -s -H "Authorization: Bearer <token>" http://<host>:8000/api/templates
 curl -s -X PATCH -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
   -d '{"system_prompt":"新提示词"}' http://<host>:8000/api/templates/2
 curl -s -X DELETE -H "Authorization: Bearer <token>" http://<host>:8000/api/templates/2
+# 绑定 / 解绑到节点
+curl -s -X PATCH -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"template_id":2}' http://<host>:8000/api/agents/3/template
+curl -s -X PATCH -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"template_id":null}' http://<host>:8000/api/agents/3/template
 ```
 
-- **可用模型**：`list_models`（MCP）/ 配置页「可用模型列表」（`settings.llm_models`）是模型唯一来源；派发 llm 任务时 `model` 必须命中该列表。
-- **LLM 配置同步**：保存全局、节点级、或模板后 `config_version` 自增，随下次心跳推给节点，边沿自动更新运行中 executor 并持久化（模型/提示词）。节点级优先/叠加模板。
-- **自升级**：默认开启自动升级（`auto_upgrade=1`），节点版本低于 `data/bootstrap/VERSION` 且空闲时自动升级；也可用上面接口手动触发。
-- 删除节点会下发卸载任务，谨慎操作。
+### 权限（llm 与 command 共用）
 
-## 实时执行输出
+- 内置模板 `build`（全放开）/`plan`（禁改文件、只读命令、可联网）/`readonly`（仅读，无 shell/网络）；**默认全局 `default_permission` 为 `readonly`**。
+- 未绑定模板的节点受该默认权限约束——**很多 command 会被拒**。要放开，给节点绑定 `build` 模板，或让 admin 改全局默认。
+- 格式即 OpenCode `permission`：`{"edit":"deny","bash":{"*":"deny","ls *":"allow"}}`（规则**最后命中者生效**；白名单=`*:"deny"`+allow 列表，黑名单=`*:"allow"`+deny 列表）。command 模式下 `ask` 视为拒绝。
+- 权限匹配器**只防误操作，不是安全边界**。
 
-边沿会把执行实时输出流式上报，可增量拉取观察 LLM 正在做什么 / command 的输出：
+## 9. 节点级配置与操作
 
 ```bash
-# 首次（after_id=0），limit 可选
-curl -s -H "Authorization: Bearer <token>" "http://<host>:8000/api/tasks/t-xxxxx/logs?after_id=0"
-# => {"task_id":"t-xxxxx","logs":[{"id":1,"kind":"text","content":"..."}],"next_id":2}
-
-# 增量拉取
-curl -s -H "Authorization: Bearer <token>" "http://<host>:8000/api/tasks/t-xxxxx/logs?after_id=2"
+# 别名（null 清除）
+curl -s -X PATCH -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"alias":"生产节点A"}' http://<host>:8000/api/agents/3/alias
+# 描述（主 Agent 选节点依据）
+curl -s -X PATCH -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"description":"生产 Web 服务器，只跑部署类命令"}' http://<host>:8000/api/agents/3/description
+# 节点级 system prompt（与模板提示词拼接，节点在前）
+curl -s -X PATCH -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"system_prompt":"你是运维专员，只操作 /opt。"}' http://<host>:8000/api/agents/3/system_prompt
+# 节点级 LLM 配置（覆盖全局）
+curl -s -X PATCH -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"llm_model":"anthropic/deepseek-v4-flash"}' http://<host>:8000/api/agents/3/llm_config
+# 手动升级（空闲时自动下载新版并重启，失败自动回滚）
+curl -s -X POST -H "Authorization: Bearer <token>" http://<host>:8000/api/agents/3/upgrade
 ```
 
-- `kind`: `text`（LLM 文本）/ `error` / `complete` / `raw`（command 原始行）。
-- 任务结束仍可查；被删除则不可查。MCP 侧对应工具 `get_task_logs(task_id, after_id)`。
+**生效优先级**：模型 `节点 > 模板 > 全局`；提示词 `内置 + 节点 + 模板`；权限 `模板 > 全局默认（无节点级）`。配置改动经心跳（约 3 秒）下发。
 
-## 技能库
-
-边沿执行 llm 任务时提示词内置技能库指引，由 opencode agent **自主**浏览摘要、按需下载使用（主 Agent 无需手动下发技能文件；如想让某任务用某技能，可在 `instruction` 中提示）。
+## 10. 全局配置（admin）
 
 ```bash
-# 浏览摘要（仅 name/description/version/enabled，无内容）
-curl -s -H "Authorization: Bearer <token>" http://<host>:8000/api/skills
-
-# 给边沿按需下载
-curl -s -H "Authorization: Bearer <token>" http://<host>:8000/api/skills/<name>/download -o skill.zip
-```
-
-- 技能库**管理**：Web 看板「技能」页或 REST：`POST /api/skills`（上传 zip，需含带 name/description frontmatter 的 `SKILL.md`；重传同名 version+1）、`PATCH /api/skills/{name}`（启停用）、`DELETE /api/skills/{name}`、`GET /api/skills/{name}/download`。
-- agent-mesh 自身的使用指南：`GET /api/skill-doc/agent-mesh` 下载**已填好公开地址与你的 token** 的个性化 SKILL.md，放入主 Agent 技能目录即可用（示例可直接复制执行）。
-
-## 文件库（任务附件）
-
-先上传到文件库拿 `file_id`，派发时用 `attachments` 引用；探针执行前下载到工作目录并按 md5 校验，失败则任务标记失败（`summary: attachment download failed`）。
-
-```bash
-# 1. 上传（多文件；同 md5+文件名 自动去重返回原 file_id）
-curl -s -X POST http://<host>:8000/api/files \
-  -H "Authorization: Bearer <token>" -F "files=@./myfile.txt" -F "files=@./config.yaml"
-# => {"files":[{"file_id":"f-xxxx","filename":"myfile.txt","size":123,"content_type":"text/plain","md5":"...","download_url":"/api/files/f-xxxx"}]}
-
-# 2. 派发时带上 attachments
-curl -s -X POST http://<host>:8000/api/tasks/dispatch \
+curl -s -H "Authorization: Bearer <token>" http://<host>:8000/api/settings
+curl -s -X PATCH http://<host>:8000/api/settings \
   -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"agent_id":3,"mode":"llm","instruction":"读取并分析工作目录下的 myfile.txt","attachments":["f-xxxx"]}'
+  -d '{"llm_model":"anthropic/deepseek-v4-flash","llm_base_url":"https://api.example.com/v1",
+       "llm_api_key":"sk-...","llm_models":"anthropic/deepseek-v4-flash\nanthropic/deepseek-v4-pro",
+       "default_permission":"{\"*\":\"allow\"}"}'
 ```
 
-- 附件以原文件名写入任务工作目录；llm 模式提示词会提示"工作目录可能已有附件"。
-- 列表/批量：`GET /api/files?search=`；`POST /api/files/batch-delete`（`{"file_ids":[...]}`）；`POST /api/files/batch-download`（`{"file_ids":[...]}`，返回 ZIP）。
-- 删除不校验引用：被删文件的任务执行时因下载失败标记失败。
+- `llm_models` 是**可用模型的唯一来源**（每行一个，llm 任务的 `model` 必须命中）。
+- `public_url`：节点安装/回连用的对外地址。
+- `max_concurrent`：每节点并发上限（默认 2）；`auto_upgrade`：自动升级开关；`default_permission`：未绑定模板节点的默认权限。
 
-## 用户管理（admin）
+## 11. 安装 / 删除节点
 
-```bash
-# 创建用户（token 只显示这一次，妥善保存）
-curl -s -X POST http://<host>:8000/api/auth/users \
-  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"username":"bob","password":"secret123","role":"user"}'
-
-# 用户列表 / 轮换 API token / 重置他人密码 / 删除
-curl -s -H "Authorization: Bearer <token>" http://<host>:8000/api/auth/users
-curl -s -X POST -H "Authorization: Bearer <token>" http://<host>:8000/api/auth/users/bob/token
-curl -s -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"password":"newsecret456"}' http://<host>:8000/api/auth/users/bob/password
-curl -s -X DELETE -H "Authorization: Bearer <token>" http://<host>:8000/api/auth/users/bob
-
-# 改自己的密码
-curl -s -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"old_password":"...","new_password":"..."}' http://<host>:8000/api/auth/change-password
-```
-
-## 安装 / 删除节点
-
-安装（新机器装 edge 探针，需**长期有效**的 token —— 全局 token 或用户 API token，不要用 24h 的 session token）：
+安装（需**长期有效**的 token，不要用 24h session token）：
 
 ```bash
 TOKEN='<长期 token>' bash <(curl -fsSL -H "Authorization: Bearer $TOKEN" \
   http://<host>:8000/api/bootstrap/install.sh)
 ```
 
-- 可选 `EDGE_ALIAS` 覆盖节点标识（`agent_id`，**非** DB 别名）；安装脚本自动注册 systemd/launchd 并启动，以 device_id 自动注册节点。
-- 删除节点会下发卸载命令并移除记录（谨慎）。
+- 目标机自动按 OS/ARCH 下载对应探针，注册开机自启并启动，以 device_id 注册为节点。
+- 可选 `EDGE_ALIAS` 覆盖节点显示名。
+- 删除节点会**向该机器下发卸载**并移除记录，谨慎：
 
-## MCP 工具（SSE :8001，共 13 个）
+```bash
+curl -s -X DELETE -H "Authorization: Bearer <token>" http://<host>:8000/api/agents/3
+```
+
+## 12. 用户管理（admin）
+
+```bash
+curl -s -X POST http://<host>:8000/api/auth/users \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"username":"bob","password":"secret123","role":"user"}'   # 返回一次性 API token
+curl -s -H "Authorization: Bearer <token>" http://<host>:8000/api/auth/users
+curl -s -X POST -H "Authorization: Bearer <token>" http://<host>:8000/api/auth/users/bob/token  # 轮换
+curl -s -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"password":"newsecret456"}' http://<host>:8000/api/auth/users/bob/password
+curl -s -X DELETE -H "Authorization: Bearer <token>" http://<host>:8000/api/auth/users/bob
+curl -s -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"old_password":"...","new_password":"..."}' http://<host>:8000/api/auth/change-password
+```
+
+## 13. MCP 工具（SSE :8001）
+
+MCP 通道**只接受用户 token**（session 或 API token）。工具与 REST 对应：
 
 | 工具 | 用途 |
 |------|------|
-| `list_agents` | 列出节点（含 `description` 用途说明，选节点前先看） |
-| `get_agent` / `get_agent_detail` | 单节点 / 详情+最近任务 |
-| `set_agent_alias` | 设置/清除别名 |
-| `list_models` | 可用 LLM 模型 id（派发 llm 任务时从中选 `model`） |
-| `dispatch_task` | 派发任务（command/llm；可带 `model`/`session_id`/`attachments`/`skills`） |
-| `list_tasks` | 任务列表 |
-| `get_task_status` | 任务状态 |
-| `get_task_logs` | 实时执行输出（`task_id`、`after_id` 增量） |
+| `list_agents` / `get_agent` / `get_agent_detail` | 节点列表 / 单个 / 详情+最近任务 |
+| `set_agent_alias` | 设置别名 |
+| `list_models` | 可用 LLM 模型 id（llm 任务选 `model`） |
+| `dispatch_task` | 派发任务 |
+| `list_tasks` / `get_task_status` / `get_task_logs` | 任务列表 / 状态 / 实时输出 |
 | `cancel_task` | 终止任务 |
 | `list_skills` | 技能库摘要 |
-| `poll_for_task` / `submit_result` | 边沿心跳内部用，主 Agent 一般不用 |
+| `poll_for_task` / `submit_result` | 边沿内部心跳，主 Agent 不用 |
 
-MCP 通道**只接受用户 token**（登录 session token 或用户 API token），全局 `AGENT_MESH_TOKEN` 不适用。
+> 文件库、模板管理、节点安装等**仅在 REST/Web**，MCP 无对应工具。
 
-## 完整流程示例
+## 14. 完整流程（推荐节奏）
 
-1. `GET /agents` → 找目标节点 id（在线、版本正常）。
-2. `POST /tasks/dispatch`：`mode=command` 跑命令 / `mode=llm` 跑自然语言任务 → 拿 `task_id`。
-3. 需要进度时 `GET /tasks/{task_id}/logs?after_id=<next_id>` 增量看实时输出。
-4. 每 2-3 秒 `GET /tasks/{task_id}/status`，直到终态。
-5. 用户要停就 `POST /tasks/{task_id}/cancel`（edge 会杀掉整棵进程组）。
-6. 结束读 `task.result`（summary/exit_code/stdout_tail/artifacts/session_id）。
+1. `GET /agents` → 选 `online=true` 且 `description` 匹配需求的节点，记下数字 `id`。
+2. 若要处理本地文件：`POST /files` 上传拿 `file_id`（§5）。
+3. `POST /tasks/dispatch` → 拿 `task_id`。
+4. 需要进度：`GET /tasks/{task_id}/logs?after_id=<next_id>` 增量看输出。
+5. 每 2–3 秒 `GET /tasks/{task_id}/status` 直到终态；用户要停就 `POST /tasks/{task_id}/cancel`。
+6. 读 `task.result`；有 `artifacts` 就下载给用户（§5.4）。
 
-## 安全
+## 15. 故障速查
 
-- 保管好 token；生产用 HTTPS；MCP/REST 用用户 token，不把全局 token 用于控制面。
-- LLM API key 仅存服务端 DB / 节点 `edge.env`，经心跳 config-sync 下发；不要写入代码或仓库。
-- 删除节点会卸载目标机器的 agent，谨慎执行；取消任务会终止进程组。
+| 现象 | 原因 / 处理 |
+|------|-------------|
+| `401 Unauthorized` | **token 过期/失效** → 向用户索取账号密码，重新 `POST /auth/login`（§1） |
+| 派发 `403` / 任务摘要含「权限被拒绝」 | 节点权限策略拒绝该命令 → 说明情况，或改绑更宽松模板（§8） |
+| 任务一直 `queued` | 目标节点离线或已达并发上限 → 换在线节点 / 等待 |
+| `no LLM model configured` | 节点无可用模型 → 配置全局/节点/模板模型（§8/§10） |
+| `attachment download failed` | 文件库文件被删或 md5 不符 → 重新上传（§5） |
+| 找不到 `/api/skills`、模板等 MCP 工具 | 这些只在 REST，MCP 无对应工具（§13） |
 
-## 示例脚本
+## 16. 安全
 
-见 `references/example-poll.py`。
+- 保管 token；生产用 HTTPS；控制面用用户 token，不把全局 token 用于控制接口。
+- LLM API key 仅存于服务端 DB 与节点 `edge.env`，经心跳下发；**不要写进代码/仓库/日志**。
+- 删除节点会卸载远端 agent；取消任务会杀掉进程组——都是破坏性操作，执行前和用户确认。
+
+## 参考
+
+- 可运行示例：`references/example-poll.py`（登录→列节点→派发 command→轮询）。

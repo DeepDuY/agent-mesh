@@ -14,7 +14,6 @@ class TaskMixin(SQLiteBase):
             workdir=row["workdir"],
             timeout_s=row["timeout_s"],
             model=row["model"],
-            allowed_tools=_load_json(row["allowed_tools"]),
             output_limit=row["output_limit"],
             session_id=row["session_id"] if "session_id" in row.keys() else None,
             skills=_load_json(row["skills"]) if "skills" in row.keys() else None,
@@ -70,16 +69,15 @@ class TaskMixin(SQLiteBase):
             """
             INSERT INTO tasks (
                 task_id, agent_id, mode, instruction, workdir, timeout_s, model,
-                allowed_tools, output_limit, status, max_retries, retry_count,
+                output_limit, status, max_retries, retry_count,
                 created_at, assigned_at, started_at, finished_at, depends_on,
                 dispatched_by, metadata, session_id, skills, attachments
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task.task_id, task.agent_id, task.mode, task.instruction,
                 task.constraints.workdir, task.constraints.timeout_s,
                 task.constraints.model,
-                _dump_json(task.constraints.allowed_tools),
                 task.constraints.output_limit,
                 task.status.value,
                 task.max_retries,
@@ -271,6 +269,41 @@ class TaskMixin(SQLiteBase):
             ),
         )
         return affected > 0
+
+    async def append_task_event(
+        self,
+        task_id: str,
+        event_type: str,
+        agent_id: str | None = None,
+        user_id: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        await self._execute(
+            "INSERT INTO task_events (task_id, event_type, agent_id, user_id, details) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (task_id, event_type, agent_id, user_id, _dump_json(details)),
+        )
+
+    async def list_task_events(
+        self, task_id: str, limit: int = 200
+    ) -> list[dict[str, Any]]:
+        rows = await self._execute(
+            "SELECT event_id, task_id, event_type, agent_id, user_id, details, created_at "
+            "FROM task_events WHERE task_id = ? ORDER BY event_id ASC LIMIT ?",
+            (task_id, limit),
+        )
+        return [
+            {
+                "event_id": r["event_id"],
+                "task_id": r["task_id"],
+                "event_type": r["event_type"],
+                "agent_id": r["agent_id"],
+                "user_id": r["user_id"],
+                "details": _load_json(r["details"]),
+                "created_at": str(r["created_at"]) if r["created_at"] is not None else None,
+            }
+            for r in rows
+        ]
 
 
 class QueueMixin(SQLiteBase):

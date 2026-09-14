@@ -19,7 +19,7 @@ class _TemplateCreate(BaseModel):
     description: str | None = None
     system_prompt: str | None = None
     llm_model: str | None = None
-    allowed_tools: list[str] | None = None
+    permission: dict[str, Any] | None = None
     data: dict[str, Any] | None = None
 
 
@@ -28,7 +28,7 @@ class _TemplatePatch(BaseModel):
     description: str | None = None
     system_prompt: str | None = None
     llm_model: str | None = None
-    allowed_tools: list[str] | None = None
+    permission: dict[str, Any] | None = None
     data: dict[str, Any] | None = None
 
 
@@ -39,7 +39,7 @@ def _public(template: dict[str, Any]) -> dict[str, Any]:
         "description": template.get("description"),
         "system_prompt": template.get("system_prompt"),
         "llm_model": template.get("llm_model"),
-        "allowed_tools": template.get("allowed_tools"),
+        "permission": template.get("permission"),
         "data": template.get("data"),
         "created_at": _iso(template.get("created_at")),
         "updated_at": _iso(template.get("updated_at")),
@@ -83,7 +83,7 @@ def mount_template_routes(
             description=payload.description,
             system_prompt=payload.system_prompt,
             llm_model=payload.llm_model,
-            allowed_tools=payload.allowed_tools,
+            permission=payload.permission,
             data=payload.data,
         )
         await store.bump_config_version()

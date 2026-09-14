@@ -76,17 +76,28 @@
     - **Web**：新增「模板」tab（列表/新建/编辑/删除，显示绑定节点数）；节点详情新增「应用模板」下拉 + 显示当前模板。
     - **MCP**：无新增工具（模板管理走 REST/Web）；`agents.template_id` 随 `AgentStatus` 暴露。
     - **测试**：新增 `tests/test_templates.py`（CRUD、名称校验/重名、绑定/解绑、删除模板自动解绑），全量 **103 项通过**。
+25. **2026-09-14 方向一（第一期）：统一权限模板（llm + command 共用）**：
+    - **权限模型**：采用 OpenCode `permission` 规格（`allow|ask|deny` + glob，最后命中胜）作为 llm 与 command 两种模式共用的唯一语言。**权限归属模板**（`templates.permission`），无任务级、无节点级；优先级 `模板 > settings.default_permission > 内置 readonly`。启动时 seed 三个内置模板 `build`（`*: allow`）/ `plan`（禁编辑 + 只读命令白名单 + 联网）/ `readonly`（仅 read/glob/grep）。
+    - **数据模型**（迁移 `015_permissions.sql`，PG 在 `_ensure_agent_schema_upgrade` 镜像）：新增 `templates.permission`；删除 `templates.allowed_tools`、`tasks.allowed_tools`（任务级 `allowed_tools` 从 REST/MCP/`Constraints` 移除）；新增 `settings.default_permission`（初始化 seed 为 readonly）。内置模板与默认权限在 `_ensure_default_templates()` 幂等 seed（SQLite/PG 启动均调用）。
+    - **共享引擎** `shared/permissions.py`：`glob_match` / `evaluate_rules` / `evaluate_command`（按 `&& || ; |` 切子命令，任一非 allow 即拒绝）、profile 常量与 `dumps/loads`。
+    - **llm 模式**：`build_opencode_config(permission=...)` 直接写入生成的 `opencode.json`（删除原先写死的 `{edit:allow,bash:allow,webfetch:ask,mcp__*:deny}`；顺带修掉 `webfetch:ask` 在 `--auto` 下被自动放行的问题）。`--auto` 仅把 `ask` 转 allow，显式 `deny` 仍强制。
+    - **command 模式**：edge 在 `bash -c` 前用共享引擎求值，`ask` 视为 `deny`（无人可批准）；拒绝则返回失败并写一条 error 日志。**该匹配器只防误操作，不是安全边界**（shell 间接调用可绕过）。
+    - **配置下发**：`_resolve_edge_config` 随心跳下发 `permission`；`EdgeAgent._apply_llm_config` 更新 executor，并持久化到 `etc/permission.json`（`read_permission()`）。
+    - **服务端预检 + 审计（P1）**：command 派发时 `TaskStore.check_command_permission()` 预检，REST 403 / MCP `accepted:false`；`task_events` 补写入方（`append_task_event` / `list_task_events`，PG+SQLite），记 `dispatched` / `cancelled` / `permission_denied`；`GET /api/tasks/{id}/events` + 任务详情「审计事件」时间线。为后续「LLM 审计助手」铺数据。
+    - **Web**：模板弹窗权限编辑器（预设 build/plan/readonly + JSON 高级模式）；配置页「默认权限」编辑器。
+    - **仍未做**：多用户节点授权（`agent_users` 只记录不校验）、沙箱/结构化 argv、`Constraints.skills` 下发。
+    - **测试**：新增 `tests/test_permission.py`（引擎、profile、command deny、config-sync 下发、默认模板 seed、审计事件），`test_templates.py` 改用 `permission`，全量 **119 项通过**。
 
 ---
 
 ## 下一步开发方向（路线图，2026-09-01 规划）
 
-### 方向一：edge-agent 执行权限管控
+### 方向一：edge-agent 执行权限管控 —— 🟡 2026-09-14 第一期完成（§25）
 - **目标**：让边沿节点上的命令/工具执行受到可配置、可审计的权限约束。
-- 任务级 `allowed_tools` / `permission` 真正下发生效（当前 llm 模式经 opencode permission 部分生效；**command 模式 `bash -c` 无任何工具限制**）。
-- command 模式指令白名单/风险校验（危险命令阻断、可配置允许/拒绝规则）。
-- `Constraints.skills` 任务级技能提示落地（schema 已有字段，edge executor 未读取）。
-- 基于 `task_events` 表补执行审计（当前无写入方，预留接口）。
+- ~~任务级 `allowed_tools` / `permission` 真正下发生效~~ 已实现（改为**模板级** `templates.permission`，llm 与 command 共用 OpenCode permission 规格；原任务级参数已移除）。
+- ~~command 模式指令白名单/风险校验~~ 已实现（edge 共享引擎 matcher；`ask` 视为 deny；**仅防误操作，非安全边界**）。
+- ~~基于 `task_events` 表补执行审计~~ 已实现（`append_task_event` + `GET /api/tasks/{id}/events` + 任务详情时间线）。
+- **未做**：`Constraints.skills` 任务级技能提示落地（schema 已有字段，edge executor 未读取）；多用户节点授权（关联补充建议 1）；强隔离沙箱 / 结构化 argv。
 
 ### 方向二：个性化 agent 模板（llm 提示词 + 节点描述 + 模型选择）—— ✅ 2026-09-11 完成（§23）
 - ~~**LLM 提示词拼接**：节点级 system prompt 模板~~ 已实现：节点级 `agents.system_prompt` + 全局 `settings.system_prompt`，config-sync 下发，edge 注入 `_wrap_llm_instruction()` 顶部。
@@ -113,4 +124,4 @@
   - `get_device_id`/`get_arch`/`get_distro` 的 Windows 实现（machine-id 改用注册表/`HKLM`，arch 用 `PROCESSOR_ARCHITECTURE`）。
   - 端到端验证：Windows 节点注册→心跳→command/llm 任务→产物上传→自升级。
 
-> 实施顺序建议：先做"可快速见效"的 2/5/7（小改动），再推进方向一的权限管控底座（allowed_tools 下发 + command 白名单），方向二按 节点描述→提示词模板→任务级模型 的顺序叠加；Windows 支持整体置于路线图最后，作为远期目标。
+> 实施顺序：方向一第一期（§25，统一权限模板 + command 白名单 + 审计）✅ 2026-09-14；方向二（§23/§24）✅；补充建议「可快速见效」的 2/5/7 待做；方向一后续（多用户节点授权、沙箱/结构化 argv、`skills` 下发）与 Windows 支持按优先级推进。

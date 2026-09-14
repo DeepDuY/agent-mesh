@@ -205,7 +205,7 @@ def create_mcp_server(config: OrchestratorConfig, store: TaskStore) -> MCPServer
             "run. `mode` selects execution style: 'command' runs `instruction` verbatim "
             "in a shell (no LLM), 'llm' (default) hands it to the agent's LLM runtime. "
             "Optional: `timeout_s` (default 300), `workdir`, `max_retries`, "
-            "`depends_on` (list of task ids that must finish first), `allowed_tools`, "
+            "`depends_on` (list of task ids that must finish first), "
             "`model`, `output_limit` (default 200000), `session_id` (opencode session id "
             "to continue from a previous llm task; read it from a prior task's "
             "`result.session_id`), `skills` (list of skill names the agent may consult; "
@@ -225,7 +225,6 @@ def create_mcp_server(config: OrchestratorConfig, store: TaskStore) -> MCPServer
         workdir: str = ".",
         max_retries: int = 0,
         depends_on: list[str] | None = None,
-        allowed_tools: list[str] | None = None,
         model: str | None = None,
         output_limit: int = 200_000,
         session_id: str | None = None,
@@ -240,11 +239,25 @@ def create_mcp_server(config: OrchestratorConfig, store: TaskStore) -> MCPServer
         model_error = await store.validate_llm_model(agent_id, mode, model)
         if model_error:
             return {"accepted": False, "error": model_error}
+        if mode == "command":
+            denial = await store.check_command_permission(agent_id, instruction)
+            if denial:
+                await store.store.append_task_event(
+                    task_id="",
+                    event_type="permission_denied",
+                    agent_id=agent_id,
+                    details={
+                        "mode": "command",
+                        "instruction": instruction,
+                        "reason": denial,
+                        "source": "mcp",
+                    },
+                )
+                return {"accepted": False, "error": denial}
         constraints = Constraints(
             workdir=workdir,
             timeout_s=timeout_s,
             model=model,
-            allowed_tools=allowed_tools,
             output_limit=output_limit,
             session_id=session_id,
             skills=skills,

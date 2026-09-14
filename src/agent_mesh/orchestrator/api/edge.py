@@ -89,12 +89,17 @@ async def _resolve_edge_config(store: TaskStore, agent) -> dict[str, str]:
         p.strip() for p in (node_sp, tpl_sp) if p and p.strip()
     )
 
+    # Permission precedence: bound template > global default > built-in readonly.
+    # Permission is a template-level capability (no node/task override).
+    permission = await store.effective_permission(agent, template)
+
     return {
         "llm_api_key": llm_api_key,
         "llm_base_url": llm_base_url,
         "llm_model": llm_model,
         "llm_models": llm_models,
         "system_prompt": system_prompt,
+        "permission": permission,
     }
 
 
@@ -229,6 +234,19 @@ def mount_edge_routes(
             session_id=body.get("session_id"),
         )
         accepted = await store.submit_result(body.get("task_id", ""), result)
+        # Audit an edge-side permission denial (command matcher rejected it).
+        combined = f"{result.summary}\n{result.stderr_tail}"
+        if status == "failed" and "权限被拒绝" in combined:
+            await store.store.append_task_event(
+                task_id=body.get("task_id", ""),
+                event_type="permission_denied",
+                agent_id=body.get("agent_id"),
+                details={
+                    "mode": body.get("mode", "command"),
+                    "summary": result.summary,
+                    "source": "edge",
+                },
+            )
         return {"accepted": accepted}
 
     @router.post("/edge/get_task_status")

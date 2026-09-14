@@ -1,5 +1,35 @@
 let currentTemplates = [];
 
+// Built-in permission presets (mirror of agent_mesh.shared.permissions).
+const PERMISSION_PRESETS = {
+  build: { "*": "allow" },
+  plan: {
+    edit: "deny",
+    bash: {
+      "*": "deny",
+      "ls": "allow", "ls *": "allow", "cat *": "allow", "head *": "allow",
+      "tail *": "allow", "grep *": "allow", "rg *": "allow", "find *": "allow",
+      "wc *": "allow", "stat *": "allow", "df *": "allow", "du *": "allow",
+      "pwd": "allow", "whoami": "allow", "date": "allow", "echo *": "allow",
+      "uname *": "allow", "git status": "allow", "git status *": "allow",
+      "git log": "allow", "git log *": "allow", "git diff": "allow",
+      "git diff *": "allow", "git show *": "allow", "git branch": "allow",
+      "git branch *": "allow", "curl *": "allow",
+    },
+    webfetch: "allow",
+    read: "allow",
+    glob: "allow",
+    grep: "allow",
+  },
+  readonly: { "*": "deny", read: "allow", glob: "allow", grep: "allow" },
+};
+
+function applyTemplatePermissionPreset(name) {
+  if (!name) return;
+  document.getElementById('tpl-permission').value =
+    JSON.stringify(PERMISSION_PRESETS[name], null, 2);
+}
+
 async function loadTemplates() {
   try {
     const res = await fetch('/api/templates', { headers });
@@ -50,8 +80,9 @@ function openTemplateModal(templateId) {
   document.getElementById('tpl-description').value = t ? (t.description || '') : '';
   renderTemplateModelOptions(t ? (t.llm_model || '') : '');
   document.getElementById('tpl-system-prompt').value = t ? (t.system_prompt || '') : '';
-  document.getElementById('tpl-allowed-tools').value =
-    t && t.allowed_tools ? JSON.stringify(t.allowed_tools) : '';
+  document.getElementById('tpl-permission').value =
+    t && t.permission ? JSON.stringify(t.permission, null, 2) : '';
+  document.getElementById('tpl-permission-preset').value = '';
   const statusEl = document.getElementById('tpl-status');
   statusEl.textContent = '';
   const modal = document.getElementById('template-modal');
@@ -76,19 +107,21 @@ async function saveTemplate() {
   const description = document.getElementById('tpl-description').value.trim();
   const llm_model = document.getElementById('tpl-model').value.trim();
   const system_prompt = document.getElementById('tpl-system-prompt').value;
-  const allowedToolsRaw = document.getElementById('tpl-allowed-tools').value.trim();
+  const permissionRaw = document.getElementById('tpl-permission').value.trim();
   if (!name) {
     statusEl.textContent = '请填写模板名称';
     statusEl.style.color = 'var(--danger)';
     return;
   }
-  let allowed_tools = null;
-  if (allowedToolsRaw) {
+  let permission = null;
+  if (permissionRaw) {
     try {
-      allowed_tools = JSON.parse(allowedToolsRaw);
-      if (!Array.isArray(allowed_tools)) throw new Error('必须是数组');
+      permission = JSON.parse(permissionRaw);
+      if (typeof permission !== 'object' || Array.isArray(permission) || permission === null) {
+        throw new Error('必须是 JSON 对象');
+      }
     } catch (e) {
-      statusEl.textContent = 'allowed_tools 需为 JSON 数组，如 ["bash"]';
+      statusEl.textContent = 'permission 需为 JSON 对象，如 {"edit":"deny"}';
       statusEl.style.color = 'var(--danger)';
       return;
     }
@@ -98,7 +131,7 @@ async function saveTemplate() {
     description: description || null,
     llm_model: llm_model || null,
     system_prompt: system_prompt || null,
-    allowed_tools,
+    permission,
     data: null,
   };
   try {

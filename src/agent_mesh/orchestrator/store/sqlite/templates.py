@@ -11,14 +11,14 @@ from agent_mesh.orchestrator.store.sqlite.connection import (
 )
 
 _TEMPLATE_COLUMNS = (
-    "id, name, description, system_prompt, llm_model, allowed_tools, data, "
+    "id, name, description, system_prompt, llm_model, permission, data, "
     "created_at, updated_at"
 )
 
 
 def _row_to_template(row: Any) -> dict[str, Any]:
     data = dict(row)
-    data["allowed_tools"] = _load_json(data.get("allowed_tools"))
+    data["permission"] = _load_json(data.get("permission"))
     data["data"] = _load_json(data.get("data"))
     return data
 
@@ -30,13 +30,13 @@ class TemplateMixin(SQLiteBase):
         description: str | None = None,
         system_prompt: str | None = None,
         llm_model: str | None = None,
-        allowed_tools: list[str] | None = None,
+        permission: dict[str, Any] | None = None,
         data: dict[str, Any] | None = None,
     ) -> int:
         rows = await self._execute(
             """
             INSERT INTO templates
-                (name, description, system_prompt, llm_model, allowed_tools, data)
+                (name, description, system_prompt, llm_model, permission, data)
             VALUES (?, ?, ?, ?, ?, ?) RETURNING id
             """,
             (
@@ -44,7 +44,7 @@ class TemplateMixin(SQLiteBase):
                 description,
                 system_prompt,
                 llm_model,
-                _dump_json(allowed_tools),
+                _dump_json(permission),
                 _dump_json(data),
             ),
         )
@@ -74,7 +74,7 @@ class TemplateMixin(SQLiteBase):
             "description",
             "system_prompt",
             "llm_model",
-            "allowed_tools",
+            "permission",
             "data",
         }
         sets: list[str] = []
@@ -82,7 +82,7 @@ class TemplateMixin(SQLiteBase):
         for key, value in fields.items():
             if key not in allowed:
                 continue
-            if key in ("allowed_tools", "data"):
+            if key in ("permission", "data"):
                 value = _dump_json(value)
             sets.append(f"{key}=?")
             params.append(value)

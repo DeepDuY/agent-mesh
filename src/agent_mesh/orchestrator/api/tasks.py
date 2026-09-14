@@ -151,11 +151,31 @@ def mount_task_routes(
         if model_error:
             raise HTTPException(status_code=400, detail=model_error)
 
+        # Server-side permission pre-check for command mode (immediate feedback;
+        # the edge re-evaluates as the enforcement point).
+        if mode == "command":
+            denial = await store.check_command_permission(
+                body.get("agent_id", ""), body.get("instruction", "")
+            )
+            if denial:
+                await store.store.append_task_event(
+                    task_id="",
+                    event_type="permission_denied",
+                    agent_id=body.get("agent_id"),
+                    user_id=user.get("user_id"),
+                    details={
+                        "mode": "command",
+                        "instruction": body.get("instruction", ""),
+                        "reason": denial,
+                        "source": "dispatch",
+                    },
+                )
+                raise HTTPException(status_code=403, detail=denial)
+
         constraints = Constraints(
             workdir=body.get("workdir", "."),
             timeout_s=body.get("timeout_s", 300),
             model=body.get("model"),
-            allowed_tools=body.get("allowed_tools"),
             output_limit=body.get("output_limit", 200_000),
             session_id=body.get("session_id"),
             skills=body.get("skills"),
@@ -174,7 +194,23 @@ def mount_task_routes(
             attachments=attachments,
         )
         logger.info("REST dispatched task %s by %s", task_id, user["username"])
+        await store.store.append_task_event(
+            task_id=task_id,
+            event_type="dispatched",
+            agent_id=body.get("agent_id"),
+            user_id=user.get("user_id"),
+            details={"mode": mode},
+        )
         return {"task_id": task_id, "status": TaskStatus.QUEUED.value}
+
+    @router.get("/tasks/{task_id}/events")
+    async def rest_task_events(
+        task_id: str,
+        limit: int = Query(200, ge=1, le=1000),
+        user: dict[str, Any] = Depends(require_user_token),
+    ) -> dict[str, Any]:
+        events = await store.store.list_task_events(task_id, limit=limit)
+        return {"task_id": task_id, "events": events}
 
     @router.get("/tasks/{task_id}/logs")
     async def rest_task_logs(
@@ -209,6 +245,12 @@ def mount_task_routes(
         if not accepted:
             return {"accepted": False, "error": "task is already in a terminal state"}
         logger.info("REST cancelled task %s by %s", task_id, user["username"])
+        await store.store.append_task_event(
+            task_id=task_id,
+            event_type="cancelled",
+            user_id=user.get("user_id"),
+            details={},
+        )
         return {"accepted": True, "task_id": task_id, "status": TaskStatus.CANCELLED.value}
 
     @router.delete("/tasks/{task_id}")
