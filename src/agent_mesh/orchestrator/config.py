@@ -64,7 +64,7 @@ class EdgeConfig(BaseSettings):
     )
 
     agent_id: str = Field(default_factory=lambda: os.uname().nodename)
-    orchestrator_url: str = "http://127.0.0.1:8000/mcp"
+    orchestrator_url: str = "http://127.0.0.1:8000"
     token: str = "change-me-shared-secret"
     heartbeat_s: float = 3.0
     runtime: str = "opencode"
