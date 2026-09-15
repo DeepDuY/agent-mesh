@@ -72,7 +72,7 @@ agent-mesh/
 ├── src/agent_mesh/
 │   ├── shared/{constants,schemas,permissions}.py
 │   ├── orchestrator/
-│   │   ├── main.py  task_store.py
+│   │   ├── main.py  task_store.py  tenancy.py  permissions.py  sweeper.py
 │   │   ├── config.py  auth.py  artifact_store.py
 │   │   ├── api/                   # REST 层（按领域拆分）
 │   │   │   ├── __init__.py        # create_query_router + 认证依赖

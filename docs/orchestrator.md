@@ -16,6 +16,12 @@
 
 ### 1.2 task_store.py：状态机 + 心跳注册 + 清扫
 
+`TaskStore` 由核心 + 三个 mixin 组成（按职责拆分）：
+- `task_store.py`：核心（`__init__`、读助手、`dispatch`、`_resolve_agent`、`heartbeat`、`mark_started`/`submit_result`/`cancel_task`、`max_concurrent`）。
+- `tenancy.py`：`TenancyMixin`（节点 ACL、任务可见性、edge 身份校验：`can_access_agent`/`can_see_task`/`edge_can_access_task` 等）。
+- `permissions.py`：`PermissionMixin`（模型解析/校验、`effective_permission`/`check_command_permission`、agent token、`bump_config_version`）。
+- `sweeper.py`：`SweeperMixin`（`_sweep_timeouts`/`_sweep_offline`）。
+
 - `dispatch()`：
   1. 校验 `mode ∈ {command, llm}`；
   2. 校验 `depends_on` 中的 task_id 都存在（仅校验，不持久化、不阻塞，见 [known-issues.md §9](./known-issues.md)）；
@@ -56,7 +62,7 @@ elif now - last_seen > offline_after_s:
         置 queued; assigned_at=None; enqueue; 若等于 current_task 则清 current_task
     if online: set_agent_online(False)
 ```
-> 多任务说明：不再只处理单个 `current_task_id`，而是把该 agent 的**全部 ASSIGNED 任务**回队；只要有任一 WORKING 任务即整体跳过（实现见 `task_store.py::_sweep_offline`）。
+> 多任务说明：不再只处理单个 `current_task_id`，而是把该 agent 的**全部 ASSIGNED 任务**回队；只要有任一 WORKING 任务即整体跳过（实现见 `sweeper.py::SweeperMixin._sweep_offline`）。
 
 ### 1.4 api/ 包：REST 层
 
