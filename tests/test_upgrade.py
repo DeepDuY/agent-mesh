@@ -7,7 +7,7 @@ import json
 import tarfile
 from pathlib import Path
 
-from agent_mesh.edge.agent import (
+from agent_mesh.edge.upgrade import (
     _extract_tar_member,
     _member_present,
     _needs_replace,
