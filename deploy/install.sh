@@ -136,6 +136,8 @@ rsync -a --delete \
     --exclude='etc' \
     --exclude='code-review-report.md' \
     --exclude='评审补充澄清.md' \
+    --exclude='代码审核报告.md' \
+    --exclude='代码审核整改计划.md' \
     --exclude='mcp-server.json' \
     "${REPO_DIR}/" "${INSTALL_DIR}/lib/agent-mesh/"
 
