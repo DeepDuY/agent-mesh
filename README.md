@@ -53,7 +53,7 @@ sudo ./deploy/install.sh --opencode /path/opencode  # 指定本机 opencode（�
 - **模型列表可配置**：`settings.llm_models`（配置页「可用模型列表」，每行一个网关真实 id）是唯一模型来源，边沿据此生成 opencode 模型表（**无硬编码**）；派发 llm 任务时 `model` 会按列表校验，未配置默认模型则拒绝执行
 - **节点描述与角色设定**：每个节点可设 `description`（节点自身用途说明）；`effective_description` = 节点描述优先、否则取绑定模板的 `node_description`（模板专用于「节点描述」的字段，与模板自身的「说明」`description` 区分开），主 Agent 据此选节点。节点级 `system_prompt` 注入该节点每个 llm 任务提示词顶部（**仅管理员**，页面可编辑）
 - **节点模板**：可复用的节点配置（`system_prompt` / 默认 `llm_model` / **权限 `permission`** / `node_description` 节点描述 / `description` 说明）；节点**引用式绑定**（`agents.template_id`），改模板自动同步到所有绑定节点。生效顺序：模型 `节点 > 模板 > 全局默认`，提示词按 `内置 + 节点 + 模板` 拼接，节点描述 `节点 > 模板`
-- **模板/权限管理只通过页面**：模板读/写与节点改绑模板接口**已从 API 移除**（`require_ui_admin`：需页面专用头 `X-Agent-Mesh-UI` 且为 admin，否则 404），任何人都无法用 curl 等外部调用，只能在 Web 管理平台操作。节点级 `llm_config`/`system_prompt`、全局 `settings` 要求 `admin` 角色。主 Agent（`list_agents`）只能读到 `template_name` 与 `effective_description`，**不会拿到模板的具体配置**，防止自我提权
+- **模板/权限管理只通过页面**：模板读/写与节点改绑模板接口**已从 API 移除**（`require_ui_user`：需页面专用头 `X-Agent-Mesh-UI`，否则 404），任何人都无法用 curl 等外部调用，只能在 Web 管理平台操作；admin 管理全部模板，非 admin 只能管理自己或本团队的模板。节点级 `llm_config`/`system_prompt`、全局 `settings` 要求 `admin` 角色。主 Agent（`list_agents`）只能读到 `template_name` 与 `effective_description`，**不会拿到模板的具体配置**，防止自我提权
 - **多租户（团队/组 + 资源归属）**：`teams`/`team_members`（**一个用户至多属一个团队**）；节点 `access` JSON 声明可操作的团队/用户（admin 恒旁路，安装节点的用户及其团队**自动加入**）；任务按 `user_id`/`team_id`（**由 token 自动生成**）过滤——可见 `自己 + 自己团队`（无团队则仅自己）；文件按创建者隔离。admin 在「团队」页与节点「访问权限」维护
 - **执行权限（模板级，llm + command 共用）**：采用 OpenCode `permission` 规格（`allow|ask|deny` + 命令 glob），内置 `build`/`plan`/`readonly` 三个模板；未绑定模板的节点用全局 `default_permission`（默认 `readonly`）。llm 模式交由 opencode 强制，command 模式由 edge 在 `bash -c` 前求值；拒绝与关键动作写入 `task_events` 审计。**注意：command 匹配器只防误操作，非安全边界**
 - 数据持久化（SQLite/PostgreSQL），重启不丢失
@@ -211,8 +211,8 @@ sudo ./deploy/install.sh
 systemctl start agent-mesh-orchestrator
 systemctl status agent-mesh-orchestrator
 
-# 日志
-tail -f /opt/agent-mesh/log/orchestrator.log
+# 日志（服务输出走 systemd journal）
+journalctl -u agent-mesh-orchestrator -f
 ```
 
 > `deploy/install.sh` 负责 **orchestrator** 与**探针安装包的构建/发布**；edge 探针本身不经此部署，而是在各目标机器上用 bootstrap（`GET /api/bootstrap/install.sh`）安装到 `/opt/agent-mesh-agent`。
@@ -333,7 +333,7 @@ agent-mesh/
 | `AGENT_MESH_PG_PASSWORD` | - | PG 密码 |
 | `AGENT_MESH_PG_DATABASE` | `agent_mesh` | PG 数据库名 |
 | `AGENT_MESH_SWEEP_INTERVAL_S` | `5` | 扫描间隔 |
-| `AGENT_MESH_OFFLINE_AFTER_S` | `15` | 离线判定时间 |
+| `AGENT_MESH_OFFLINE_AFTER_S` | `15` | 离线判定时间（`deploy/install.sh` 生成的 `orchestrator.env` 会覆盖为 `30`） |
 | `AGENT_MESH_SESSION_TTL_S` | `86400` | 登录 session token 有效期（秒） |
 | `AGENT_MESH_ARTIFACT_DIR` | `./data/artifacts` | 产物存储目录 |
 | `AGENT_MESH_ARTIFACT_MAX_SIZE_MB` | `50` | 单产物大小上限 |
@@ -350,12 +350,14 @@ agent-mesh/
 | `EDGE_TOKEN` | 空（必设） | 认证 token（全局 token / 独立 agent token） |
 | `EDGE_HEARTBEAT_S` | `3` | 心跳间隔 |
 | `EDGE_RUNTIME` | `opencode` | CLI 运行时 |
-| `EDGE_WORKDIR` | `.` | 默认工作目录（**任务未指定 workdir 时的兜底**；显式指定仍以任务为准） |
+| `EDGE_WORKDIR` | `.` | 默认工作目录（**任务未指定 workdir 时的兜底**；显式指定仍以任务为准）。包内 `install.sh` 会写入 `${INSTALL_DIR}/work` |
+| `EDGE_INSTALL_DIR` | `/opt/agent-mesh-agent` | 安装目录（machine-id 持久化位置） |
 | `EDGE_LLM_API_KEY` | - | LLM API key |
 | `EDGE_LLM_BASE_URL` | - | LLM base URL |
 | `EDGE_LLM_MODEL` | 空（**必配**） | 默认模型（网关真实完整 id；空且任务未传 `model` 时 llm 任务被拒绝） |
 | `EDGE_LLM_MODELS` | 空 | 可用模型列表（逗号/换行；由 config-sync 下发，一般无需手填） |
 | `EDGE_SYSTEM_PROMPT` | 空 | 节点级 system prompt（由 config-sync 下发，一般无需手填） |
+| `LOG_LEVEL` | `INFO` | 日志级别 |
 
 > 节点身份唯一性由 device_id（/etc/machine-id 或安装目录持久化的随机 id）决定，`EDGE_AGENT_ID` 仅作显示名。
 
@@ -391,18 +393,12 @@ agent-mesh/
 | GET | `/api/agents/{id}/detail` | 节点详情（含最近任务） |
 | PATCH | `/api/agents/{id}/alias` | 设置节点别名 |
 | PATCH | `/api/agents/{id}/description` | 设置节点描述（主 Agent 识别用途；不影响执行） |
-| PATCH | `/api/agents/{id}/system_prompt` | 设置节点级 system prompt（随心跳同步到该节点） |
-| PATCH | `/api/agents/{id}/template` | 绑定/解绑节点模板（`template_id`，null 解绑） |
-| PATCH | `/api/agents/{id}/llm_config` | 设置节点级 LLM 配置（随心跳同步到该节点） |
+| PATCH | `/api/agents/{id}/system_prompt` | 设置节点级 system prompt（**admin**；随心跳同步到该节点） |
+| PATCH | `/api/agents/{id}/llm_config` | 设置节点级 LLM 配置（**admin**；随心跳同步到该节点） |
 | POST | `/api/agents/{id}/upgrade` | 请求升级节点（空闲时自动执行并回滚） |
 | DELETE | `/api/agents/{id}` | 删除节点（下发卸载任务） |
-| GET | `/api/templates` | 节点模板列表 |
-| POST | `/api/templates` | 创建模板（name/system_prompt/llm_model/permission/data） |
-| GET | `/api/templates/{id}` | 单个模板 |
-| PATCH | `/api/templates/{id}` | 更新模板（改动自动同步到绑定节点） |
-| DELETE | `/api/templates/{id}` | 删除模板（绑定节点自动解绑） |
-| GET | `/api/settings` | 全局配置 |
-| PATCH | `/api/settings` | 更新全局配置 |
+| GET | `/api/settings` | 全局配置（**admin**） |
+| PATCH | `/api/settings` | 更新全局配置（**admin**） |
 | POST | `/api/artifacts/{task_id}` | 上传产物 |
 | GET | `/api/artifacts/{task_id}` | 列出产物 |
 | GET | `/api/artifacts/{task_id}/{artifact_id}` | 下载产物 |
@@ -421,6 +417,8 @@ agent-mesh/
 | POST | `/api/files/batch-download` | 批量下载文件库文件为 ZIP |
 | DELETE | `/api/files/{file_id}` | 删除文件库文件（不校验引用） |
 | GET | `/api/skill-doc/agent-mesh` | 下载个性化 agent-mesh SKILL.md（自动填充公开地址与当前用户 token） |
+
+> 模板管理（`/api/templates*`、`/api/agents/{id}/template`）与团队管理（`/api/teams*`）**仅限 Web 管理平台**（需 `X-Agent-Mesh-UI` 头，外部调用一律 404），不在主 Agent/脚本可用接口内。
 
 ### REST API（边沿 Agent）
 
@@ -457,7 +455,7 @@ curl -s -H "Authorization: Bearer <agent-token>" \
 需要给任务附带文件时，先上传到文件库拿到 `file_id`，派发时通过 `attachments` 引用；探针执行前会把附件下载到任务工作目录并按 md5 校验，**下载失败或 md5 不符会标记任务失败**（`summary: attachment download failed`）：
 
 ```bash
-# 1. 上传（可多文件；同 md5+文件名 自动去重返回原 file_id）
+# 1. 上传（可多文件；同 md5+文件名 自动去重返回原 file_id，非 admin 去重范围限于自己创建的文件）
 curl -s -X POST http://127.0.0.1:8000/api/files \
   -H "Authorization: Bearer $TOKEN" \
   -F "files=@./myfile.txt" -F "files=@./config.yaml"
@@ -487,7 +485,7 @@ uv run --no-sync python -m pytest tests/ -q
 - 使用 HTTPS 网关终止 TLS
 - 边沿 Agent 使用低权限账号运行
 - LLM API key 存于 orchestrator `settings`（DB，配置页写入）并经心跳下发到节点 `etc/edge.env`；安装脚本不内嵌任何凭据，`edge.env`/`orchestrator.env` 建议 600 权限
-- REST API 使用用户 token 认证；Edge 协议使用用户 token / 全局 `AGENT_MESH_TOKEN`
+- REST API 使用用户 token 认证；Edge 协议使用用户 token / 全局 `AGENT_MESH_TOKEN` / agent 独立 token
 - 删除节点会卸载目标机器上的 agent，谨慎操作
 
 ## 文档

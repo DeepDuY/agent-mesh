@@ -38,7 +38,7 @@
 | `identity`（显式参数） | `runtime`, `hostname`, `version` | 运行时/主机名/探针版本 | 更新 |
 | `identity`（显式参数） | `running_tasks` | 当前正在执行的任务 id 列表（多任务并发重连恢复；v1.4.0，旧探针可缺省） | 不落库，仅用于并发分配 |
 | `system`（静态） | `os`, `distro`, `arch` | 平台族/发行版/架构 | **缺失保留旧值**（COALESCE） |
-| `metrics`（动态） | `cpu_percent`, `mem_percent`, `mem_used_mb`, `mem_total_mb` | 资源指标 | **每次覆盖** |
+| `metrics`（动态） | `cpu_percent`, `mem_percent`, `mem_used_mb`, `mem_total_mb` | 资源指标 | **有值则覆盖；字段缺失时保留旧值** |
 
 - `os` 保持平台族（`linux`/`darwin`/`win32`），**用于升级包选型**（`agent-mesh-agent-{os}-{arch}.tar.gz`），不得改为发行版名。
 - `distro` 为发行版信息（如 `ubuntu 22.04` / `centos 7` / `kylin V10`），Web 看板「系统」列显示 `distro || os`（老节点兜底）。
@@ -50,7 +50,7 @@
 
 ```python
 SYSTEM_FIELDS = ["os", "distro", "arch"]            # 静态：缺失保留旧值
-METRIC_FIELDS = ["cpu_percent", "mem_percent", "mem_used_mb", "mem_total_mb"]  # 动态：每次覆盖
+METRIC_FIELDS = ["cpu_percent", "mem_percent", "mem_used_mb", "mem_total_mb"]  # 动态：有值覆盖、缺失保留旧值
 TELEMETRY_FIELDS = SYSTEM_FIELDS + METRIC_FIELDS
 
 def extract_telemetry(payload) -> dict   # 白名单提取，未知键忽略
@@ -60,6 +60,7 @@ def validate_telemetry(telemetry) -> None  # 非注册键抛 ValueError（防注
 - 注册表字段名 == `agents` 表列名（一对一对齐）。
 - store 层（SQLite/PostgreSQL）的列名**只从注册表常量取值**，禁止拼接请求数据（防 SQL 注入）。
 - `api/edge.py` 的 poll_for_task 经 `extract_telemetry()` 处理，管线内不出现具体字段名。
+- **例外：服务端观测字段**。`agents.ip_address`（迁移 018）由服务端从 `request.client.host` 直接写入，**不来自探针上报、不进注册表**，因此不适用 §5 的 7 步流程；这类"服务端派生"字段以 `agents` 表列为准。
 
 ---
 
@@ -68,7 +69,7 @@ def validate_telemetry(telemetry) -> None  # 非注册键抛 ValueError（防注
 收到心跳 body 后，服务端按以下规则处理，**新旧版本探针/服务端可混跑**：
 
 1. **未知字段 → 忽略**：`extract_telemetry` 白名单过滤，未知键不报错、不落库（前向兼容：新探针可上报服务端不认识的新字段）。
-2. **缺失字段 → 保留/置空**：`system` 字段缺失或为 `None` 时保留旧值（SQLite/PG 用 `COALESCE(?, col)`，缺失不覆盖）；`metrics` 字段缺失则置 `NULL`。
+2. **缺失字段 → 保留旧值**：`system` 与 `metrics` 字段缺失或为 `None` 时均保留旧值（SQLite/PG 用 `COALESCE(?, col)`，缺失不覆盖；有值时覆盖）。
 3. **坏数据 → 不拒绝心跳**：单字段类型异常不导致整次心跳失败（宽松写入，不做严格校验）。
 4. **字段只增不改不删**：注册表字段是 append-only；改名/删除会破坏老探针上报。
 5. **确需破坏性变更**：才引入 `proto_version` 字段（当前未启用），配合探针自升级收敛，届时在本文档声明版本迁移。

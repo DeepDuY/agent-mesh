@@ -34,9 +34,12 @@ cd <repo>
 ├── data/
 │   ├── agent-mesh.db             # SQLite（默认）
 │   ├── artifacts/                # 任务产物
+│   ├── files/  skills/           # 文件库 / 技能库落盘
 │   └── bootstrap/                # 探针安装包 + VERSION（节点安装/升级用）
-└── log/
+└── log/                          # 预留；服务日志实际走 systemd journal
 ```
+
+> 服务日志走 systemd journal（`journalctl -u agent-mesh-orchestrator`），不会写入 `log/orchestrator.log`；`./deploy/status.sh` 对该文件的 tail 通常为空（见 `docs/known-issues.md`）。
 
 ## 服务管理
 
@@ -64,6 +67,7 @@ python scripts/build-agent-bootstrap.py \
 ```
 
 - `opencode` 默认必带；确实不需要时可加 `--allow-missing-opencode`（此时 llm 任务在节点上不可用）。
+- 本机没有 opencode 时默认从 GitHub 自动下载；不希望联网下载可加 `--no-download-opencode`。
 - 目标平台按当前机器自动检测，可用 `--os` / `--arch` 覆盖。
 
 ## 卸载

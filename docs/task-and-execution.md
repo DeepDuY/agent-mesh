@@ -4,11 +4,12 @@
 
 ## 1. 任务模型与双执行模式
 
-任务 `Task.mode` **必填**，二选一：
+任务 `Task.mode` 二选一（`command` / `llm`）。模型/存储层默认 `llm`，REST 派发接口要求显式指定。
 
 ### 1.1 command 模式（确定性执行）
 
-- `instruction` 作为 shell 命令**原样**执行：`bash -c <instruction>`，**不经过 LLM**。
+- `instruction` 作为 shell 命令执行：`bash -c <instruction>`，**不经过 LLM**。
+- **权限门控**：执行前用共享权限引擎（OpenCode `permission` 规格）对子命令求值，`ask` 视为 `deny`；被拒时返回失败并写一条 error 日志，不执行命令。该匹配器**只防误操作，不是安全边界**（服务端派发时另有预检，见 [auth-security.md §6](./auth-security.md)）。
 - 适用：跑命令、脚本、测试、安装等确定性任务（含删除节点的自毁命令）。
 - 产物：只收集任务期间**新创建**的文件（`_collect_artifacts` 对执行前快照做差集，跳过以 `.` 开头的隐藏路径）。
 
@@ -66,7 +67,7 @@ queued ──心跳领取──▶ assigned ──mark_started──▶ working 
 
 ### 3.1 agent.py：主循环
 
-- `EdgeAgent(agent_id, orchestrator_url, token, runtime, workdir, llm_api_key, llm_base_url, llm_model, heartbeat_s=3, install_dir)`。
+- `EdgeAgent(agent_id, orchestrator_url, token, runtime, workdir, llm_api_key, llm_base_url, llm_model, llm_models, system_prompt, permission, heartbeat_s=3, install_dir)`。
 - `orchestrator_url.replace("/mcp", "")` 得到 REST base URL（仅为兼容早期 `EdgeConfig` 默认值残留的 `/mcp` 后缀；当前默认值已无该后缀）。
 - 启动时 `read_agent_version(install_dir)` 读取已装版本（缺省回退内置 `VERSION`）；若 `token` 为空/占位且 `edge.env` 已持久化独立 token 则回退读取（见 [auth-security.md §7](./auth-security.md#7-agent-独立-token-与设备-用户关联)）。
 - `_loop()`：
@@ -81,7 +82,7 @@ queued ──心跳领取──▶ assigned ──mark_started──▶ working 
 - `_execute(task)`：
   1. 创建 `cancel_event` 并启动 `_monitor_cancel(task_id, cancel_event)` 后台协程，每 `heartbeat_s` 轮询任务状态，检测到 `cancelled` 则置事件（per-task，天然适配并发）。
   2. `mark_started(task_id)`（失败仅告警，不中断）。
-  3. **下载任务附件**：建 workdir → 按 `task.attachments` 的 `download_url` 逐个下载到 `workdir/<文件名>`，流式 md5 与快照比对（`rest_client.download_file`）。**失败或 md5 不符 → 提交 `failed`（`exit_code=-3`、`stderr_tail="attachment download failed: <文件名>: <原因>"`）并返回，不执行任务**（下载在 `_snapshot_files` 之前，附件不会误收为产物）。
+  3. **下载任务附件**：建 workdir → 按 `task.attachments` 的 `download_url` 逐个下载到 `workdir/<文件名>`，流式 md5 与快照比对（`rest_client.download_file`）。**失败或 md5 不符 → 提交 `failed`（`exit_code=-3`、`stderr_tail="attachment download failed: <异常/原因>"`；md5 不符的异常信息含文件名）并返回，不执行任务**（下载在 `_snapshot_files` 之前，附件不会误收为产物）。
   4. `executor.run_task(task, cancel_event, log_callback=...)`：执行期间把实时输出经 `log_callback` 批量上报（LLM 事件分类 text/error/complete/raw，command 输出按 raw；见 [features.md §7](./features.md#7-llm-实时执行输出v140)）。
   5. 若 `cancel_event.is_set()`：任务已被取消，**不提交结果**（任务已是终态），直接返回。
   6. 否则按 `outcome.artifacts_paths` 从 `workdir` 读取产物字节 → `upload_artifacts(task_id, files)` → 把返回的 `ArtifactRef` 写回 `outcome.artifacts`。
@@ -92,19 +93,20 @@ queued ──心跳领取──▶ assigned ──mark_started──▶ working 
 
 - `httpx.AsyncClient`，统一 `Authorization: Bearer <token>`，超时 30s。
 - `_post(base/api/edge/*, json)` 与 multipart 上传 `base/api/artifacts/{task_id}`。
-- 额外提供 `get_task_status()`（cancel 监视轮询用）。
+- 额外提供 `get_task_status()`（cancel 监视轮询用）、`post_task_log()`（实时输出上报）。
 - `set_token(token)`：切换全局请求的 Bearer token（收到 agent 独立 token 后使用）。
 - `download_to(url, dest)`：流式下载升级包（长超时 600s，见 [auth-security.md §8](./auth-security.md#8-agent-自升级)）。
+- `download_file(url, dest)`：流式下载任务附件到本地（校验用）。
 
 ### 3.3 execution/ 包：任务执行
 
 按职责拆分为 `edge/execution/` 包：
 
 - `common.py`：`ExecutionOutcome` 数据结构 + 共享工具。含 `_wait_proc()`（并发等待子进程完成/超时/取消：收到取消信号先 `kill` 再 `SIGKILL`，返回 `(-2, True)`）。
-- `command.py`：`run_command()`。`bash -c <instruction>`，执行前 `_snapshot_files(workdir)`；滚动截断 stdout/stderr 到 `output_limit`（保留尾部）；超时 `timeout_s` 强杀，`exit_code=-1`；`_collect_artifacts` 收集新文件；summary 取输出首行。
+- `command.py`：`run_command()`。执行前用共享权限引擎对指令求值（`ask`→拒绝），通过后 `bash -c <instruction>`，并 `_snapshot_files(workdir)`；滚动截断 stdout/stderr 到 `output_limit`（保留尾部）；超时 `timeout_s` 强杀，`exit_code=-1`；`_collect_artifacts` 收集新文件；summary 取输出首行。实时上报只挂 stdout 回调。
 - `llm.py`：`run_llm()`。
-  - `runtime=opencode`：`opencode run --command - --format json --auto --dir <workdir>`，stdin 传 `_wrap_llm_instruction()`（要求输出固定 JSON：`summary`/`answer`/`artifacts`）。
-  - `runtime=claude`：`claude -p <instruction>`。
+  - `runtime=opencode`：`opencode run --command - --format json --auto --dir <workdir>`（有 `session_id` 时追加 `--session <id>`），stdin 传 `_wrap_llm_instruction()`（要求输出固定 JSON：`summary`/`answer`/`artifacts`）。
+  - `runtime=claude`：`claude -p "<system_prompt + instruction>"`。
   - 写 `workdir/opencode.json`（`build_opencode_config()` 输出，含 provider/permission），设 `env["OPENCODE_CONFIG"]`，结束删除。
   - 输出解析：优先解析 opencode JSONL 事件流里的 `text` part（含 ```json 围栏）→ `_extract_structured_output()`；失败则回退收集全部新文件。
   - 超时/取消处理同 command。
@@ -116,7 +118,7 @@ queued ──心跳领取──▶ assigned ──mark_started──▶ working 
 - `get_device_id()`：① `/etc/machine-id`；② `<install_dir>/machine-id`（首次生成 `m<毫秒时间戳>-<pid>` 并持久化）；③ 回退 `sha256(hostname)`。
 - `get_arch()` / `get_os()` / `get_distro()`：上报节点架构、系统（`linux`/`darwin`/`win32`）与发行版（如 `ubuntu 22.04`）。采集规范见 [standards/edge-reporting.md](./standards/edge-reporting.md)。
 - `read_agent_version(install_dir)`：读 `etc/agent_version`（安装/升级时写入，用于版本上报与升级判定）。
-- `apply_llm_config(install_dir, config, version)`：LLM 配置同步持久化——更新 `etc/edge.env` 的 `EDGE_LLM_*`（缺失追加）并写 `etc/config_version`（见 [auth-security.md §9](./auth-security.md#9-llm-配置同步)）。
+- `apply_llm_config(install_dir, config, version)`：LLM 配置同步持久化——更新 `etc/edge.env` 的 `EDGE_LLM_*`（缺失时创建 `edge.env` 并追加）并写 `etc/config_version`；同时把 `system_prompt`、`llm_models` 写入 `etc/system_prompt`、`etc/llm_models`，把 `permission` 写入 `etc/permission.json`（见 [auth-security.md §9](./auth-security.md#9-llm-配置同步)）。
 - `persist_edge_token(install_dir, token)` / `read_edge_token()`：把 agent 独立 token 写/读 `edge.env` 的 `EDGE_TOKEN`（见 [auth-security.md §7](./auth-security.md#7-agent-独立-token-与设备-用户关联)）。
 - `WRAPPER_SCRIPT`：回滚感知的启动 wrapper（`bin/agent-mesh-edge` → `exec bin/agent-mesh-edge.bin`），含两阶段升级回滚逻辑（见 [auth-security.md §8](./auth-security.md#8-agent-自升级)）。
 - `build_opencode_config(api_key, base_url, model, permission, models)`：`provider.anthropic` + `models`（**无硬编码**，完全由 orchestrator 配置的 `llm_models` 生成：map 键 = 去 `anthropic/` 前缀的完整 id、`name` = `_canonical_model_id()` 末段；请求的 `model` 也会 `setdefault` 补入）；模型为空时 `run_llm` 直接返回 `no LLM model configured`，不启动运行时；`permission` 由模板/全局解析后随 config-sync 下发（缺省回退内置 `readonly`），直接写入生成的 `opencode.json`。

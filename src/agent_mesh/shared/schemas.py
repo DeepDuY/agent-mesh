@@ -17,7 +17,8 @@ from agent_mesh.shared.constants import TaskStatus
 #
 #   * SYSTEM_FIELDS : static facts. Missing -> keep the previously stored value
 #                     (COALESCE semantics on UPDATE).
-#   * METRIC_FIELDS : dynamic samples. Always overwritten each heartbeat.
+#   * METRIC_FIELDS : dynamic samples. Overwritten when present; an absent
+#                     field keeps the previously stored value (same as SYSTEM).
 #
 # Fields are append-only: never rename or remove a registered field, and never
 # add a new reporting endpoint. See docs/standards/edge-reporting.md for the

@@ -14,7 +14,7 @@
 
 - 密码：bcrypt（`passlib`）。
 - API token：`generate_token()`（`secrets.token_urlsafe(32)`）创建，**仅以 SHA-256 摘要（`hash_token()`）入库**；创建/轮换时明文只返回一次。
-- session token：登录时签发，`make_session_token(username, session_secret, ttl_s)` = `base64url(payload).HMAC-SHA256` 无状态签名，含 `exp` 过期时间；`session_secret` 首次启动随机生成并持久化到 `settings` 表。**多 worker 安全**（无服务端会话存储）。**fail-closed**：若 `session_secret` 缺失/为空，登录直接拒绝（HTTP 500），`verify_session_token()` 对空 secret 一律返回 `None`——绝不使用空 secret 签发或校验 token（2026-09-01 修复，见 [known-issues.md §18](./known-issues.md)）。
+- session token：登录时签发，`make_session_token(username, session_secret, ttl_s)` = `base64url(payload).HMAC-SHA256` 无状态签名，含 `exp` 过期时间；`session_secret` 首次启动随机生成并持久化到 `settings` 表。**多 worker 安全**（无服务端会话存储）。**fail-closed**：若 `session_secret` 缺失/为空，登录直接拒绝（HTTP 500），`verify_session_token()` 对空 secret 一律返回 `None`——绝不使用空 secret 签发或校验 token。
 - token 对比：`hmac.compare_digest` 常数时间比较。
 
 ## 3. 默认管理员
@@ -32,7 +32,7 @@
 ## 5. LLM apiKey
 
 - 存入 `settings` 表（全局）或写入 `workdir/opencode.json`（任务级临时文件，执行后删除）。
-- ✅ 安装脚本**不再内嵌** LLM 配置：`GET /api/bootstrap/install.sh` 只生成不含任何凭据的引导脚本，新节点注册后由心跳 config-sync 下发 LLM 配置（见 [known-issues.md §7](./known-issues.md) 已修复；配置同步见 §9）。
+- ✅ 安装脚本**不再内嵌** LLM 配置：`GET /api/bootstrap/install.sh` 只生成不含任何凭据的引导脚本，新节点注册后由心跳 config-sync 下发 LLM 配置（配置同步见 §9）。
 
 ## 5.1 安装脚本用途差异与 API Key 落盘
 
@@ -64,9 +64,9 @@
 - 存储：`agents.token_hash`（SHA-256，仅存摘要），迁移 008。token 明文只在签发/轮换时返回一次。
 - 签发：`ensure_agent_token(agent_id)` 在 agent **首次成功注册**（第一次心跳）时生成 `secrets.token_urlsafe(32)` 并入库，明文在 poll 响应 `agent_token` 字段返回**一次**；边沿收到后 `persist_edge_token()` 写入 `edge.env`（`EDGE_TOKEN=`）并 `client.set_token()` 切换，之后全部用它认证。
 - 轮换：`POST /api/agents/{id}/token`（用户 token）→ 新 token 返回一次，旧 token 立即失效。
-- 认证：`require_any_token` 依次接受 全局 token → 用户 token → agent token（`get_agent_by_token_hash`），并返回身份 `{auth: "global"|"user"|"agent", ...}`。**agent token 绑定 device_id**：用它冒充其他设备轮询 → 403。
+- 认证：`require_any_token` 依次接受 全局 token → 用户 token → agent token（`get_agent_by_token_hash`），并返回身份 `{auth: "global"|"user"|"agent", ...}`。**agent token 绑定 device_id**：当请求携带的 `device_id` 与绑定值不一致时拒绝（403）；若请求未带 `device_id`，则回退按 `agent_id` 定位，不触发该绑定校验。
 - 兼容：旧二进制（无 token 持久化逻辑）仍可用全局/用户 token 认证；本轮 401 由"手动把 agent token 写入 edge.env"解决，升级到新二进制后自动持久化。
-- **设备-用户关联（多用户管理底座）**：`agent_users(agent_id, user_id)` 多对多表（迁移 008）。agent 注册时若调用方是用户 token（`{auth:"user"}`）则自动把该用户关联为该机器的操作者；`GET /api/agents/{id}/detail` 的 `metadata.allowed_users` 返回关联用户列表。**多用户权限管控已实现**：节点 ACL `agents.access = {"teams":[...], "users":[...]}`（迁移 017）+ `TaskStore.can_access_agent()` 在派发/查看时按用户或团队放行（admin 全权）；模板/团队管理见多租户章节。
+- **设备-用户关联（多用户管理底座）**：`agent_users(agent_id, user_id)` 多对多表（迁移 008）。agent 注册时若调用方是用户 token（`{auth:"user"}`）则自动把该用户关联为该机器的操作者；`GET /api/agents/{id}/detail` 的 `metadata.allowed_users` 返回关联用户列表（**仅 admin**；非 admin 调用返回空列表）。**多用户权限管控已实现**：节点 ACL `agents.access = {"teams":[...], "users":[...]}`（迁移 017）+ `TaskStore.can_access_agent()` 在派发/查看时按用户或团队放行（admin 全权）；模板/团队管理见多租户章节。
 
 ## 8. Agent 自升级
 
@@ -79,11 +79,11 @@
 ## 9. LLM 配置同步
 
 - 触发：`PATCH /api/settings` 保存 `llm_*` / `llm_models`，或 `PATCH /api/agents/{id}/llm_config`、`PATCH /api/agents/{id}/system_prompt`、`PATCH /api/agents/{id}/template`、`/api/templates` 的增删改（节点级/模板级覆盖）→ `config_version` 自增（`TaskStore.bump_config_version`）。
-- 下发：心跳响应携带 `config_version` 与解析后的 `config`（`_resolve_edge_config`）；含 `llm_api_key/base_url/model`、`llm_models`、`system_prompt`。
-- 应用（edge）：对比本地 `etc/config_version`，变更时更新运行中的 `Executor`，并 `apply_llm_config()` 重写 `edge.env` 的 `EDGE_LLM_*`、把 `system_prompt`/`llm_models` 写入 `etc/system_prompt`、`etc/llm_models`（多行安全，不破坏 shell source）+ 落盘版本号 → 重启后仍生效。
+- 下发：心跳响应携带 `config_version` 与解析后的 `config`（`_resolve_edge_config`）；含 `llm_api_key/base_url/model`、`llm_models`、`system_prompt`、`permission`。
+- 应用（edge）：对比本地 `etc/config_version`，变更时更新运行中的 `Executor`，并 `apply_llm_config()` 重写 `edge.env` 的 `EDGE_LLM_*`、把 `system_prompt`/`llm_models` 写入 `etc/system_prompt`、`etc/llm_models`，把 `permission` 写入 `etc/permission.json`（多行安全，不破坏 shell source）+ 落盘版本号 → 重启后仍生效。
 - **模型名与规模可配置（2026-09-11 起）**：`settings.llm_models` 是唯一模型来源（换行/逗号分隔的完整网关 id），配置页可编辑；edge `build_opencode_config()` **不再硬编码任何模型**，完全按该列表生成 opencode `models` map（键=去 `anthropic/` 前缀、`name`=末段）。per-task 下发仍要求 `llm_model`/`Constraints.model` 为网关真实完整 id（如 `anthropic/deepseek-v4-flash`），否则 404/5xx（§15 教训）。
 - **强制配置（无默认兜底）**：已删除所有硬编码默认模型（`EdgeConfig.llm_model`、`_DEFAULT_LLM_MODEL`、migration 004 / PG `_ensure_settings` 的种子均改为空串）。未配置默认模型且未显式传 `model` 时，`mode=llm` 的派发在 orchestrator 侧即被拒绝（REST 400），edge `run_llm` 亦会 fail-fast。`Constraints.model` 显式指定且 `llm_models` 非空时必须命中列表。
 - **节点模板与提示词层级（2026-09-11 起）**：新增 `templates` 表 + `agents.template_id`（引用式绑定，删除模板自动解绑）。解析优先级：模型 `节点 llm_model > 模板 llm_model > 全局 settings.llm_model`；提示词 `节点 system_prompt + 模板 system_prompt`（拼接，节点在前；内置 wrapper 由 edge 负责）。**已移除全局 `settings.system_prompt`**（其行在迁移 014 / PG 启动时删除）。
 - **提示词注入（edge）**：`_wrap_llm_instruction(instruction, system_prompt)` 把拼接后的节点+模板提示词作为「## 角色与上下文」块注入每个 llm 任务提示词；为空则不注入。
-- **重装防坑**：install.sh 重装时会清理 `etc/config_version` 等状态文件，否则新二进制本地版本==服务端版本会跳过同步、沿用旧模型（见 [known-issues.md §15](./known-issues.md)）。
+- **重装防坑**：install.sh 重装时会清理 `etc/config_version` 等状态文件，否则新二进制本地版本==服务端版本会跳过同步、沿用旧模型。
 - 由此**复活了节点级 `llm_config` 死特性**（此前只写库不读回）。

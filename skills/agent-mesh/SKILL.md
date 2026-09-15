@@ -102,7 +102,7 @@ curl -s -X POST http://<host>:8000/api/tasks/dispatch \
 ### 选 `command` 还是 `llm`？
 
 - **`mode=command`**：`instruction` 就是一条 shell 命令（`bash -c` 原样执行），**不经过 LLM**。适合明确、确定性的操作（部署、跑测试、看系统信息、文件操作）。工作目录下**新增的文件会自动作为产物**收集。
-  - **受节点权限约束**：节点若绑定只读/plan 权限，危险或非白名单命令会被**拒绝**（返回 403 或任务失败，摘要含「权限被拒绝」）。遇到被拒，向用户说明是权限策略，**不要尝试改权限/换模板**（那是管理员在页面做的事）。
+  - **受节点权限约束**：节点若绑定只读/plan 权限，危险或非白名单命令会被**拒绝**。派发时服务端预检不通过 → REST 返回 `403`（detail 为 `command denied by permission policy`）；若在节点侧被拒 → 任务失败、摘要含「权限被拒绝」。遇到被拒，向用户说明是权限策略，**不要尝试改权限/换模板**（那是管理员在页面做的事）。
 - **`mode=llm`**：`instruction` 是**自然语言任务**，交给节点本机的 opencode 处理。适合需要推理/多步/写代码的模糊任务。需要节点已配置可用模型；只收集 LLM 主动声明的产物。
 
 > 能用明确命令做的事，优先 `command`（更快、更可控、更省 token）；需要「动脑」才用 `llm`。
@@ -210,7 +210,7 @@ curl -s -X POST -H "Authorization: Bearer <token>" http://<host>:8000/api/tasks/
 ```
 
 - `queued`：移出队列，不执行。
-- `assigned`/`working`：edge 约 3 秒内杀掉整个进程组（SIGTERM→SIGKILL），不提交结果。
+- `assigned`/`working`：edge 在下一个取消监视轮询（约一个心跳周期，默认 3s）发现后杀掉整个进程组（SIGTERM→SIGKILL），不提交结果。
 - 已终态：返回 `{"accepted": false}`（幂等）。
 
 ### 6.4 查找 / 清理 / 审计
@@ -285,7 +285,7 @@ TOKEN='<长期 token>' bash <(curl -fsSL -H "Authorization: Bearer $TOKEN" \
 | 现象 | 原因 / 处理 |
 |------|-------------|
 | `401 Unauthorized` | **token 过期/失效** → 向用户索取账号密码，重新 `POST /auth/login`（§1） |
-| 派发 `403` / 任务摘要含「权限被拒绝」 | 节点权限策略拒绝该命令 → 如实说明；不要尝试改权限/换模板 |
+| 派发 `403`（`command denied by permission policy`）/ 任务摘要含「权限被拒绝」 | 节点权限策略拒绝该命令 → 如实说明；不要尝试改权限/换模板 |
 | 任务一直 `queued` | 目标节点离线或已达并发上限 → 换在线节点 / 等待 |
 | `no LLM model configured` | 节点无可用模型 → 让管理员在管理平台配置 |
 | `attachment download failed` | 文件库文件被删或 md5 不符 → 重新上传（§5） |

@@ -15,13 +15,13 @@ uv run --no-sync python scripts/build-agent-bootstrap.py
 > ⚠️ **改了探针代码（`src/agent_mesh/edge/**`）必须重建**：先升 `shared/constants.py:VERSION` 再跑本命令，否则在线节点不会拿到新代码（见 [docs/README.md 变更规范 §B](./README.md#b-修改探针edge-下的代码)）。
 
 产物（写到 `data/bootstrap/`）：
-- `agent-mesh-agent-{linux|darwin}-{x64|arm64}.tar.gz`：PyInstaller 构建的 `agent-mesh-edge` 单二进制 + `opencode` 二进制 + 包内 `install.sh` + `VERSION`。
+- `agent-mesh-agent-{linux|darwin}-{x64|arm64}.tar.gz`：PyInstaller 构建的 `agent-mesh-edge` 单二进制 + `opencode` 二进制 + 包内 `install.sh` + `VERSION` + `MANIFEST.json`（version + 各文件 size/sha256，升级时据此跳过未变化成员）。
 - `install.sh`：包内安装脚本的副本，供直接 curl。
 - `VERSION`：版本清单（= `shared/constants.py:VERSION`），升级比对用。
 
 `data/bootstrap/install.sh` 是包内安装脚本的唯一真源（构建脚本直接复制，不再动态生成）。流程：
 1. 读取 `INSTALL_DIR`（默认 `/opt/agent-mesh-agent`）、`ORCHESTRATOR_URL`、`TOKEN`（缺失即报错退出）、`EDGE_ALIAS`、`EDGE_LLM_*`。
-2. **前置检查**：非 root 且 systemd 存在时提示跳过 service；磁盘空间不足 100MB 报错；`$INSTALL_DIR` 已存在时要求 `FORCE_REINSTALL=1`（否则退出）。
+2. **前置检查**：非 root 且 systemd 存在时提示跳过 service；磁盘空间不足 500MB 报错；`$INSTALL_DIR` 已存在时要求 `FORCE_REINSTALL=1`（否则退出）。
 3. 复制二进制到 `$INSTALL_DIR/bin/`，`agent-mesh-edge.bin` 为真实二进制，外层 `agent-mesh-edge` 为 wrapper（`source etc/edge.env` 后 `exec`）。wrapper 含两阶段升级回滚逻辑（`etc/upgrading` + `etc/upgrade-started` 标记 → 升级时先备份 `.bin.old` 再替换新二进制，见 [auth-security.md §8](./auth-security.md#8-agent-自升级)）。
 4. 写 `$INSTALL_DIR/etc/edge.env`（含 `EDGE_AGENT_ID`、`EDGE_ORCHESTRATOR_URL`、`EDGE_TOKEN`、`EDGE_LLM_*` 等）。
 5. 有 systemd 则写 `/etc/systemd/system/agent-mesh-edge.service` 并 `daemon-reload` + `enable` + **`start`（安装后自动启动）**；macOS 则写 LaunchDaemon plist 并 `launchctl load/start`。
@@ -72,7 +72,7 @@ TOKEN='<token>' bash <(curl -fsSL -H "Authorization: Bearer <token>" <public_url
 | `AGENT_MESH_ARTIFACT_MAX_SIZE_MB` | `50` | 单文件上限 |
 | `AGENT_MESH_ARTIFACT_MAX_TOTAL_MB` | `200` | 总量上限 |
 | `AGENT_MESH_SWEEP_INTERVAL_S` | `5` | 清扫间隔（秒） |
-| `AGENT_MESH_OFFLINE_AFTER_S` | `15` | 心跳超时判离线（秒） |
+| `AGENT_MESH_OFFLINE_AFTER_S` | `15` | 心跳超时判离线（秒）。⚠️ `deploy/install.sh` 生成的 `orchestrator.env` 会覆盖为 `30` |
 | `AGENT_MESH_SESSION_TTL_S` | `86400` | 登录 session token 有效期（秒） |
 
 ### 2.2 边沿 Agent（`EDGE_` 前缀，EdgeConfig）
@@ -82,7 +82,7 @@ TOKEN='<token>' bash <(curl -fsSL -H "Authorization: Bearer <token>" <public_url
 > **从 SQLite 迁移到 PostgreSQL**：
 > 1. 启动 PostgreSQL 并建库/用户（`agent_mesh`）。
 > 2. 停止 orchestrator（`systemctl stop agent-mesh-orchestrator`）。
-> 3. 迁移数据：`python scripts/migrate_sqlite_to_pg.py --sqlite <sqlite.db> --pg-dsn 'postgresql://agent_mesh:PASS@host/db'`。⚠️ 当前脚本迁移 users/agents/agent_users/tasks/queue/results/artifacts/files/skills/settings/logs/migrations + 序列同步；**尚未覆盖 `teams`/`team_members`/`templates`/`task_events` 与 `tasks.user_id/team_id`**（迁移 015 后仍读取已删除的 `allowed_tools` 列，会报错）——待修复，见 [known-issues.md](./known-issues.md)。
+> 3. 迁移数据：`python scripts/migrate_sqlite_to_pg.py --sqlite <sqlite.db> --pg-dsn 'postgresql://agent_mesh:PASS@host/db'`。⚠️ 当前脚本迁移 users/agents/agent_users/tasks/queue/results/artifacts/files/skills/settings/logs/migrations + 序列同步；**尚未覆盖 `teams`/`team_members`/`templates`/`task_events` 与 `tasks.user_id/team_id`**（迁移 015 后仍读取已删除的 `allowed_tools` 列，会报错）——待修复，见 [known-issues.md §4](./known-issues.md)。
 > 4. 在 `orchestrator.env` 加 `AGENT_MESH_DB_TYPE=pg` + `AGENT_MESH_PG_DSN`，启动服务。
 > 5. 回滚：删除两行 PG 配置重启即回 SQLite（原 DB 文件保留）。
 
@@ -93,7 +93,7 @@ TOKEN='<token>' bash <(curl -fsSL -H "Authorization: Bearer <token>" <public_url
 | `EDGE_TOKEN` | `""`（必设） | 与 orchestrator 的 `AGENT_MESH_TOKEN` 一致 |
 | `EDGE_HEARTBEAT_S` | `3` | 心跳间隔 |
 | `EDGE_RUNTIME` | `opencode` | 执行运行时（opencode/claude） |
-| `EDGE_WORKDIR` | `.` | 默认工作目录基目录（**任务未指定 workdir 时**落到 `<EDGE_WORKDIR>/tasks/<task_id>/` 独立子目录，v1.4.0 并发隔离；显式指定 workdir 时不用它，见 task-and-execution.md §3.3） |
+| `EDGE_WORKDIR` | `.` | 默认工作目录基目录（**任务未指定 workdir 时**落到 `<EDGE_WORKDIR>/tasks/<task_id>/` 独立子目录，v1.4.0 并发隔离；显式指定 workdir 时不用它，见 task-and-execution.md §3.3）。⚠️ 包内 `install.sh` 会写入 `${INSTALL_DIR}/work` |
 | `EDGE_INSTALL_DIR` | `/opt/agent-mesh-agent` | 安装目录（machine-id 持久化位置） |
 | `EDGE_LLM_API_KEY` | `""` | LLM API key |
 | `EDGE_LLM_BASE_URL` | `""` | LLM base URL |
@@ -120,7 +120,7 @@ EDGE_AGENT_ID=client EDGE_ORCHESTRATOR_URL=http://127.0.0.1:8000 \
   uv run python -m agent_mesh.edge.agent
 ```
 
-**生产部署**：`deploy/install.sh` 只安装 **orchestrator** 到 `/opt/agent-mesh`（systemd 管理 `agent-mesh-orchestrator`），日志追加到 `log/`。**edge 探针不经此脚本安装**——单独在目标机器上用 bootstrap（`GET /api/bootstrap/install.sh`）安装到 `/opt/agent-mesh-agent`。
+**生产部署**：`deploy/install.sh` 只安装 **orchestrator** 到 `/opt/agent-mesh`（systemd 管理 `agent-mesh-orchestrator`）。⚠️ 服务日志走 systemd journal（`journalctl -u agent-mesh-orchestrator`），**不会**写入 `log/orchestrator.log`（见 [known-issues.md §13](./known-issues.md)）。**edge 探针不经此脚本安装**——单独在目标机器上用 bootstrap（`GET /api/bootstrap/install.sh`）安装到 `/opt/agent-mesh-agent`。
 
 **Web 看板**：`http://<host>:8000/`
 

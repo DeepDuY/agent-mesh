@@ -8,10 +8,10 @@
 
 | 方向 | 通道 | 说明 |
 |------|------|------|
-| 主 Agent → orchestrator | REST :8000 | `/api/tasks/dispatch`、`/api/tasks/{id}`、`/api/tasks/{id}/cancel`、`/api/agents/*`、`/api/settings`、`/api/bootstrap/*` 等（需用户 token） |
+| 主 Agent → orchestrator | REST :8000 | `/api/tasks/dispatch`、`/api/tasks/{id}`、`/api/tasks/{id}/cancel`、`/api/agents/*`、`/api/bootstrap/*` 等（用户 token；`/api/settings`、`/api/teams*`、节点级 `llm_config`/`system_prompt` 为 admin） |
 | 边沿 Agent → orchestrator | REST :8000 | `/api/edge/poll_for_task`（心跳+领任务）、`mark_started`、`submit_result`、`get_task_status`（全局 token / agent 独立 token） |
 | 边沿 Agent → orchestrator | REST :8000 | `POST /api/artifacts/{task_id}`（产物上传，multipart，任选 token） |
-| 浏览器 → orchestrator | REST :8000 | 5 秒轮询 `GET /api/agents`、`/api/tasks`、`/api/settings`（用户 token） |
+| 浏览器 → orchestrator | REST :8000 | 5 秒轮询 `GET /api/agents`、`/api/tasks`、`/api/settings`（用户 token；`/api/settings` 为 admin，非 admin 收到 403） |
 | orchestrator → 边沿 Agent | 被动 | 仅在边沿心跳时通过响应返回任务（无主动推送） |
 
 ### 1.2 一次任务生命周期（端到端时序）
@@ -64,7 +64,7 @@ EdgeAgent.run()
  ├─ 注册 SIGTERM/SIGINT → _stop_event
  ├─ device_id = get_device_id(install_dir)
  └─ loop（每 heartbeat_s≈3s 一次）：
-     ├─ poll_for_task(agent_id, device_id, runtime, hostname, os, distro, arch, version, metrics)
+     ├─ poll_for_task(agent_id, device_id, runtime, hostname, os, distro, arch, version, running_tasks, cpu_percent, mem_percent, mem_used_mb, mem_total_mb)
      ├─ 若返回 task → _execute(task)：mark_started → 执行 → 传产物 → submit_result
      ├─ 出错 → 指数退避 1s→30s 上限后重试
      └─ 收到 stop 信号退出
@@ -86,14 +86,14 @@ EdgeAgent.run()
 - 一个节点由 **数字自增主键 `id`** 唯一标识。
 - 同时上报 **`device_id`**（`/etc/machine-id`，或安装目录持久化的随机 id）作为设备级稳定标识，也是**队列键**。
 - `agent_id`：显示名/别名，**不唯一**。
-- 派发/查询时 `agent_id` 参数可传：**数字 id → device_id → 显示名** 三级，由 `TaskStore._resolve_agent()` 统一解析（同名显示名取 `last_seen` 最新的）。
+- 派发/查询时 `agent_id` 参数可传：**数字 id → device_id → agent_id（显示名/别名）** 三级，由 `TaskStore._resolve_agent()` 统一解析（同名显示名取 `last_seen` 最新的）。`hostname` 不参与解析。
 - 注册：边沿以 device_id 为键 upsert，同 device_id 重复上报只更新不新增。
 
 ## 3. 通信协议
 
 ### 3.1 控制面：主 Agent → orchestrator（REST）
 
-> ⚠️ 原 MCP 通道（SSE :8001）已整体移除：`mcp_server.py`、`mcp` 依赖、SSE 服务与 13 个 MCP 工具均不存在。主 Agent 一律通过 §3.3 的 REST 端点完成派发与查询；`agent_id` 统一接受 数字 id / device_id / 显示名。
+> ⚠️ 原 MCP 通道（SSE :8001）已整体移除：`mcp_server.py`、`mcp` 依赖、SSE 服务与 MCP 工具均不存在。主 Agent 一律通过 §3.3 的 REST 端点完成派发与查询；`agent_id` 统一接受 数字 id / device_id / agent_id（显示名）。
 
 ### 3.2 边沿 Agent → orchestrator：REST `/api/edge/*`（全局 token / 用户 token / agent 独立 token）
 
@@ -123,8 +123,8 @@ EdgeAgent.run()
 | POST | `/api/auth/login` | **公开**。账号密码 → `{username, token, role}` |
 | GET | `/api/auth/me` | 当前用户信息 |
 | GET | `/api/healthz` | **公开**。健康检查 → `{status:"ok"}` |
-| GET | `/api/tasks` | 任务列表（`agent_id?`, `status?`, `mode?`(`command`/`llm`), `search?`(指令/任务ID/节点模糊), `started_after?`/`started_before?`(ISO 时间, 开始时间区间), `limit` 1–1000, `offset` 分页；返回 `total` 总数供分页/跨页选择） |
-| GET | `/api/tasks/{task_id}` | 任务详情 |
+| GET | `/api/tasks` | 任务列表（按身份过滤：自己 + 同团队，admin 全部；`agent_id?`, `status?`, `mode?`(`command`/`llm`), `search?`(指令/任务ID/节点模糊), `started_after?`/`started_before?`(ISO 时间, 开始时间区间), `limit` 1–1000, `offset` 分页；返回 `total` 总数供分页/跨页选择） |
+| GET | `/api/tasks/{task_id}` | 任务详情（越权/不存在 → 404） |
 | GET | `/api/tasks/{task_id}/status` | 任务状态（`{found, task}`） |
 | GET | `/api/tasks/{task_id}/logs` | 任务实时执行输出（`?after_id=&limit=`，增量；v1.4.0） |
 | GET | `/api/tasks/{task_id}/events` | 任务审计事件时间线（`?limit=`；`dispatched`/`cancelled`/`permission_denied` 等） |
@@ -132,11 +132,14 @@ EdgeAgent.run()
 | DELETE | `/api/tasks/{task_id}` | 删除单个任务（含 queue/results/artifacts 关联行） |
 | POST | `/api/tasks/batch-delete` | 批量删除：`{task_ids: [...]}` 按 id，或 `{all_matching: true, status?, mode?, search?, started_after?, started_before?, agent_id?}` 删除匹配筛选的全部任务 |
 | POST | `/api/tasks/dispatch` | 派发任务（REST 版） |
-| GET | `/api/agents` | 所有节点 |
-| GET | `/api/agents/{agent_id}` | 单个节点（数字 id / device_id / 显示名） |
-| GET | `/api/agents/{agent_id}/detail` | 详情 + 最近 20 任务 |
-| PATCH | `/api/agents/{agent_id}/alias` | 设置/清除别名 |
-| PATCH | `/api/agents/{agent_id}/llm_config` | 设置节点级 LLM 配置（随心跳同步到该节点，优先级高于全局，见 [auth-security.md §9](./auth-security.md#9-llm-配置同步)） |
+| GET | `/api/agents` | 节点列表（按 ACL 过滤：admin 全部，其余仅可见/可操作节点） |
+| GET | `/api/agents/{agent_id}` | 单个节点（数字 id / device_id / agent_id；不可访问 → 404） |
+| GET | `/api/agents/{agent_id}/detail` | 详情 + 最近 20 任务（`metadata.allowed_users` 仅 admin 返回） |
+| PATCH | `/api/agents/{agent_id}/alias` | 设置/清除显示名 |
+| PATCH | `/api/agents/{agent_id}/description` | 设置节点描述 |
+| PATCH | `/api/agents/{agent_id}/system_prompt` | 设置节点级 system prompt（admin） |
+| PATCH | `/api/agents/{agent_id}/llm_config` | 设置节点级 LLM 配置（admin；随心跳同步到该节点，优先级高于全局，见 [auth-security.md §9](./auth-security.md#9-llm-配置同步)） |
+| PATCH | `/api/agents/{agent_id}/template` | 绑定/解绑模板（Web UI，`X-Agent-Mesh-UI`；owner/admin） |
 | PATCH | `/api/agents/{agent_id}/access` | 设置节点访问控制 ACL（admin；`{teams?: [...], users?: [...]}`） |
 | POST | `/api/agents/batch/template` | 批量绑定模板（Web UI，owner/admin；逐节点跳过无权/被锁定者，返回 `{applied, skipped}`） |
 | POST | `/api/agents/batch/access` | 批量设置节点 ACL（admin；`{agent_ids, teams?, users?, mode: add\|remove\|set}` → `{updated}`） |
@@ -146,7 +149,7 @@ EdgeAgent.run()
 | POST | `/api/artifacts/{task_id}` | 产物上传（**任意 token**） |
 | GET | `/api/artifacts/{task_id}` | 列出产物 |
 | GET | `/api/artifacts/{task_id}/{artifact_id}` | 下载产物 |
-| GET | `/api/settings` | 全局配置（`public_url` / `llm_api_key` / `llm_base_url` / `llm_model`） |
+| GET | `/api/settings` | 全局配置（**admin**）。当前返回 `settings` 全量键值（`public_url`/`llm_*`/`llm_models`/`default_permission`/`auto_upgrade`/`session_secret` 等），并给 admin 附带 `agent_mesh_token`；`session_secret` 不应外泄，见 [known-issues.md §6](./known-issues.md) |
 | PATCH | `/api/settings` | 更新全局配置（admin） |
 | GET/POST/PATCH/DELETE | `/api/teams*` | 团队/组织 CRUD 与成员（admin；用户归属单一团队）。含 `POST /api/teams/{team_id}/members`、`DELETE .../members/{user_id}`、`PUT /api/teams/{team_id}/nodes`（全量替换团队可见节点） |
 | GET/POST/PATCH/DELETE | `/api/templates*` | 模板 CRUD（`require_ui_user`：**必须携带 `X-Agent-Mesh-UI: 1`**，否则一律 404；Web UI 专用，不对外开放） |
@@ -159,7 +162,7 @@ EdgeAgent.run()
 | DELETE | `/api/skills/{name}` | 删除技能 |
 | GET | `/api/skills/{name}/download` | 下载技能 zip（`require_any_token`，边沿可用自己的独立 token 拉取） |
 | POST | `/api/files` | 上传文件到文件库（multipart `files`，用户 token，同 md5+文件名 去重返回原 file_id） |
-| GET | `/api/files` | 文件库列表（用户 token，`search?` 按文件名/文件ID模糊） |
+| GET | `/api/files` | 文件库列表（用户 token，按身份过滤：自己创建 + admin 全部；`search?` 按文件名/文件ID模糊） |
 | GET | `/api/files/{file_id}` | 下载文件库文件（`require_any_token`，带 `X-File-Md5` 头） |
 | POST | `/api/files/batch-delete` | 批量删除文件库文件（`{file_ids: [...]}`，用户 token，DB+磁盘） |
 | POST | `/api/files/batch-download` | 批量下载为 ZIP（`{file_ids: [...]}`，用户 token；重名自动加 file_id 前缀） |

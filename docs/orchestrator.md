@@ -12,13 +12,13 @@
   - FastAPI：`title="agent-mesh-orchestrator"`、`version="1.0.0"`、`redirect_slashes=False`。
   - 挂载：`query_router`（`create_query_router(config, store, artifact_store)`，前缀 `/api`）、`/static`、`/` → `index.html`。
   - `lifespan`：启动时初始化后端 + `store.start_sweepers()`；退出时 `stop_sweepers()` + 关闭后端。
-- `main()`：**单进程**运行——先初始化后端，再 `_run_single_process()` 启动 `store.start_sweepers()` 与 uvicorn（:8000，REST/Web）。`AGENT_MESH_WORKERS>1` 目前不生效（`uvicorn.Server.serve()` 忽略 `workers`）。原 MCP 通道（`mcp_server.py`、SSE :8001、`mcp` 依赖、13 个工具）已整体移除。
+- `main()`：初始化后端后启动 uvicorn（:8000，REST/Web）+ 后台清扫器。`config.workers` 默认 `os.cpu_count()`，因此默认走 `_run_multi_process()` 分支，但 `uvicorn.Server.serve()` 忽略 `workers`，**实际始终单进程**，`AGENT_MESH_WORKERS>1` 不生效（见 [architecture.md §1.3](./architecture.md#13-运行模式单进程)）。原 MCP 通道（`mcp_server.py`、SSE :8001、`mcp` 依赖）已整体移除。
 
 ### 1.2 task_store.py：状态机 + 心跳注册 + 清扫
 
 - `dispatch()`：
   1. 校验 `mode ∈ {command, llm}`；
-  2. 校验 `depends_on` 中的 task_id 都存在（仅校验，不持久化、不阻塞，见 [known-issues.md §3](./known-issues.md)）；
+  2. 校验 `depends_on` 中的 task_id 都存在（仅校验，不持久化、不阻塞，见 [known-issues.md §9](./known-issues.md)）；
   3. `_resolve_agent(agent_ref)` 解析目标 → `queue_key = device_id or agent_id`；
   4. 创建 `Task(status=queued, agent_id=queue_key)`，`create_task` + `enqueue(task_id, queue_key)`。
 - `_resolve_agent(agent_ref)`：`int(agent_ref)` → `get_agent_by_id`；否则 `get_agent(agent_ref)`（按 device_id）；再回退 `list_agents` 里 `agent_id == agent_ref` 的最新一条。
@@ -43,7 +43,7 @@ for 候选 in working列表:
     if retry_count < max_retries:
         status=queued; assigned/started/finished=None; retry_count+1; enqueue   # 重试
 ```
-> 原子性：`update_task_status` 支持可选 `expected_status` 参数，追加 `WHERE status = <expected>`，保证"标记超时"与"边沿提交结果"之间的竞态不会互相覆盖（2026-09-01 修复，见 [known-issues.md §18](./known-issues.md)）。
+> 原子性：`update_task_status` 支持可选 `expected_status` 参数，追加 `WHERE status = <expected>`，保证"标记超时"与"边沿提交结果"之间的竞态不会互相覆盖。
 
 **`_sweep_offline()`**（离线检测，遍历所有 agents；v1.4.0 起为多任务并发版）：
 ```
@@ -62,14 +62,15 @@ elif now - last_seen > offline_after_s:
 
 REST 端点按领域拆分到 `orchestrator/api/` 包，`__init__.py` 的 `create_query_router()` 统一挂载：
 
-- `api/__init__.py`：`create_query_router()` + 认证依赖（`require_user_token` / `require_any_token`）+ `_store_artifact_ref`。
+- `api/__init__.py`：`create_query_router()` + 认证依赖（`require_user_token` / `require_admin` / `require_ui_user` / `require_any_token`）+ `_store_artifact_ref`。`require_ui_user` 要求页面专用头 `X-Agent-Mesh-UI: 1`，外部调用一律 404。
 - `api/auth.py`：`POST /api/auth/login`、`GET /api/auth/me`、`GET /api/healthz`、admin 用户管理（创建/列表/删除/轮换 token/重置密码）+ 自助改密。
 - `api/tasks.py`：任务列表（含 `offset` 分页与 `total` 计数）/详情/状态/派发/终止/单删/批量删除（`batch-delete` 支持 `task_ids` 与 `all_matching` 两种模式）。
-- `api/agents.py`：节点列表/详情/别名/LLM 配置/独立 token 轮换/升级请求/删除（`_get_agent_by_numeric_or_string_id`）。
-- `api/edge.py`：边沿协议（`poll_for_task`/`submit_result`/`mark_started`/`get_task_status`）。
+- `api/agents.py`：节点列表/详情/别名/描述/system prompt/LLM 配置/模板绑定/ACL（单项 + 批量）/独立 token 轮换/升级请求/删除。
+- `api/edge.py`：边沿协议（`poll_for_task`/`submit_result`/`mark_started`/`get_task_status`/`task_log`）。
 - `api/artifacts.py`：产物上传/列表/下载。
 - `api/files.py`：文件库上传/列表/下载/删除（见 [features.md §5](./features.md#5-文件库任务附件)）。
-- `api/bootstrap.py`：`/settings`、`/bootstrap/install.sh`、`/bootstrap/{filename}`。
+- `api/teams.py` / `api/templates.py`：团队 CRUD 与成员；模板 CRUD（`require_ui_user`）。
+- `api/bootstrap.py`：`GET/PATCH /settings`、`/bootstrap/install.sh`、`/bootstrap/{filename}`。
 
 关键行为：
 - 认证：`require_user_token`（用户 token：API token 按 SHA-256 查表，session token 按 HMAC 解析，禁用用户拒绝）；`require_admin`（admin 角色限定）；`require_any_token`（全局 `config.token` / 用户 token / **agent 独立 token** 任一，返回调用者身份 `{auth:...}`）。Edge 端点、产物上传、bootstrap 下载用后者。详见 [auth-security.md](./auth-security.md)。
@@ -87,7 +88,7 @@ REST 端点按领域拆分到 `orchestrator/api/` 包，`__init__.py` 的 `creat
   - `SQLiteDatabase`：每连接新建 + `asyncio.Lock` 串行化；WAL（`PRAGMA journal_mode=WAL` + `busy_timeout=5000`）；SQL 迁移（`store/migrations/*.sql`）；`_ensure_admin_user`/`_ensure_session_secret`。
   - `PostgresDatabase`：**per-process 惰性 asyncpg 池**（`_acquire()` 按 `os.getpid()` 建池，fork 的 uvicorn worker 自动重建自己的池，规避 asyncpg loop 绑定与 fork 陷阱）；`initialize()` 用一次性连接建 schema + 列级升级；`?`→`$n` 占位符转换；aware datetime 自动归一化为 naive（匹配 PG `TIMESTAMP` 无时区列）。
   - 统一工具：`_dt_to_iso`/`_iso_to_dt`/`_load_json`/`_dump_json`/`_utcnow`。
-- `sqlite/`：`SQLiteStore` 生产实现，按数据域拆分为多个 mixin（`agents.py`/`tasks.py`/`artifacts.py`/`settings.py`/`users.py`/`skills.py`/`files.py`/`logs.py`/`teams.py`）。mixin 基类 `SQLiteBase` 持有 `self._db: SQLiteDatabase`，`_execute`/`_execute_rowcount` 委托统一层；所有写方法基于 `rowcount` 返回正确布尔值；`dequeue` 走统一层原子"取队首+删行"。
+- `sqlite/`：`SQLiteStore` 生产实现，按数据域拆分为多个 mixin（`agents.py`/`tasks.py`/`artifacts.py`/`settings.py`/`users.py`/`skills.py`/`files.py`/`logs.py`/`teams.py`/`templates.py`）。mixin 基类 `SQLiteBase` 持有 `self._db: SQLiteDatabase`，`_execute`/`_execute_rowcount` 委托统一层；所有写方法基于 `rowcount` 返回正确布尔值；`dequeue` 走统一层原子"取队首+删行"。
   - **上报字段持久化是注册表驱动的**：`upsert_agent(..., telemetry=...)` 的列名只从 `shared.schemas` 的 `SYSTEM_FIELDS`/`METRIC_FIELDS` 常量取；`system` 字段用 `COALESCE(?, col)` 保留旧值、`metrics` 字段直接覆盖（见 [standards/edge-reporting.md](./standards/edge-reporting.md)）。
 - `pg.py`：`PostgresStore` 可选生产实现，持有 `self._db: PostgresDatabase`，只做行映射与 SQL。`dequeue` 走统一层 `FOR UPDATE SKIP LOCKED` 原子出队；幂等建表（`IF NOT EXISTS`）+ 列级 schema 升级。设置 `AGENT_MESH_DB_TYPE=pg` + `AGENT_MESH_PG_DSN` 启用。**多进程支持**：每个 worker 进程在统一层内自动重建连接池。
 - `auth.py`：`hash_password` / `verify_password`（bcrypt）/ `generate_token`（`secrets.token_urlsafe(32)`）。
@@ -106,7 +107,7 @@ class Task(BaseModel):
     mode: Literal["command", "llm"] = "llm"
     instruction: str
     constraints: Constraints
-    status: TaskStatus                # queued/assigned/working/completed/failed/timed_out
+    status: TaskStatus                # queued/assigned/working/completed/failed/timed_out/cancelled
     created_at: datetime
     assigned_at: datetime | None
     started_at: datetime | None
@@ -115,6 +116,8 @@ class Task(BaseModel):
     result: TaskResult | None = None
     max_retries: int = 0
     attachments: list[FileRef] = []   # 派发时引用的文件库快照（tasks.attachments JSON 列）
+    user_id: str | None = None        # 归属用户（由 token 自动生成；迁移 017）
+    team_id: str | None = None        # 归属团队（由 token 自动生成；迁移 017）
     # model_dump_json_safe(): 输出 JSON 安全字典（含 constraints、result、attachments）
 ```
 
@@ -189,12 +192,13 @@ class AgentStatus(BaseModel):
     upgrade_requested: bool            # 升级请求标记（见 auth-security.md §8）
     upgrade_version: str | None        # 目标版本
     cpu_percent / mem_percent / mem_used_mb / mem_total_mb: float | None   # 心跳资源指标
+    template_name: str | None          # 绑定模板名（describe_agents() 填充；不暴露模板配置）
+    effective_description: str | None  # 节点 description > 模板 node_description（describe_agents() 填充）
     # model_dump_json_safe(): 额外输出 display_name = alias or hostname or agent_id
-    # describe_agents() 额外填充显示字段：template_name、effective_description
 
 class AgentDetail(AgentStatus):
     tasks: list[dict]                  # 最近 20 个任务
-    metadata: dict | None              # detail 里携带 {"allowed_users": [...]}（见 auth-security.md §7）
+    metadata: dict | None              # detail 里携带 {"allowed_users": [...]}（仅 admin 返回，见 auth-security.md §7）
     created_at / updated_at: datetime | None
 ```
 
@@ -252,21 +256,23 @@ store/
 
 ### 3.2 迁移机制
 - SQLite `_run_migrations()` 按文件名前缀序号升序执行，`schema_migrations(version)` 记录已应用版本，`executescript` 原子执行，幂等。
-- PG `_ensure_agent_schema_upgrade()` / `_ensure_user_schema_upgrade()` 用 `information_schema.columns` 做列级增量升级（`ALTER TABLE ADD COLUMN`），新列只需在 `additions` 字典登记。
+- PG `initialize()` 用一次性连接建 schema + 列级升级：`_ensure_agent_schema_upgrade()` / `_ensure_user_schema_upgrade()` / `_ensure_task_schema_upgrade()` 用 `information_schema.columns` 做列级增量升级（`ALTER TABLE ADD COLUMN`），新列只需在 `additions` 字典登记；模板/settings 由 `_ensure_default_templates()` / `_ensure_settings()` seed。
 
 ### 3.3 表清单
 | 表 | 说明 | 备注 |
 |----|------|------|
 | `schema_migrations` | 迁移版本 | |
 | `users` | 账号（`username` 唯一、`token_hash` 唯一，**不含明文 token**） | 含 `disabled/created_by/last_login_at/token_created_at`；默认 admin |
-| `agents` | 节点注册表（`id` 自增、`device_id` UNIQUE） | 含 `llm_api_key/base_url/model` 列（节点级 LLM 覆盖，随心跳 config-sync 下发，见 auth-security.md §9）及 `distro` |
+| `agents` | 节点注册表（`id` 自增、`device_id` UNIQUE） | 含 `llm_api_key/base_url/model` 列（节点级 LLM 覆盖，随心跳 config-sync 下发，见 auth-security.md §9）、`distro`、`ip_address`、`access`(ACL)、`template_id` |
+| `agent_users` | 设备-用户关联（多对多；操作者审计） | 迁移 008；节点注册时自动关联 |
 | `tasks` | 任务（**无外键**，`agent_id` 存稳定键） | |
 | `task_queue` | 队列（`task_id` UNIQUE，外键级联删除） | |
 | `task_results` | 结果（`task_id` UNIQUE） | |
 | `artifacts` | 产物元数据 | `storage_path` 落盘路径 |
 | `files` | 文件库（file_id 主键、md5 去重） | 落盘 `<db_path>/../files/`；`tasks.attachments` 存引用快照 |
-| `task_logs` | 实时执行输出流（`id` 自增、`task_id`、`kind`、`content`） | `kind`: text/error/complete/raw；随任务删除级联 |
+| `skills` | 技能库（name 主键、description/version/enabled/filename） | zip 落盘 `<db_path>/../skills/<name>/` |
+| `task_logs` | 实时执行输出流（`id` 自增、`task_id`、`kind`、`content`） | `kind`: text/error/complete/raw；**无外键**，删除任务时由代码显式清理 |
 | `task_events` | 事件审计表 | 写入方 `append_task_event`（`dispatched`/`cancelled`/`permission_denied`）；`GET /api/tasks/{id}/events` 读取 |
 | `templates` | 节点模板（`system_prompt`/`llm_model`/`permission`/`node_description`；`owner_user_id`/`owner_team_id`） | 内置 `build`/`plan`/`readonly` 幂等 seed |
 | `teams` / `team_members` | 团队/组织与成员（一个用户只属于一个团队） | `team_members.user_id` 唯一索引 |
-| `settings` | 全局配置（`public_url`/`llm_*`/`default_permission`） | |
+| `settings` | 全局配置 | `public_url`/`llm_*`/`llm_models`/`default_permission`/`auto_upgrade`/`config_version`/`session_secret` |

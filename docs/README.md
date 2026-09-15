@@ -15,8 +15,6 @@
 | [deployment.md](./deployment.md) | 一键安装（bootstrap）、配置项、启动与部署 |
 | [known-issues.md](./known-issues.md) | 已知问题与后续演进 |
 | [standards/edge-reporting.md](./standards/edge-reporting.md) | **标准**：边沿 Agent 上报接口规范与字段治理（新增字段流程） |
-| [evidence-01-bootstrap-llm-verification.md](./evidence-01-bootstrap-llm-verification.md) | **评审核验**：bootstrap 安装脚本不内嵌 LLM 配置（实测记录） |
-| [evidence-02-production-run-records.md](./evidence-02-production-run-records.md) | **评审核验**：生产任务运行记录（按日期/版本/节点拆分，含任务数口径澄清） |
 
 ## 概览
 

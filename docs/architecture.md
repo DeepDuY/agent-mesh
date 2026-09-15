@@ -46,9 +46,9 @@
 
 ### 1.3 运行模式（单进程）
 
-`orchestrator/main.py:main()` 当前以**单进程**运行：同一 asyncio 事件循环承载 uvicorn 与后台清扫器（`store.start_sweepers()`）。
+`orchestrator/main.py:main()` 当前**实际以单进程**运行：同一 asyncio 事件循环承载 uvicorn 与后台清扫器（`store.start_sweepers()`）。注意 `config.workers` 默认值为 `os.cpu_count()`，因此默认会走 `_run_multi_process()` 分支，但 uvicorn 仍只起 1 个进程（见下）。
 
-> ⚠️ `AGENT_MESH_WORKERS>1` 目前**不生效**：`main.py` 使用 `uvicorn.Config(workers=N)` 配合 `uvicorn.Server(config).serve()`，而该版本 uvicorn 的 `Server.serve()` 忽略 `workers`，实际只启动 1 个 server 进程。多 worker 需改用 import-string + `uvicorn.run`（或 supervisor），属架构改造，见 [known-issues.md §17](./known-issues.md)。
+> ⚠️ `AGENT_MESH_WORKERS>1` 目前**不生效**：`main.py` 使用 `uvicorn.Config(workers=N)` 配合 `uvicorn.Server(config).serve()`，而该版本 uvicorn 的 `Server.serve()` 忽略 `workers`，实际只启动 1 个 server 进程。多 worker 需改用 import-string + `uvicorn.run`（或 supervisor），属架构改造，见 [known-issues.md §1](./known-issues.md)。
 
 ## 2. 目录结构
 
@@ -62,7 +62,7 @@ agent-mesh/
 │   ├── orchestrator.md  auth-security.md  features.md
 │   ├── deployment.md    known-issues.md
 │   └── standards/edge-reporting.md     # 上报接口标准
-├── data/                         # 运行数据（db/artifacts/bootstrap + VERSION）
+├── data/                         # 运行数据（db/artifacts/bootstrap/skills/files + VERSION）
 ├── scripts/
 │   ├── start-orchestrator.sh     # 后台启动 orchestrator
 │   ├── build-agent-bootstrap.py  # Agent 安装包构建（含 VERSION 清单）
@@ -80,8 +80,8 @@ agent-mesh/
 │   │   │   └── teams.py  templates.py
 │   │   ├── store/
 │   │   │   ├── connection.py  base.py  pg.py
-│   │   │   ├── sqlite/{__init__,connection,agents,tasks,artifacts,files,logs,settings,skills,users,teams}.py
-│   │   │   └── migrations/001-017_*.sql
+│   │   │   ├── sqlite/{__init__,connection,agents,tasks,artifacts,files,logs,settings,skills,users,teams,templates}.py
+│   │   │   └── migrations/001-018_*.sql
 │   │   └── web_ui/{index.html,style.css,js/app,auth,agents,tasks,files,skills,users,teams,templates,config}.js
 │   └── edge/
 │       ├── agent.py  rest_client.py  config_writer.py
@@ -90,13 +90,12 @@ agent-mesh/
 │       │   └── common.py  command.py  llm.py
 ├── deploy/
 │   ├── install.sh                 # systemd 部署 orchestrator（edge 探针单独 bootstrap 安装）
-│   ├── redeploy.sh  status.sh  uninstall.sh
+│   ├── redeploy.sh  status.sh  uninstall.sh  common.sh
+│   └── README.md
 ├── skills/agent-mesh/             # OpenCode skill（REST 用法）
 │   ├── SKILL.md
 │   └── references/example-poll.py
-└── tests/
-    ├── test_task_store.py         # SQLite 状态机/清扫/取消测试
-    ├── test_auth_api.py           # REST 认证/接口测试
-    ├── test_edge_telemetry.py     # 上报字段注册表/持久化测试
-    └── test_files_api.py          # 文件库/任务附件测试
+└── tests/                         # pytest（含 test_task_store/test_auth_api/test_edge_telemetry/
+                                   #  test_files_api/test_tenancy/test_permission/test_templates/
+                                   #  test_edge_authz/test_upgrade 等）
 ```
