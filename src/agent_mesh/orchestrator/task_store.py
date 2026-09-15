@@ -178,7 +178,8 @@ class TaskStore:
         """Whether an edge identity may read/write ``task``.
 
         - ``global`` token: trusted (legacy bootstrap).
-        - ``user`` token: same tenancy visibility as the REST API.
+        - ``user`` token: same tenancy visibility as the REST API, or the user
+          is an operator of the node the task runs on (legacy user-token edges).
         - ``agent`` token: the task must be queued on that agent's stable key
           (``device_id`` or ``agent_id``) — an agent may only touch its own tasks.
         """
@@ -188,7 +189,12 @@ class TaskStore:
         if task is None:
             return False
         if kind == "user":
-            return await self.can_see_task(auth, task)
+            if await self.can_see_task(auth, task):
+                return True
+            # Legacy edges may authenticate with a user token (the operator
+            # running the node): allow results for tasks on nodes they can operate.
+            agent = await self._resolve_agent(task.agent_id)
+            return await self.can_access_agent(auth, agent)
         if kind == "agent":
             agent = await self.store.get_agent_by_id(auth.get("agent_id"))
             key = (agent.device_id or agent.agent_id) if agent else None

@@ -166,6 +166,29 @@ def test_upload_to_unknown_task_rejected(client: TestClient):
     assert r.status_code == 404
 
 
+def test_legacy_user_token_edge_can_submit_node_task(client: TestClient):
+    """A user-token edge (node operator) may submit results for tasks on its node."""
+    _poll(client, DEV1)
+    uid_a, h_a = _user(client, "alice")
+    _uid_b, h_b = _user(client, "bob")
+    client.patch(
+        f"/api/agents/{DEV1}/access",
+        json={"users": [uid_a, _uid_b]},
+        headers=_admin(),
+    )
+    task = _dispatch(client, DEV1, headers=h_b)  # owned by bob
+    _poll(client, DEV1)  # claim -> assigned
+    # alice cannot see bob's task over REST...
+    assert client.get(f"/api/tasks/{task}", headers=h_a).status_code == 404
+    # ...but as node operator she may submit the result via the edge API.
+    r = client.post(
+        "/api/edge/submit_result",
+        json={"task_id": task, "status": "completed"},
+        headers=h_a,
+    )
+    assert r.status_code == 200 and r.json()["accepted"] is True
+
+
 def test_artifact_store_rejects_path_traversal(tmp_path):
     store = ArtifactStore(str(tmp_path))
     assert store.list("../escape") == []
