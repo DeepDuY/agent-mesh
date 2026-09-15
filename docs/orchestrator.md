@@ -12,19 +12,9 @@
   - FastAPI：`title="agent-mesh-orchestrator"`、`version="1.0.0"`、`redirect_slashes=False`。
   - 挂载：`query_router`（`create_query_router(config, store, artifact_store)`，前缀 `/api`）、`/static`、`/` → `index.html`。
   - `lifespan`：启动时初始化后端 + `store.start_sweepers()`；退出时 `stop_sweepers()` + 关闭后端。
-- `main()`：创建 app 与 `create_mcp_server(config, store)`，在**同一事件循环**用 `asyncio.gather` 同时跑：
-  - `uvicorn`（:8000，REST/Web）
-  - `_run_sse_server(mcp_server, config, host, port+1, store)`（:8001，MCP SSE，`sse_path="/"`、`message_path="/messages/"`）。
-  - ⚠️ `_run_sse_server` 自行构建 Starlette app（`mcp_server.sse_app(...)`）并套一层 **Bearer 鉴权中间件**（`resolve_token_user`，见 [auth-security.md §1](./auth-security.md#1-现状)），SSE 与 message 两个端点都要求用户 token。
+- `main()`：**单进程**运行——先初始化后端，再 `_run_single_process()` 启动 `store.start_sweepers()` 与 uvicorn（:8000，REST/Web）。`AGENT_MESH_WORKERS>1` 目前不生效（`uvicorn.Server.serve()` 忽略 `workers`）。原 MCP 通道（`mcp_server.py`、SSE :8001、`mcp` 依赖、13 个工具）已整体移除。
 
-### 1.2 mcp_server.py：MCP 工具层
-
-- `MCPServer(name="agent-mesh-orchestrator", version=VERSION)`，13 个工具（见 [protocol.md §3.1](./protocol.md#31-主-agent--orchestratormcp-工具sse-8001)）。版本取自 `shared.constants.VERSION`。
-- 所有工具直接读写共享的 `TaskStore`；参数校验失败返回 `{"accepted": false, "error": ...}`。
-- 认证**不在 MCP 工具层做**，由传输层中间件强制校验用户 token。
-- `poll_for_task` 的上报字段经 `extract_telemetry()` 白名单处理（见 [standards/edge-reporting.md](./standards/edge-reporting.md)）。
-
-### 1.3 task_store.py：状态机 + 心跳注册 + 清扫
+### 1.2 task_store.py：状态机 + 心跳注册 + 清扫
 
 - `dispatch()`：
   1. 校验 `mode ∈ {command, llm}`；
@@ -36,9 +26,9 @@
 - `mark_started()`：仅 `assigned` → `working`，写 `started_at`。
 - `submit_result()`：仅 `assigned/working` 接受；写 `task_results`、状态置 `result.status`、`finished_at`、清 `current_task`。
 - `cancel_task()`：仅非终态任务可取消——`queued` 先 `remove_from_queue()`；`assigned/working` 直接置 `cancelled`。取消后边沿 agent 的下一次 cancel 轮询会终止正在执行的子进程。
-- **并发模型**：TaskStore 本身不加锁（原 `asyncio.Lock` 已删除）；并发正确性依赖后端存储的原子操作——SQLite 每次操作持自身 `asyncio.Lock`，`dequeue` 在锁内完成"取队首+删行"。`update_task_status(..., expected_status=...)` 支持原子条件更新（追加 `WHERE status = <expected>`），用于需要"仅在当前状态为 X 时才迁移"的场景（如超时清扫，见 §1.4）。
+- **并发模型**：TaskStore 本身不加锁（原 `asyncio.Lock` 已删除）；并发正确性依赖后端存储的原子操作——SQLite 每次操作持自身 `asyncio.Lock`，`dequeue` 在锁内完成"取队首+删行"。`update_task_status(..., expected_status=...)` 支持原子条件更新（追加 `WHERE status = <expected>`），用于需要"仅在当前状态为 X 时才迁移"的场景（如超时清扫，见 §1.3）。
 
-### 1.4 后台清扫协程（每 `sweep_interval_s` 一轮）
+### 1.3 后台清扫协程（每 `sweep_interval_s` 一轮）
 
 **`_sweep_timeouts()`**（超时检测，列表取自 `status=working`，limit 1000）：
 ```
@@ -68,7 +58,7 @@ elif now - last_seen > offline_after_s:
 ```
 > 多任务说明：不再只处理单个 `current_task_id`，而是把该 agent 的**全部 ASSIGNED 任务**回队；只要有任一 WORKING 任务即整体跳过（实现见 `task_store.py::_sweep_offline`）。
 
-### 1.5 api/ 包：REST 层
+### 1.4 api/ 包：REST 层
 
 REST 端点按领域拆分到 `orchestrator/api/` 包，`__init__.py` 的 `create_query_router()` 统一挂载：
 
@@ -89,7 +79,7 @@ REST 端点按领域拆分到 `orchestrator/api/` 包，`__init__.py` 的 `creat
 - `GET /api/bootstrap/install.sh`：动态生成安装脚本（见 [deployment.md §1](./deployment.md)），内嵌 orchestrator `base_url`；**不再内嵌全局 LLM 配置**（v1.3.3 起改由心跳 config-sync 下发，见 [auth-security.md §9](./auth-security.md#9-llm-配置同步)）。
 - `GET /api/bootstrap/{filename}`：静态文件服务，目录为 `<db_path 父目录>/bootstrap`（鉴权为 `require_any_token`，edge 可用全局 token 下载升级包）。
 
-### 1.6 存储层（orchestrator/store/）
+### 1.5 存储层（orchestrator/store/）
 
 - `base.py`：`AbstractStore` 抽象接口 + `_new_task_id()`（`t-<uuid8>`）。接口含 `list_tasks(..., offset=0)` 与 `remove_from_queue()`。
 - **`connection.py`（统一数据库对接层，v1.4.0）**：集中管理两侧连接生命周期与执行原语，store 层只写 SQL + 行映射：
@@ -97,7 +87,7 @@ REST 端点按领域拆分到 `orchestrator/api/` 包，`__init__.py` 的 `creat
   - `SQLiteDatabase`：每连接新建 + `asyncio.Lock` 串行化；WAL（`PRAGMA journal_mode=WAL` + `busy_timeout=5000`）；SQL 迁移（`store/migrations/*.sql`）；`_ensure_admin_user`/`_ensure_session_secret`。
   - `PostgresDatabase`：**per-process 惰性 asyncpg 池**（`_acquire()` 按 `os.getpid()` 建池，fork 的 uvicorn worker 自动重建自己的池，规避 asyncpg loop 绑定与 fork 陷阱）；`initialize()` 用一次性连接建 schema + 列级升级；`?`→`$n` 占位符转换；aware datetime 自动归一化为 naive（匹配 PG `TIMESTAMP` 无时区列）。
   - 统一工具：`_dt_to_iso`/`_iso_to_dt`/`_load_json`/`_dump_json`/`_utcnow`。
-- `sqlite/`：`SQLiteStore` 生产实现，按数据域拆分为多个 mixin（`agents.py`/`tasks.py`/`artifacts.py`/`settings.py`/`users.py`/`skills.py`/`files.py`/`logs.py`）。mixin 基类 `SQLiteBase` 持有 `self._db: SQLiteDatabase`，`_execute`/`_execute_rowcount` 委托统一层；所有写方法基于 `rowcount` 返回正确布尔值；`dequeue` 走统一层原子"取队首+删行"。
+- `sqlite/`：`SQLiteStore` 生产实现，按数据域拆分为多个 mixin（`agents.py`/`tasks.py`/`artifacts.py`/`settings.py`/`users.py`/`skills.py`/`files.py`/`logs.py`/`teams.py`）。mixin 基类 `SQLiteBase` 持有 `self._db: SQLiteDatabase`，`_execute`/`_execute_rowcount` 委托统一层；所有写方法基于 `rowcount` 返回正确布尔值；`dequeue` 走统一层原子"取队首+删行"。
   - **上报字段持久化是注册表驱动的**：`upsert_agent(..., telemetry=...)` 的列名只从 `shared.schemas` 的 `SYSTEM_FIELDS`/`METRIC_FIELDS` 常量取；`system` 字段用 `COALESCE(?, col)` 保留旧值、`metrics` 字段直接覆盖（见 [standards/edge-reporting.md](./standards/edge-reporting.md)）。
 - `pg.py`：`PostgresStore` 可选生产实现，持有 `self._db: PostgresDatabase`，只做行映射与 SQL。`dequeue` 走统一层 `FOR UPDATE SKIP LOCKED` 原子出队；幂等建表（`IF NOT EXISTS`）+ 列级 schema 升级。设置 `AGENT_MESH_DB_TYPE=pg` + `AGENT_MESH_PG_DSN` 启用。**多进程支持**：每个 worker 进程在统一层内自动重建连接池。
 - `auth.py`：`hash_password` / `verify_password`（bcrypt）/ `generate_token`（`secrets.token_urlsafe(32)`）。
@@ -190,11 +180,16 @@ class AgentStatus(BaseModel):
     online: bool
     last_seen: datetime | None
     current_task_id: str | None
+    description: str | None            # 节点用途说明（迁移 013；effective_description 由 describe_agents() 计算）
+    system_prompt: str | None          # 节点级系统提示（迁移 013）
+    template_id: int | None            # 绑定的模板（迁移 014；模板绑定为 UI 专用）
+    access: dict | None                # ACL {"teams": [...], "users": [...]}（迁移 017；仅 admin 可见）
     llm_api_key / llm_base_url / llm_model: str | None   # 节点级 LLM 覆盖（读回，见 auth-security.md §9）
     upgrade_requested: bool            # 升级请求标记（见 auth-security.md §8）
     upgrade_version: str | None        # 目标版本
     cpu_percent / mem_percent / mem_used_mb / mem_total_mb: float | None   # 心跳资源指标
     # model_dump_json_safe(): 额外输出 display_name = alias or hostname or agent_id
+    # describe_agents() 额外填充显示字段：template_name、effective_description
 
 class AgentDetail(AgentStatus):
     tasks: list[dict]                  # 最近 20 个任务
@@ -230,6 +225,7 @@ store/
 │   ├── logs.py          # TaskLogMixin
 │   ├── settings.py      # SettingsMixin
 │   ├── skills.py        # SkillsMixin
+│   ├── teams.py         # TeamMixin（teams/team_members + 用户唯一团队）
 │   └── users.py         # UsersMixin
 ├── pg.py                # PostgresStore（可选，持有 PostgresDatabase）
 └── migrations/
@@ -244,7 +240,12 @@ store/
     ├── 009_skills_session_metrics.sql  # tasks.session_id/skills、task_results.session_id、agents 资源列、skills 表
     ├── 010_agent_distro.sql        # agents.distro（发行版上报字段）
     ├── 011_files_attachments.sql   # files 表（文件库）+ tasks.attachments（附件快照列）
-    └── 012_task_logs.sql           # task_logs 表（LLM 实时执行输出流）
+    ├── 012_task_logs.sql           # task_logs 表（LLM 实时执行输出流）
+    ├── 013_agent_profile_prompt_settings.sql  # agents.description/system_prompt + 配置项
+    ├── 014_templates.sql           # templates 表 + agents.template_id
+    ├── 015_permissions.sql         # templates.permission、删除 tasks/templates.allowed_tools、settings.default_permission
+    ├── 016_template_node_description.sql  # templates.node_description（与模板说明分离）
+    └── 017_tenancy.sql             # teams/team_members、agents.access、tasks.user_id/team_id、templates.owner_user_id/owner_team_id
 ```
 
 ### 3.2 迁移机制
@@ -263,5 +264,7 @@ store/
 | `artifacts` | 产物元数据 | `storage_path` 落盘路径 |
 | `files` | 文件库（file_id 主键、md5 去重） | 落盘 `<db_path>/../files/`；`tasks.attachments` 存引用快照 |
 | `task_logs` | 实时执行输出流（`id` 自增、`task_id`、`kind`、`content`） | `kind`: text/error/complete/raw；随任务删除级联 |
-| `task_events` | 事件审计表 | **已无代码写入**（`log_event` 已移除，预留） |
-| `settings` | 全局配置（`public_url`/`llm_*`） | |
+| `task_events` | 事件审计表 | 写入方 `append_task_event`（`dispatched`/`cancelled`/`permission_denied`）；`GET /api/tasks/{id}/events` 读取 |
+| `templates` | 节点模板（`system_prompt`/`llm_model`/`permission`/`node_description`；`owner_user_id`/`owner_team_id`） | 内置 `build`/`plan`/`readonly` 幂等 seed |
+| `teams` / `team_members` | 团队/组织与成员（一个用户只属于一个团队） | `team_members.user_id` 唯一索引 |
+| `settings` | 全局配置（`public_url`/`llm_*`/`default_permission`） | |

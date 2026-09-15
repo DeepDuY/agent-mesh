@@ -13,8 +13,6 @@ from agent_mesh.shared.constants import (
     TaskStatus,
 )
 from agent_mesh.shared.schemas import (
-    METRIC_FIELDS,
-    SYSTEM_FIELDS,
     AgentStatus,
     Constraints,
     FileRef,
@@ -160,6 +158,42 @@ class TaskStore:
             await self.store.set_agent_access_by_id(agent.id, access)
             agent.access = access
         return changed
+
+    async def can_see_task(self, user: dict[str, Any] | None, task) -> bool:
+        """Whether a user identity may see ``task`` (admin always may).
+
+        Visibility = own task (``user_id``) OR same team (``team_id``).
+        """
+        if self.is_admin(user):
+            return True
+        if task is None:
+            return False
+        user_id = (user or {}).get("user_id")
+        if user_id and task.user_id == user_id:
+            return True
+        team = await self.user_team(user)
+        return bool(team and task.team_id == team)
+
+    async def edge_can_access_task(self, auth: dict[str, Any] | None, task) -> bool:
+        """Whether an edge identity may read/write ``task``.
+
+        - ``global`` token: trusted (legacy bootstrap).
+        - ``user`` token: same tenancy visibility as the REST API.
+        - ``agent`` token: the task must be queued on that agent's stable key
+          (``device_id`` or ``agent_id``) — an agent may only touch its own tasks.
+        """
+        kind = (auth or {}).get("auth")
+        if kind == "global":
+            return True
+        if task is None:
+            return False
+        if kind == "user":
+            return await self.can_see_task(auth, task)
+        if kind == "agent":
+            agent = await self.store.get_agent_by_id(auth.get("agent_id"))
+            key = (agent.device_id or agent.agent_id) if agent else None
+            return bool(key and task.agent_id == key)
+        return False
 
     async def ensure_agent_token(self, agent_id: int) -> str | None:
         """Issue a per-agent independent token on first registration.
@@ -437,7 +471,7 @@ class TaskStore:
         resume = [t for t in active if t.task_id not in running]
 
         # Claim new tasks up to the concurrency cap.
-        max_concurrent = await self._max_concurrent()
+        max_concurrent = await self.max_concurrent()
         capacity = max(0, max_concurrent - len(active))
         new_tasks: list[Task] = []
         while capacity > 0:
@@ -463,7 +497,7 @@ class TaskStore:
 
         return resume + new_tasks, key
 
-    async def _max_concurrent(self) -> int:
+    async def max_concurrent(self) -> int:
         value = await self.store.get_setting("max_concurrent")
         try:
             return max(1, int(value or 2))

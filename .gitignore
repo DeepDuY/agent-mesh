@@ -33,6 +33,5 @@ etc/
 # Internal review artifacts (not for publication)
 code-review-report.md
 评审补充澄清.md
-
-# Local MCP bridge config (machine-specific)
-mcp-server.json
+代码审核报告.md
+代码审核整改计划.md

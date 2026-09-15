@@ -193,21 +193,19 @@ class PostgresStore(AbstractStore):
         return [self._row_to_agent(dict(row)) for row in rows]
 
     async def set_agent_online(self, device_id: str, online: bool) -> None:
+        # Match by device_id, or by agent_id when the row has no device_id (a
+        # legacy/abnormal node would otherwise never be flipped offline).
         await self._db.execute(
-            "UPDATE agents SET online = ?, updated_at = ? WHERE device_id = ?",
-            (online, _utcnow(), device_id),
+            "UPDATE agents SET online = ?, updated_at = ? "
+            "WHERE device_id = ? OR (device_id IS NULL AND agent_id = ?)",
+            (online, _utcnow(), device_id, device_id),
         )
 
     async def set_agent_current_task(self, device_id: str, task_id: str | None) -> None:
         await self._db.execute(
-            "UPDATE agents SET current_task_id = ?, updated_at = ? WHERE device_id = ?",
-            (task_id, _utcnow(), device_id),
-        )
-
-    async def set_agent_alias(self, device_id: str, alias: str | None) -> None:
-        await self._db.execute(
-            "UPDATE agents SET alias = ?, updated_at = ? WHERE device_id = ?",
-            (alias, _utcnow(), device_id),
+            "UPDATE agents SET current_task_id = ?, updated_at = ? "
+            "WHERE device_id = ? OR (device_id IS NULL AND agent_id = ?)",
+            (task_id, _utcnow(), device_id, device_id),
         )
 
     async def set_agent_alias_by_id(self, agent_id: int, alias: str | None) -> None:
@@ -446,6 +444,16 @@ class PostgresStore(AbstractStore):
 
     async def delete_team(self, team_id: str) -> bool:
         await self._db.execute("DELETE FROM team_members WHERE team_id = ?", (team_id,))
+        # Detach the deleted team from tasks and node ACLs so it does not linger
+        # as a dangling reference (ghost team pointer).
+        await self._db.execute("UPDATE tasks SET team_id = NULL WHERE team_id = ?", (team_id,))
+        for agent in await self.list_agents():
+            access = dict(agent.access or {})
+            teams = access.get("teams") or []
+            remaining = [t for t in teams if t != team_id]
+            if remaining != teams:
+                access["teams"] = remaining
+                await self.set_agent_access_by_id(agent.id, access)
         return await self._db.execute_rowcount(
             "DELETE FROM teams WHERE team_id = ?", (team_id,)
         ) > 0
@@ -1088,6 +1096,10 @@ class PostgresStore(AbstractStore):
         return [dict(row) for row in rows]
 
     async def delete_user(self, user_id: str) -> bool:
+        # Clean up memberships so no "ghost" team member / node-operator rows
+        # linger after the user row is gone.
+        await self._db.execute("DELETE FROM team_members WHERE user_id = ?", (user_id,))
+        await self._db.execute("DELETE FROM agent_users WHERE user_id = ?", (user_id,))
         return await self._db.execute_rowcount(
             "DELETE FROM users WHERE user_id = ?", (user_id,)
         ) == 1

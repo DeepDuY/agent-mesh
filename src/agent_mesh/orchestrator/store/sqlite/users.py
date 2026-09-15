@@ -63,6 +63,10 @@ class UsersMixin(SQLiteBase):
         return [_row_to_user(row) for row in rows]
 
     async def delete_user(self, user_id: str) -> bool:
+        # Clean up memberships so no "ghost" team member / node-operator rows
+        # linger after the user row is gone.
+        await self._execute("DELETE FROM team_members WHERE user_id = ?", (user_id,))
+        await self._execute("DELETE FROM agent_users WHERE user_id = ?", (user_id,))
         count = await self._execute_rowcount(
             "DELETE FROM users WHERE user_id = ?", (user_id,)
         )

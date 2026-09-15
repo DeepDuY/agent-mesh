@@ -60,6 +60,16 @@ async def test_submit_result(store: TaskStore):
 
 
 @pytest.mark.asyncio
+async def test_offline_flip_by_agent_id_when_device_null(store: TaskStore):
+    """Report 3.7: a node without a device_id must still be flippable offline."""
+    await store.heartbeat("node-x", None, "opencode", "host", telemetry={"os": "linux"})
+    agent = (await store.list_agents())[0]
+    assert agent.device_id is None and agent.online is True
+    await store.store.set_agent_online("node-x", False)
+    assert (await store.list_agents())[0].online is False
+
+
+@pytest.mark.asyncio
 async def test_offline_returns_to_queue(store: TaskStore):
     await store.heartbeat("client", "00:aa:bb:cc:dd:01", "opencode", "host", telemetry={"os": "linux"})
     task_id = await store.dispatch(

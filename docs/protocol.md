@@ -8,7 +8,6 @@
 
 | 方向 | 通道 | 说明 |
 |------|------|------|
-| 主 Agent → orchestrator | MCP SSE :8001 | `dispatch_task` / `get_task_status` / `list_tasks` / `cancel_task` / `list_agents` / `get_agent` / `get_agent_detail` / `set_agent_alias` |
 | 主 Agent → orchestrator | REST :8000 | `/api/tasks/dispatch`、`/api/tasks/{id}`、`/api/tasks/{id}/cancel`、`/api/agents/*`、`/api/settings`、`/api/bootstrap/*` 等（需用户 token） |
 | 边沿 Agent → orchestrator | REST :8000 | `/api/edge/poll_for_task`（心跳+领任务）、`mark_started`、`submit_result`、`get_task_status`（全局 token / agent 独立 token） |
 | 边沿 Agent → orchestrator | REST :8000 | `POST /api/artifacts/{task_id}`（产物上传，multipart，任选 token） |
@@ -52,15 +51,11 @@ main()
   ├─ 选择后端: db_type=="pg" → PostgresStore(...) 否则 SQLiteStore(db_path)
   ├─ store = TaskStore(store_backend, sweep_interval_s, offline_after_s)
   ├─ asyncio.run(store_backend.initialize())   # 跑迁移 + 确保 admin
-  ├─ mcp_server = create_mcp_server(config, store)
-  ├─ workers>1 → _run_multi_process():        # 多进程（默认）
-  │    └─ _main_loop():
-  │        ├─ store.start_sweepers()
-  │        ├─ create_task(_run_sse_server(:8001))
-  │        └─ uvicorn.Config(app, workers=N).serve()  # supervisor + N 子进程
-  └─ 否则 → _run_single_process():            # 单进程兼容
-       └─ lifespan_context → gather(uvicorn :8000, MCP SSE :8001)
+  └─ _run_single_process():                    # 单进程
+       └─ store.start_sweepers() → uvicorn.run(app, :8000)
 ```
+
+> 说明：`AGENT_MESH_WORKERS>1` 目前不生效（`uvicorn.Server.serve()` 忽略 `workers`），实际始终单进程；多 worker 待修复，见 [architecture.md §1.3](./architecture.md#13-运行模式单进程)。
 
 ### 1.4 边沿 Agent 启动与心跳循环时序
 
@@ -96,25 +91,9 @@ EdgeAgent.run()
 
 ## 3. 通信协议
 
-### 3.1 主 Agent → orchestrator：MCP 工具（SSE :8001）
+### 3.1 控制面：主 Agent → orchestrator（REST）
 
-MCP Server：`name="agent-mesh-orchestrator"`、`version=VERSION`（`shared/constants.py`，随发布递增）。每个工具带详细 `description`（供 LLM 理解参数）。非法 `mode`/`status`/未知 agent 返回 `{"accepted": false, "error": ...}` 而非抛异常。`agent_id` 统一接受数字 id / device_id / 显示名。**传输层强制 Bearer 鉴权**（仅用户 token，见 [auth-security.md §1](./auth-security.md#1-现状)），鉴权不发生在工具层。
-
-| 工具 | 说明 | 关键参数 |
-|------|------|----------|
-| `poll_for_task` | 边沿心跳+领任务（内部用） | `agent_id`, `device_id`, `runtime?`, `hostname?`, `os?`, `distro?`, `arch?`, `version?`, `cpu_percent?`, `mem_percent?`, `mem_used_mb?`, `mem_total_mb?`, `running_tasks?`（并发重连恢复） |
-| `submit_result` | 边沿提交结果（内部用） | `task_id`, `agent_id`, `status`, `exit_code`, `stdout_tail?`, `stderr_tail?`, `artifacts?`, `duration_ms?`, `summary?` |
-| `get_task_status` | 查询任务（含 result） | `task_id` → `{found, task}` |
-| `list_tasks` | 任务列表 | `agent_id?`, `status?`, `limit=100` |
-| `dispatch_task` | 派发任务 | `agent_id`, `instruction`, `mode="llm"`, `timeout_s=300`, `workdir="."`, `max_retries=0`, `depends_on?`, `model?`, `output_limit=200_000`, `session_id?`（续用 opencode 会话）, `skills?`, `attachments?`（文件库 file_id 列表） |
-| `cancel_task` | 终止任务 | `task_id` → `{accepted}`；非终态才生效 |
-| `list_agents` | 列出所有节点 | - |
-| `get_agent` | 单个节点 | `agent_id` → `{found, agent}` |
-| `get_agent_detail` | 节点详情 + 最近 20 任务 | `agent_id` |
-| `set_agent_alias` | 设置/清除别名 | `agent_id`, `alias?`（null 清除） |
-| `get_task_logs` | 任务实时执行输出 | `task_id`, `after_id=0` → `{logs, next_id}` |
-| `list_skills` | 技能库摘要列表（仅 name/description/version/enabled，不含内容） | - |
-| `list_models` | 可用 LLM 模型 id 列表（`settings.llm_models`） | - |
+> ⚠️ 原 MCP 通道（SSE :8001）已整体移除：`mcp_server.py`、`mcp` 依赖、SSE 服务与 13 个 MCP 工具均不存在。主 Agent 一律通过 §3.3 的 REST 端点完成派发与查询；`agent_id` 统一接受 数字 id / device_id / 显示名。
 
 ### 3.2 边沿 Agent → orchestrator：REST `/api/edge/*`（全局 token / 用户 token / agent 独立 token）
 
@@ -128,12 +107,14 @@ MCP Server：`name="agent-mesh-orchestrator"`、`version=VERSION`（`shared/cons
 
 > 已移除的冗余接口：`/api/edge/dispatch_task`、`/api/edge/cancel_task`（控制面已有等价接口，探针从未使用）。
 
+> **任务归属校验**：`submit_result` / `mark_started` / `get_task_status` / `task_log` 不只验 token——global token 全权；user token 需为任务所有者或同团队；agent 独立 token 仅能操作队列键等于自身 `device_id`/`agent_id` 的任务。越权写返回 403，越权读返回 `{"found": false}`（避免指令泄露）。
+
 **认证（`require_any_token`，见 [auth-security.md §1](./auth-security.md)）接受三类凭据**，并返回调用者身份：
 1. 全局 token（`AGENT_MESH_TOKEN`）→ `{auth: "global"}`；
 2. 用户 token（API token 按 SHA-256 查表 / session token 按 HMAC 解析）→ `{auth: "user", ...}`；
 3. **agent 独立 token**（`agents.token_hash` 查表，见 [auth-security.md §7](./auth-security.md#7-agent-独立-token-与设备-用户关联)）→ `{auth: "agent", agent_id, device_id}`，且**绑定 device_id**：用它以其他设备身份轮询会被拒（403）。
 
-产物上传不在此前缀下：`POST /api/artifacts/{task_id}`（multipart `files`，任选 token）。边沿把上传返回的 `ArtifactRef` 放进 `submit_result.artifacts`，orchestrator 同步落库（`INSERT OR IGNORE` 幂等）。
+产物上传不在此前缀下：`POST /api/artifacts/{task_id}`（multipart `files`，任选 token）。上传/读取均校验调用方对该任务的访问权（同上一段的归属规则；任务不存在返回 404）。边沿把上传返回的 `ArtifactRef` 放进 `submit_result.artifacts`，orchestrator 同步落库（`INSERT OR IGNORE` 幂等）。
 
 ### 3.3 查询/管理接口 REST `/api/*`（用户 token，除非标注）
 
@@ -146,6 +127,7 @@ MCP Server：`name="agent-mesh-orchestrator"`、`version=VERSION`（`shared/cons
 | GET | `/api/tasks/{task_id}` | 任务详情 |
 | GET | `/api/tasks/{task_id}/status` | 任务状态（`{found, task}`） |
 | GET | `/api/tasks/{task_id}/logs` | 任务实时执行输出（`?after_id=&limit=`，增量；v1.4.0） |
+| GET | `/api/tasks/{task_id}/events` | 任务审计事件时间线（`?limit=`；`dispatched`/`cancelled`/`permission_denied` 等） |
 | POST | `/api/tasks/{task_id}/cancel` | 终止任务（`{accepted}`） |
 | DELETE | `/api/tasks/{task_id}` | 删除单个任务（含 queue/results/artifacts 关联行） |
 | POST | `/api/tasks/batch-delete` | 批量删除：`{task_ids: [...]}` 按 id，或 `{all_matching: true, status?, mode?, search?, started_after?, started_before?, agent_id?}` 删除匹配筛选的全部任务 |
@@ -155,6 +137,9 @@ MCP Server：`name="agent-mesh-orchestrator"`、`version=VERSION`（`shared/cons
 | GET | `/api/agents/{agent_id}/detail` | 详情 + 最近 20 任务 |
 | PATCH | `/api/agents/{agent_id}/alias` | 设置/清除别名 |
 | PATCH | `/api/agents/{agent_id}/llm_config` | 设置节点级 LLM 配置（随心跳同步到该节点，优先级高于全局，见 [auth-security.md §9](./auth-security.md#9-llm-配置同步)） |
+| PATCH | `/api/agents/{agent_id}/access` | 设置节点访问控制 ACL（admin；`{teams?: [...], users?: [...]}`） |
+| POST | `/api/agents/batch/template` | 批量绑定模板（Web UI，owner/admin；逐节点跳过无权/被锁定者，返回 `{applied, skipped}`） |
+| POST | `/api/agents/batch/access` | 批量设置节点 ACL（admin；`{agent_ids, teams?, users?, mode: add\|remove\|set}` → `{updated}`） |
 | POST | `/api/agents/{agent_id}/upgrade` | 请求升级节点（见 [auth-security.md §8](./auth-security.md#8-agent-自升级)；空闲时自动执行，失败自动回滚） |
 | POST | `/api/agents/{agent_id}/token` | 轮换 agent 独立 token（返回一次，旧 token 立即失效，见 [auth-security.md §7](./auth-security.md#7-agent-独立-token-与设备-用户关联)） |
 | DELETE | `/api/agents/{agent_id}` | 删除节点（下发自毁命令 + 立即删记录，见 [task-and-execution.md §4.2](./task-and-execution.md#42-apitaskspy--apiagentspy)） |
@@ -162,7 +147,9 @@ MCP Server：`name="agent-mesh-orchestrator"`、`version=VERSION`（`shared/cons
 | GET | `/api/artifacts/{task_id}` | 列出产物 |
 | GET | `/api/artifacts/{task_id}/{artifact_id}` | 下载产物 |
 | GET | `/api/settings` | 全局配置（`public_url` / `llm_api_key` / `llm_base_url` / `llm_model`） |
-| PATCH | `/api/settings` | 更新全局配置 |
+| PATCH | `/api/settings` | 更新全局配置（admin） |
+| GET/POST/PATCH/DELETE | `/api/teams*` | 团队/组织 CRUD 与成员（admin；用户归属单一团队）。含 `POST /api/teams/{team_id}/members`、`DELETE .../members/{user_id}`、`PUT /api/teams/{team_id}/nodes`（全量替换团队可见节点） |
+| GET/POST/PATCH/DELETE | `/api/templates*` | 模板 CRUD（`require_ui_user`：**必须携带 `X-Agent-Mesh-UI: 1`**，否则一律 404；Web UI 专用，不对外开放） |
 | GET | `/api/bootstrap/install.sh` | 生成新节点安装命令脚本（内嵌 orchestrator `base_url`；**不再内嵌 LLM 配置**，新节点注册后由心跳 config-sync 下发） |
 | GET | `/api/bootstrap/{filename}` | 下载安装包（`<db_path>/../bootstrap/` 下的文件） |
 | GET | `/api/skills` | 技能摘要列表（`require_any_token`，仅 name/description/version/enabled） |
@@ -186,7 +173,7 @@ MCP Server：`name="agent-mesh-orchestrator"`、`version=VERSION`（`shared/cons
 文件库独立于任务存储（镜像技能库的「上传-引用-按需下载」模式）：
 
 1. **上传**：`POST /api/files`（multipart `files`，可多文件，用户 token）。服务端计算 md5、落盘到 `<db_path 父目录>/files/<file_id>_<文件名>`（`file_id = f-<uuid8>`）并入库；**同 md5+文件名 自动去重**返回已有 `file_id`。响应为权威 `FileRef`：`{file_id, filename, size, content_type, md5, download_url}`。
-2. **引用**：REST `POST /api/tasks/dispatch` 与 MCP `dispatch_task` 的 `attachments: [file_id]` 引用文件库文件；服务端按 id 解析成 `FileRef` 快照写入 `tasks.attachments`（JSON 列），id 无效报错。**MCP 不提供上传**（二进制走 REST）。
+2. **引用**：REST `POST /api/tasks/dispatch` 的 `attachments: [file_id]` 引用文件库文件；服务端按 id 解析成 `FileRef` 快照写入 `tasks.attachments`（JSON 列），id 无效报错。非 admin 只能引用自己创建的文件。
 3. **下载**：探针领到任务后、执行前，按 `download_url` 把每个附件下载到工作目录并以原文件名落盘，流式计算 md5 与快照比对；**下载失败或 md5 不符 → 任务标记失败**（`exit_code=-3`、`stderr_tail="attachment download failed: <文件名>: <原因>"`）。下载发生在执行前快照之前，附件不会被收集为产物。
 4. **管理**：`GET /api/files` 列表（`search` 模糊）、`GET /api/files/{file_id}` 下载、`DELETE /api/files/{file_id}` 删除（不校验引用；被删文件的任务执行时会下载失败）、`POST /api/files/batch-delete` 批量删除、`POST /api/files/batch-download` 批量打包下载。Web 看板「文件」页提供上传/搜索/列表/下载/批量删除/批量下载。
 5. **删除文件 → 引用它的任务**：执行时下载 404 → 按第 3 条标记失败。

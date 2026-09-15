@@ -5,6 +5,8 @@
 > 数据源：生产 orchestrator 数据库（PostgreSQL，`AGENT_MESH_DB_TYPE=pg`，部署见 [deployment.md](./deployment.md)）。
 > 快照时间：**2026-09-02**；任务表时间范围：2026-08-24 03:25（UTC）→ 2026-09-02 06:37（UTC）。
 > 版本：当前 **v1.4.2**（源码 `constants.VERSION` = `data/bootstrap/VERSION` = 在线节点上报版本）。
+>
+> ⚠️ 本文为**历史运行快照**（v1.4.2，2026-09-02）。当前版本以 `shared/constants.py:VERSION` 为准（现为 1.6.2）；任务数/节点结论勿当作当前现状引用。
 
 ## 0. 统计口径（可复现）
 

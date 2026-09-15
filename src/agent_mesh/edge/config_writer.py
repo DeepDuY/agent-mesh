@@ -209,24 +209,26 @@ def apply_llm_config(install_dir: str, config: dict[str, str], version: str) -> 
     etc = install / "etc"
     etc.mkdir(parents=True, exist_ok=True)
     env_path = etc / "edge.env"
-    if env_path.exists():
-        lines = env_path.read_text(encoding="utf-8").splitlines()
-        updated = {k: False for k in _EDGE_ENV_LLM_KEYS}
-        out: list[str] = []
-        for line in lines:
-            matched = False
-            for env_key, cfg_key in _EDGE_ENV_LLM_KEYS.items():
-                if line.startswith(env_key + "="):
-                    out.append(f"{env_key}={config.get(cfg_key, '')}")
-                    updated[env_key] = True
-                    matched = True
-                    break
-            if not matched:
-                out.append(line)
-        for env_key, done in updated.items():
-            if not done:
-                out.append(f"{env_key}={config.get(_EDGE_ENV_LLM_KEYS[env_key], '')}")
-        env_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    # Persist single-line LLM values even when edge.env does not exist yet
+    # (non-standard install / first boot): create it rather than silently
+    # dropping the credentials (they would otherwise be lost on restart).
+    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+    updated = {k: False for k in _EDGE_ENV_LLM_KEYS}
+    out: list[str] = []
+    for line in lines:
+        matched = False
+        for env_key, cfg_key in _EDGE_ENV_LLM_KEYS.items():
+            if line.startswith(env_key + "="):
+                out.append(f"{env_key}={config.get(cfg_key, '')}")
+                updated[env_key] = True
+                matched = True
+                break
+        if not matched:
+            out.append(line)
+    for env_key, done in updated.items():
+        if not done:
+            out.append(f"{env_key}={config.get(_EDGE_ENV_LLM_KEYS[env_key], '')}")
+    env_path.write_text("\n".join(out) + "\n", encoding="utf-8")
     # Multi-line / list values: dedicated files (raw text, newlines preserved).
     (etc / "system_prompt").write_text(config.get("system_prompt", "") or "", encoding="utf-8")
     (etc / "llm_models").write_text(config.get("llm_models", "") or "", encoding="utf-8")

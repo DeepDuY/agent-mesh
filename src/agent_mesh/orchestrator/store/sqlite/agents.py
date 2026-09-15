@@ -153,23 +153,21 @@ class AgentMixin(SQLiteBase):
         return [self._row_to_agent(row) for row in rows]
 
     async def set_agent_online(self, device_id: str, online: bool) -> None:
+        # Match by device_id, or by agent_id when the row has no device_id (a
+        # legacy/abnormal node would otherwise never be flipped offline).
         await self._execute(
-            "UPDATE agents SET online = ?, updated_at = ? WHERE device_id = ?",
-            (online, _dt_to_iso(datetime.now(timezone.utc)), device_id),
+            "UPDATE agents SET online = ?, updated_at = ? "
+            "WHERE device_id = ? OR (device_id IS NULL AND agent_id = ?)",
+            (online, _dt_to_iso(datetime.now(timezone.utc)), device_id, device_id),
         )
 
     async def set_agent_current_task(
         self, device_id: str, task_id: str | None
     ) -> None:
         await self._execute(
-            "UPDATE agents SET current_task_id = ?, updated_at = ? WHERE device_id = ?",
-            (task_id, _dt_to_iso(datetime.now(timezone.utc)), device_id),
-        )
-
-    async def set_agent_alias(self, device_id: str, alias: str | None) -> None:
-        await self._execute(
-            "UPDATE agents SET alias = ?, updated_at = ? WHERE device_id = ?",
-            (alias, _dt_to_iso(datetime.now(timezone.utc)), device_id),
+            "UPDATE agents SET current_task_id = ?, updated_at = ? "
+            "WHERE device_id = ? OR (device_id IS NULL AND agent_id = ?)",
+            (task_id, _dt_to_iso(datetime.now(timezone.utc)), device_id, device_id),
         )
 
     async def set_agent_alias_by_id(self, agent_id: int, alias: str | None) -> None:

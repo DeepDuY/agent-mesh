@@ -231,6 +231,22 @@ def test_apply_llm_config_appends_missing_keys(tmp_path):
     assert "EDGE_LLM_MODEL=m" in env
 
 
+def test_apply_llm_config_creates_edge_env_when_missing(tmp_path):
+    """Report 3.4: credentials must persist even with no pre-existing edge.env."""
+    install = tmp_path / "agent"
+    (install / "etc").mkdir(parents=True)
+    assert not (install / "etc" / "edge.env").exists()
+    apply_llm_config(
+        str(install),
+        {"llm_api_key": "k", "llm_base_url": "https://x", "llm_model": "m"},
+        "1",
+    )
+    env = (install / "etc" / "edge.env").read_text(encoding="utf-8")
+    assert "EDGE_LLM_API_KEY=k" in env
+    assert "EDGE_LLM_BASE_URL=https://x" in env
+    assert "EDGE_LLM_MODEL=m" in env
+
+
 # ----------------------------------------------------------------------
 # Edge self-upgrade execution (unit)
 # ----------------------------------------------------------------------

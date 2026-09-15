@@ -55,11 +55,11 @@ TOKEN='<token>' bash <(curl -fsSL -H "Authorization: Bearer <token>" <public_url
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `AGENT_MESH_HOST` | `0.0.0.0` | 监听地址（REST/Web/MCP SSE 均用） |
-| `AGENT_MESH_PORT` | `8000` | 主端口；MCP SSE = port+1（8001） |
-| `AGENT_MESH_TOKEN` | `change-me-shared-secret` | 全局 token（edge/上传接口） |
+| `AGENT_MESH_HOST` | `0.0.0.0` | 监听地址（REST/Web） |
+| `AGENT_MESH_PORT` | `8000` | 监听端口 |
+| `AGENT_MESH_TOKEN` | `""`（**生产必设**） | 全局 token；空值时禁用 global 身份（仅 user/agent token 可用），启动打印告警 |
 | `AGENT_MESH_PUBLIC_URL` | `""` | 对外 URL（安装脚本用，可留空） |
-| `AGENT_MESH_WORKERS` | `os.cpu_count()` | uvicorn worker 数；1=单进程兼容，>1=多进程 |
+| `AGENT_MESH_WORKERS` | `os.cpu_count()` | 预留；当前**不生效**（`uvicorn.Server.serve()` 忽略 `workers`，实际始终单进程） |
 | `AGENT_MESH_DB_TYPE` | `sqlite` | 存储后端：`sqlite`（默认）或 `pg` |
 | `AGENT_MESH_DB_PATH` | `./data/agent-mesh.db` | SQLite 路径 |
 | `AGENT_MESH_PG_DSN` | `""` | PostgreSQL DSN（`db_type=pg` 时优先，如 `postgresql://u:p@host/db`） |
@@ -77,20 +77,20 @@ TOKEN='<token>' bash <(curl -fsSL -H "Authorization: Bearer <token>" <public_url
 
 ### 2.2 边沿 Agent（`EDGE_` 前缀，EdgeConfig）
 
-> **PostgreSQL 多进程**（v1.4.0）：统一连接层 `store/connection.py` 的 `PostgresDatabase` 按 `os.getpid()` **惰性建 asyncpg 池**——uvicorn 多 worker fork 后每个 worker 自动重建自己的连接池，**无需限制 `AGENT_MESH_WORKERS`**（8 worker 生产照常）。
+> **PostgreSQL**（v1.4.0）：统一连接层 `store/connection.py` 的 `PostgresDatabase` 按 `os.getpid()` **惰性建 asyncpg 池**，为将来多 worker 预留（当前实际单进程运行，见 architecture.md §1.3）。
 >
 > **从 SQLite 迁移到 PostgreSQL**：
 > 1. 启动 PostgreSQL 并建库/用户（`agent_mesh`）。
 > 2. 停止 orchestrator（`systemctl stop agent-mesh-orchestrator`）。
-> 3. 迁移数据：`python scripts/migrate_sqlite_to_pg.py --sqlite <sqlite.db> --pg-dsn 'postgresql://agent_mesh:PASS@host/db'`（全量迁移 users/agents/tasks/results/artifacts/files/skills/settings/logs + 序列同步，幂等）。
+> 3. 迁移数据：`python scripts/migrate_sqlite_to_pg.py --sqlite <sqlite.db> --pg-dsn 'postgresql://agent_mesh:PASS@host/db'`。⚠️ 当前脚本迁移 users/agents/agent_users/tasks/queue/results/artifacts/files/skills/settings/logs/migrations + 序列同步；**尚未覆盖 `teams`/`team_members`/`templates`/`task_events` 与 `tasks.user_id/team_id`**（迁移 015 后仍读取已删除的 `allowed_tools` 列，会报错）——待修复，见 [known-issues.md](./known-issues.md)。
 > 4. 在 `orchestrator.env` 加 `AGENT_MESH_DB_TYPE=pg` + `AGENT_MESH_PG_DSN`，启动服务。
 > 5. 回滚：删除两行 PG 配置重启即回 SQLite（原 DB 文件保留）。
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `EDGE_AGENT_ID` | hostname | 显示名 |
-| `EDGE_ORCHESTRATOR_URL` | `http://127.0.0.1:8000/mcp` | base URL（agent 会 `replace("/mcp","")` 转成 REST） |
-| `EDGE_TOKEN` | `change-me-shared-secret` | 与 orchestrator 一致 |
+| `EDGE_ORCHESTRATOR_URL` | `http://127.0.0.1:8000` | orchestrator base URL |
+| `EDGE_TOKEN` | `""`（必设） | 与 orchestrator 的 `AGENT_MESH_TOKEN` 一致 |
 | `EDGE_HEARTBEAT_S` | `3` | 心跳间隔 |
 | `EDGE_RUNTIME` | `opencode` | 执行运行时（opencode/claude） |
 | `EDGE_WORKDIR` | `.` | 默认工作目录基目录（**任务未指定 workdir 时**落到 `<EDGE_WORKDIR>/tasks/<task_id>/` 独立子目录，v1.4.0 并发隔离；显式指定 workdir 时不用它，见 task-and-execution.md §3.3） |
@@ -102,7 +102,7 @@ TOKEN='<token>' bash <(curl -fsSL -H "Authorization: Bearer <token>" <public_url
 | `EDGE_SYSTEM_PROMPT` | `""` | 节点级 system prompt（config-sync 下发） |
 | `LOG_LEVEL` | `INFO` | 日志级别 |
 
-> `settings` 表中的 `public_url` / `llm_api_key` / `llm_base_url` / `llm_model` / `llm_models` / `system_prompt` 可通过 `/api/settings` 读写。其中 **LLM 配置不再内嵌进安装脚本**，节点注册后经心跳 config-sync 下发（见 [auth-security.md §9](./auth-security.md#9-llm-配置同步)）。`llm_models` 是模型唯一来源（无硬编码），`llm_model` 无默认值（未配置则 llm 任务被拒绝）。看板配置页保存时校验响应状态，失败会显示具体错误、不再误报"已保存"。
+> `settings` 表中的 `public_url` / `llm_api_key` / `llm_base_url` / `llm_model` / `llm_models` / `default_permission` 可通过 `/api/settings` 读写（**全局 `system_prompt` 已移除**，提示词改为节点级 `agents.system_prompt` + 模板 `templates.system_prompt`）。其中 **LLM 配置不再内嵌进安装脚本**，节点注册后经心跳 config-sync 下发（见 [auth-security.md §9](./auth-security.md#9-llm-配置同步)）。`llm_models` 是模型唯一来源（无硬编码），`llm_model` 无默认值（未配置则 llm 任务被拒绝）。看板配置页保存时校验响应状态，失败会显示具体错误、不再误报"已保存"。
 
 ## 3. 启动与部署
 
@@ -124,6 +124,4 @@ EDGE_AGENT_ID=client EDGE_ORCHESTRATOR_URL=http://127.0.0.1:8000 \
 
 **Web 看板**：`http://<host>:8000/`
 
-**DeepChat 等 SSE 客户端**：`http://<host>:8001`（MCP SSE），自定义 Header `Authorization: Bearer <用户 token>`（API token 或 session token；全局 token 无效）。
-
-**stdio 客户端桥**：`scripts/mcp_bridge.py`（`AGENT_MESH_MCP_URL` 默认 `http://127.0.0.1:8001`，通过 `sse_client` 连接）。
+> ⚠️ MCP 通道（SSE :8001）与 `scripts/mcp_bridge.py` 已整体移除。外部主 Agent 一律通过 REST（`http://<host>:8000/api/*`，`Authorization: Bearer <用户 token>`）接入，见 [protocol.md §3.3](./protocol.md)。

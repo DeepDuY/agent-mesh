@@ -264,3 +264,42 @@ def test_batch_apply_template(client: TestClient):
     assert r.json()["applied"] == 2
     agents = client.get("/api/agents", headers=_admin()).json()["agents"]
     assert all(a["template_id"] is None for a in agents)
+
+
+def test_delete_user_and_team_cleanup(client: TestClient):
+    """Report 3.6: deleting a user/team must not leave ghost memberships."""
+    _poll(client)
+    team_id = _team_id(client, "ops")
+    uid, h = _user(client, "alice")
+    client.post(f"/api/teams/{team_id}/members", json={"user_id": uid}, headers=_admin())
+    client.patch(
+        f"/api/agents/{DEVICE}/access",
+        json={"teams": [team_id], "users": [uid]},
+        headers=_admin(),
+    )
+    task_id = _dispatch(client, h).json()["task_id"]
+
+    # alice polls with her own token -> recorded as an operator of the node.
+    client.post(
+        "/api/edge/poll_for_task",
+        json={
+            "agent_id": "node", "device_id": DEVICE, "runtime": "opencode",
+            "hostname": "h", "os": "linux", "arch": "x64",
+        },
+        headers=h,
+    )
+    agent = client.get(f"/api/agents/{DEVICE}/detail", headers=_admin()).json()["agent"]
+    assert uid in agent["metadata"]["allowed_users"]
+    assert team_id in (agent["access"] or {}).get("teams", [])
+
+    # Delete the team: task detaches, node ACL loses the team.
+    assert client.delete(f"/api/teams/{team_id}", headers=_admin()).status_code == 200
+    task = client.get(f"/api/tasks/{task_id}", headers=_admin()).json()["task"]
+    assert task["team_id"] is None
+    agent = client.get(f"/api/agents/{DEVICE}/detail", headers=_admin()).json()["agent"]
+    assert team_id not in ((agent["access"] or {}).get("teams") or [])
+
+    # Delete the user: no ghost node-operator row remains.
+    assert client.delete("/api/auth/users/alice", headers=_admin()).status_code == 200
+    agent = client.get(f"/api/agents/{DEVICE}/detail", headers=_admin()).json()["agent"]
+    assert uid not in agent["metadata"]["allowed_users"]

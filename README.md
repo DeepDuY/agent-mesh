@@ -32,7 +32,7 @@ sudo ./deploy/install.sh --opencode /path/opencode  # 指定本机 opencode（�
 ## 核心特性
 
 - 主 Agent 通过 **REST API** 控制 orchestrator
-- **多进程架构**：默认按 CPU 核数启动多个 uvicorn worker（`AGENT_MESH_WORKERS`），sweeper 在主进程，`=1` 可切回单进程
+- **单进程架构**：FastAPI（:8000）与后台 sweeper 同一事件循环；`AGENT_MESH_WORKERS` 为预留项，当前不生效（见 docs/known-issues.md）
 - **存储层可插拔**：默认 SQLite（WAL 模式），可选 PostgreSQL（`AGENT_MESH_DB_TYPE=pg`）
 - 边沿 Agent 通过 **REST** 心跳拉取任务、提交结果
 - 任务双模式：`command`（shell 原样执行，不走 LLM）和 `llm`（opencode 自然语言任务）
@@ -87,8 +87,8 @@ uv sync
 默认监听：
 - REST/Web：`http://0.0.0.0:8000`
 
-> 默认按 CPU 核数启动多个 uvicorn worker（多进程）。单进程部署：`AGENT_MESH_WORKERS=1 uv run --no-sync python -m agent_mesh.orchestrator.main`
-> 使用 PostgreSQL：`AGENT_MESH_DB_TYPE=pg AGENT_MESH_PG_DSN='postgresql://user:pass@host/db'`（统一连接层 `store/connection.py` 为每进程惰性建 asyncpg 池，**多 worker 自动重建各自连接池**，无需单进程限制）
+> 当前为**单进程**运行：`AGENT_MESH_WORKERS>1` 不生效（`uvicorn.Server.serve()` 忽略 `workers`），多 worker 待修复。
+> 使用 PostgreSQL：`AGENT_MESH_DB_TYPE=pg AGENT_MESH_PG_DSN='postgresql://user:pass@host/db'`（统一连接层 `store/connection.py` 按进程惰性建 asyncpg 池）。
 > ⚠️ 一律用 `uv run --no-sync`：直接 `uv run` 会重新解析依赖并尝试源码编译 `asyncpg`，在旧 glibc（<2.28）上会失败。
 
 ### 4. 启动 edge agent
@@ -163,10 +163,13 @@ curl -s -X POST http://127.0.0.1:8000/api/tasks/dispatch \
 ### 用户管理（admin）
 
 ```bash
-# 创建用户（返回的 token 只显示这一次）
+# 创建用户（必须归属一个团队；返回的 token 只显示这一次）
+TEAM_ID=$(curl -s -X POST http://127.0.0.1:8000/api/teams \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"ops"}' | python -c 'import sys,json;print(json.load(sys.stdin)["team"]["team_id"])')
 curl -s -X POST http://127.0.0.1:8000/api/auth/users \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"username":"bob","password":"secret123","role":"user"}'
+  -d "{\"username\":\"bob\",\"password\":\"secret123\",\"role\":\"user\",\"team_id\":\"$TEAM_ID\"}"
 
 # 用户列表 / 轮换 token / 改密 / 删除
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/auth/users
@@ -318,9 +321,9 @@ agent-mesh/
 |------|--------|------|
 | `AGENT_MESH_HOST` | `0.0.0.0` | 监听地址 |
 | `AGENT_MESH_PORT` | `8000` | REST/Web 端口 |
-| `AGENT_MESH_TOKEN` | `change-me-shared-secret` | 全局 Edge token |
+| `AGENT_MESH_TOKEN` | 空（生产必设） | 全局 Edge token；空值禁用 global 身份 |
 | `AGENT_MESH_PUBLIC_URL` | - | 对外 URL（用于 Agent 安装脚本） |
-| `AGENT_MESH_WORKERS` | `cpu 核数` | uvicorn worker 数；1=单进程 |
+| `AGENT_MESH_WORKERS` | `cpu 核数` | 预留；当前不生效（实际单进程） |
 | `AGENT_MESH_DB_TYPE` | `sqlite` | 存储后端：`sqlite` / `pg` |
 | `AGENT_MESH_DB_PATH` | `./data/agent-mesh.db` | SQLite 路径 |
 | `AGENT_MESH_PG_DSN` | - | PostgreSQL DSN（db_type=pg 时） |
@@ -344,7 +347,7 @@ agent-mesh/
 |------|--------|------|
 | `EDGE_AGENT_ID` | hostname | 边沿显示名 |
 | `EDGE_ORCHESTRATOR_URL` | `http://127.0.0.1:8000` | orchestrator 地址 |
-| `EDGE_TOKEN` | `change-me-shared-secret` | 认证 token（全局 token / 独立 agent token） |
+| `EDGE_TOKEN` | 空（必设） | 认证 token（全局 token / 独立 agent token） |
 | `EDGE_HEARTBEAT_S` | `3` | 心跳间隔 |
 | `EDGE_RUNTIME` | `opencode` | CLI 运行时 |
 | `EDGE_WORKDIR` | `.` | 默认工作目录（**任务未指定 workdir 时的兜底**；显式指定仍以任务为准） |

@@ -75,6 +75,5 @@ python scripts/build-agent-bootstrap.py \
 ## 防火墙 / 网络
 
 - REST/Web 端口：`8000`
-- MCP SSE 端口：`8001`
 
-确保外部主 Agent 能访问这两个端口。
+确保外部主 Agent 能访问该端口（MCP SSE :8001 已随通道移除）。

@@ -58,8 +58,8 @@ def validate_telemetry(telemetry) -> None  # 非注册键抛 ValueError（防注
 ```
 
 - 注册表字段名 == `agents` 表列名（一对一对齐）。
-- store 层（SQLite/PostgreSQL/Memory）的列名**只从注册表常量取值**，禁止拼接请求数据（防 SQL 注入）。
-- `api/edge.py` 与 `mcp_server.py` 的 poll_for_task 均经 `extract_telemetry()` 处理，管线内不出现具体字段名。
+- store 层（SQLite/PostgreSQL）的列名**只从注册表常量取值**，禁止拼接请求数据（防 SQL 注入）。
+- `api/edge.py` 的 poll_for_task 经 `extract_telemetry()` 处理，管线内不出现具体字段名。
 
 ---
 
@@ -97,13 +97,13 @@ def validate_telemetry(telemetry) -> None  # 非注册键抛 ValueError（防注
 
 1. **注册表登记**：在 `shared/schemas.py` 的 `SYSTEM_FIELDS`（静态，保留旧值）或 `METRIC_FIELDS`（动态，覆盖）中加一行。该行即声明了类型归属与持久化策略。
 2. **数据库迁移**：新增 `orchestrator/store/migrations/0XX_<name>.sql`：`ALTER TABLE agents ADD COLUMN <field> <type>;`。
-3. **PG schema 同步**：`orchestrator/store/pg.py` 的 `_ensure_agent_schema_upgrade()` 的 `additions` 字典加同名列。
+3. **PG schema 同步**：`orchestrator/store/connection.py` 的 `PostgresDatabase._ensure_agent_schema_upgrade()` 的 `additions` 字典加同名列。
 4. **数据模型暴露**：`shared/schemas.py` 的 `AgentStatus` 加字段 + `model_dump_json_safe()` 输出。
 5. **Web 展示**：`orchestrator/web_ui/js/agents.js` 列表/详情按需展示。
 6. **测试**：`tests/test_edge_telemetry.py` 补一条心跳落库断言（含 keep-on-null / 覆盖策略）。
 7. **文档**：更新本文档 §2 分组表 + `docs/` 相关设计文档。
 
-> **不需要**改动：`task_store.py:heartbeat`、`store/*` 各后端的 upsert（已注册表驱动）、`api/edge.py` / `mcp_server.py`（已白名单提取）、探针采集（只在该探针版本新增采集逻辑）。
+> **不需要**改动：`task_store.py:heartbeat`、`store/*` 各后端的 upsert（已注册表驱动）、`api/edge.py`（已白名单提取）、探针采集（只在该探针版本新增采集逻辑）。
 
 > **例外（v1.4.0）**：`running_tasks`（心跳 body 中边沿正在执行的任务 id 列表）是**控制面运行态**——不落库、不进注册表、不持久化到 `agents` 表，仅用于多任务并发分配（断线重连恢复 + 容量计算），因此**不适用**本 7 步流程（无需迁移/数据模型/看板改动）。它已在 §2 分组表登记为 `identity` 组的显式参数。
 

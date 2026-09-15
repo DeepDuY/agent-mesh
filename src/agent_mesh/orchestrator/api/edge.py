@@ -8,20 +8,11 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from agent_mesh.orchestrator.config import OrchestratorConfig
+from agent_mesh.orchestrator.config import OrchestratorConfig, bootstrap_version
 from agent_mesh.orchestrator.task_store import TaskStore
 from agent_mesh.shared.schemas import TaskResult, extract_telemetry
 
 logger = logging.getLogger(__name__)
-
-
-async def _max_concurrent(store: TaskStore) -> int:
-    value = await store.store.get_setting("max_concurrent")
-    try:
-        return max(1, int(value or 2))
-    except ValueError:
-        return 2
-
 
 
 def _ver_parts(value: str) -> list[int]:
@@ -30,15 +21,6 @@ def _ver_parts(value: str) -> list[int]:
 
 def _ver_ge(a: str, b: str) -> bool:
     return _ver_parts(a) >= _ver_parts(b)
-
-
-def _bootstrap_version(config: OrchestratorConfig) -> str | None:
-    version_path = Path(config.db_path).parent / "bootstrap" / "VERSION"
-    try:
-        value = version_path.read_text(encoding="utf-8").strip()
-        return value or None
-    except OSError:
-        return None
 
 
 def _bootstrap_package_exists(config: OrchestratorConfig, filename: str) -> bool:
@@ -147,7 +129,7 @@ def mount_edge_routes(
             # Backwards-compatible single-task view (legacy edges read this).
             "task": tasks[0] if tasks else None,
             "server_ts": _now_ts(),
-            "max_concurrent": await _max_concurrent(store),
+            "max_concurrent": await store.max_concurrent(),
         }
 
         # --- Independent per-agent token (issued exactly once on registration) ---
@@ -177,7 +159,7 @@ def mount_edge_routes(
 
         # --- Agent self-upgrade directive ---
         if agent is not None:
-            current_ver = _bootstrap_version(config)
+            current_ver = bootstrap_version(config.db_path)
             target_ver: str | None = None
             if agent.upgrade_requested and agent.upgrade_version:
                 # Manual per-node upgrade request.
@@ -214,16 +196,25 @@ def mount_edge_routes(
     @router.post("/edge/submit_result")
     async def edge_submit_result(
         request: Request,
-        _auth: None = Depends(require_any_token),
+        auth: dict[str, Any] = Depends(require_any_token),
     ) -> dict[str, Any]:
         body = await request.json()
-        status = body.get("status")
-        if status not in ("completed", "failed"):
+        result_status = body.get("status")
+        if result_status not in ("completed", "failed"):
             return {"accepted": False, "error": "invalid status"}
+        task_id = body.get("task_id", "")
+        task = await store.get_task(task_id)
+        if task is None:
+            return {"accepted": False, "error": "task not found"}
+        if not await store.edge_can_access_task(auth, task):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="not allowed to submit this task",
+            )
         artifacts = body.get("artifacts", [])
         for a in artifacts:
             await store.store.save_artifact(
-                task_id=body.get("task_id", ""),
+                task_id=task_id,
                 artifact_id=a.get("artifact_id"),
                 filename=a.get("filename"),
                 size=a.get("size"),
@@ -231,7 +222,7 @@ def mount_edge_routes(
                 storage_path=a.get("download_url", ""),
             )
         result = TaskResult(
-            status=status,
+            status=result_status,
             mode=body.get("mode", "llm"),
             exit_code=body.get("exit_code", -1),
             stdout_tail=body.get("stdout_tail", ""),
@@ -241,12 +232,12 @@ def mount_edge_routes(
             summary=body.get("summary", ""),
             session_id=body.get("session_id"),
         )
-        accepted = await store.submit_result(body.get("task_id", ""), result)
+        accepted = await store.submit_result(task_id, result)
         # Audit an edge-side permission denial (command matcher rejected it).
         combined = f"{result.summary}\n{result.stderr_tail}"
-        if status == "failed" and "权限被拒绝" in combined:
+        if result_status == "failed" and "权限被拒绝" in combined:
             await store.store.append_task_event(
-                task_id=body.get("task_id", ""),
+                task_id=task_id,
                 event_type="permission_denied",
                 agent_id=body.get("agent_id"),
                 details={
@@ -260,18 +251,18 @@ def mount_edge_routes(
     @router.post("/edge/get_task_status")
     async def edge_get_task_status(
         request: Request,
-        _auth: None = Depends(require_any_token),
+        auth: dict[str, Any] = Depends(require_any_token),
     ) -> dict[str, Any]:
         body = await request.json()
         task = await store.get_task(body.get("task_id", ""))
-        if task is None:
+        if task is None or not await store.edge_can_access_task(auth, task):
             return {"found": False}
         return {"found": True, "task": task.model_dump_json_safe()}
 
     @router.post("/edge/task_log")
     async def edge_task_log(
         request: Request,
-        _auth: None = Depends(require_any_token),
+        auth: dict[str, Any] = Depends(require_any_token),
     ) -> dict[str, Any]:
         """Receive a batch of live execution log entries from an edge agent.
 
@@ -284,6 +275,14 @@ def mount_edge_routes(
         entries = body.get("entries") or []
         if not task_id or not entries:
             return {"accepted": False, "error": "task_id and entries required"}
+        task = await store.get_task(task_id)
+        if task is None:
+            return {"accepted": False, "error": "task not found"}
+        if not await store.edge_can_access_task(auth, task):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="not allowed to log this task",
+            )
         valid_kinds = {"text", "error", "complete", "raw"}
         clean = [
             {
@@ -301,10 +300,19 @@ def mount_edge_routes(
     @router.post("/edge/mark_started")
     async def edge_mark_started(
         request: Request,
-        _auth: None = Depends(require_any_token),
+        auth: dict[str, Any] = Depends(require_any_token),
     ) -> dict[str, Any]:
         body = await request.json()
-        accepted = await store.mark_started(body.get("task_id", ""))
+        task_id = body.get("task_id", "")
+        task = await store.get_task(task_id)
+        if task is None:
+            return {"accepted": False}
+        if not await store.edge_can_access_task(auth, task):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="not allowed to update this task",
+            )
+        accepted = await store.mark_started(task_id)
         return {"accepted": accepted}
 
 

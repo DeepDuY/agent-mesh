@@ -67,7 +67,7 @@ queued ──心跳领取──▶ assigned ──mark_started──▶ working 
 ### 3.1 agent.py：主循环
 
 - `EdgeAgent(agent_id, orchestrator_url, token, runtime, workdir, llm_api_key, llm_base_url, llm_model, heartbeat_s=3, install_dir)`。
-- `orchestrator_url.replace("/mcp", "")` 得到 REST base URL（兼容 `EdgeConfig` 默认值带 `/mcp` 后缀）。
+- `orchestrator_url.replace("/mcp", "")` 得到 REST base URL（仅为兼容早期 `EdgeConfig` 默认值残留的 `/mcp` 后缀；当前默认值已无该后缀）。
 - 启动时 `read_agent_version(install_dir)` 读取已装版本（缺省回退内置 `VERSION`）；若 `token` 为空/占位且 `edge.env` 已持久化独立 token 则回退读取（见 [auth-security.md §7](./auth-security.md#7-agent-独立-token-与设备-用户关联)）。
 - `_loop()`：
   1. `device_id = get_device_id(install_dir)`（首次运行持久化）。

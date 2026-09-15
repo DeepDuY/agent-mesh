@@ -8,7 +8,6 @@
 |----|------|
 | REST 查询/Web | 用户 token（`HTTPBearer`）：API token（SHA-256 查表）**或** session token（HMAC 签名解析） |
 | `/api/edge/*`、产物上传、bootstrap 下载 | 全局 `config.token` **或** 用户 token **或** agent 独立 token（§7） |
-| MCP SSE :8001 | **强制 Bearer 鉴权**：仅用户 token（API token 或 session token），全局 token 无效 |
 | 边沿 Agent | 独立 agent token（§7）；旧节点可用全局 token / 用户 token 兼容 |
 
 ## 2. 密钥与哈希
@@ -27,8 +26,8 @@
 
 ## 4. 用户管理（admin）
 
-- `POST /api/auth/users` 创建用户：校验用户名（`[A-Za-z0-9_.-]`）与角色（`admin`/`user`），返回一次性 API token；`GET /api/auth/users` 列表（不含任何 token/hash）；`DELETE /api/auth/users/{username}` 删除（禁止删 admin 与自身）；`POST /api/auth/users/{username}/token` 轮换；`POST /api/auth/users/{username}/password` 重置密码；`POST /api/auth/change-password` 自助改密。
-- 禁用用户（`users.disabled=1`）后：REST/MCP 鉴权拒绝（401），登录拒绝（403）。
+- `POST /api/auth/users` 创建用户：校验用户名（`[A-Za-z0-9_.-]`）、角色（`admin`/`user`）**与 `team_id`（必填，且团队必须存在——一个用户只属于一个团队）**，返回一次性 API token；`GET /api/auth/users` 列表（不含任何 token/hash，含 `team_id`/`team_name`）；`DELETE /api/auth/users/{username}` 删除（禁止删 admin 与自身；同时清理 `team_members`/`agent_users` 幽灵关联）；`POST /api/auth/users/{username}/token` 轮换；`POST /api/auth/users/{username}/password` 重置密码；`POST /api/auth/change-password` 自助改密。
+- 禁用用户（`users.disabled=1`）后：REST 鉴权拒绝（401），登录拒绝（403）。
 
 ## 5. LLM apiKey
 
@@ -67,7 +66,7 @@
 - 轮换：`POST /api/agents/{id}/token`（用户 token）→ 新 token 返回一次，旧 token 立即失效。
 - 认证：`require_any_token` 依次接受 全局 token → 用户 token → agent token（`get_agent_by_token_hash`），并返回身份 `{auth: "global"|"user"|"agent", ...}`。**agent token 绑定 device_id**：用它冒充其他设备轮询 → 403。
 - 兼容：旧二进制（无 token 持久化逻辑）仍可用全局/用户 token 认证；本轮 401 由"手动把 agent token 写入 edge.env"解决，升级到新二进制后自动持久化。
-- **设备-用户关联（多用户管理底座）**：`agent_users(agent_id, user_id)` 多对多表（迁移 008）。agent 注册时若调用方是用户 token（`{auth:"user"}`）则自动把该用户关联为该机器的操作者；`GET /api/agents/{id}/detail` 的 `metadata.allowed_users` 返回关联用户列表。**多用户权限管控（按 allowed_users 限制派发/取消/删除）后续实现**。
+- **设备-用户关联（多用户管理底座）**：`agent_users(agent_id, user_id)` 多对多表（迁移 008）。agent 注册时若调用方是用户 token（`{auth:"user"}`）则自动把该用户关联为该机器的操作者；`GET /api/agents/{id}/detail` 的 `metadata.allowed_users` 返回关联用户列表。**多用户权限管控已实现**：节点 ACL `agents.access = {"teams":[...], "users":[...]}`（迁移 017）+ `TaskStore.can_access_agent()` 在派发/查看时按用户或团队放行（admin 全权）；模板/团队管理见多租户章节。
 
 ## 8. Agent 自升级
 
@@ -83,7 +82,7 @@
 - 下发：心跳响应携带 `config_version` 与解析后的 `config`（`_resolve_edge_config`）；含 `llm_api_key/base_url/model`、`llm_models`、`system_prompt`。
 - 应用（edge）：对比本地 `etc/config_version`，变更时更新运行中的 `Executor`，并 `apply_llm_config()` 重写 `edge.env` 的 `EDGE_LLM_*`、把 `system_prompt`/`llm_models` 写入 `etc/system_prompt`、`etc/llm_models`（多行安全，不破坏 shell source）+ 落盘版本号 → 重启后仍生效。
 - **模型名与规模可配置（2026-09-11 起）**：`settings.llm_models` 是唯一模型来源（换行/逗号分隔的完整网关 id），配置页可编辑；edge `build_opencode_config()` **不再硬编码任何模型**，完全按该列表生成 opencode `models` map（键=去 `anthropic/` 前缀、`name`=末段）。per-task 下发仍要求 `llm_model`/`Constraints.model` 为网关真实完整 id（如 `anthropic/deepseek-v4-flash`），否则 404/5xx（§15 教训）。
-- **强制配置（无默认兜底）**：已删除所有硬编码默认模型（`EdgeConfig.llm_model`、`_DEFAULT_LLM_MODEL`、migration 004 / PG `_ensure_settings` 的种子均改为空串）。未配置默认模型且未显式传 `model` 时，`mode=llm` 的派发在 orchestrator 侧即被拒绝（REST 400 / MCP `accepted:false`），edge `run_llm` 亦会 fail-fast。`Constraints.model` 显式指定且 `llm_models` 非空时必须命中列表。
+- **强制配置（无默认兜底）**：已删除所有硬编码默认模型（`EdgeConfig.llm_model`、`_DEFAULT_LLM_MODEL`、migration 004 / PG `_ensure_settings` 的种子均改为空串）。未配置默认模型且未显式传 `model` 时，`mode=llm` 的派发在 orchestrator 侧即被拒绝（REST 400），edge `run_llm` 亦会 fail-fast。`Constraints.model` 显式指定且 `llm_models` 非空时必须命中列表。
 - **节点模板与提示词层级（2026-09-11 起）**：新增 `templates` 表 + `agents.template_id`（引用式绑定，删除模板自动解绑）。解析优先级：模型 `节点 llm_model > 模板 llm_model > 全局 settings.llm_model`；提示词 `节点 system_prompt + 模板 system_prompt`（拼接，节点在前；内置 wrapper 由 edge 负责）。**已移除全局 `settings.system_prompt`**（其行在迁移 014 / PG 启动时删除）。
 - **提示词注入（edge）**：`_wrap_llm_instruction(instruction, system_prompt)` 把拼接后的节点+模板提示词作为「## 角色与上下文」块注入每个 llm 任务提示词；为空则不注入。
 - **重装防坑**：install.sh 重装时会清理 `etc/config_version` 等状态文件，否则新二进制本地版本==服务端版本会跳过同步、沿用旧模型（见 [known-issues.md §15](./known-issues.md)）。

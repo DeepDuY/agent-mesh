@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from agent_mesh.orchestrator.auth import generate_token, hash_token
-from agent_mesh.orchestrator.config import OrchestratorConfig
+from agent_mesh.orchestrator.config import OrchestratorConfig, bootstrap_version
 from agent_mesh.orchestrator.task_store import TaskStore
 from agent_mesh.shared.schemas import AgentDetail, Constraints
 
@@ -54,22 +53,12 @@ class _BatchTemplatePayload(BaseModel):
     template_id: int | None = None
 
 
-def _current_bootstrap_version(config: OrchestratorConfig) -> str | None:
-    version_path = Path(config.db_path).parent / "bootstrap" / "VERSION"
-    try:
-        value = version_path.read_text(encoding="utf-8").strip()
-        return value or None
-    except OSError:
-        return None
-
-
 def mount_agent_routes(
     router: APIRouter,
     store: TaskStore,
     require_user_token,
     config: OrchestratorConfig | None = None,
     require_admin=None,
-    require_ui_admin=None,
     require_ui_user=None,
 ) -> None:
     # Sensitive node-configuration endpoints (template binding, LLM credentials)
@@ -77,7 +66,6 @@ def mount_agent_routes(
     # supplied (keeps direct callers/tests working).
     require_admin = require_admin or require_user_token
     # Template binding is management-only: reachable solely from the Web UI.
-    require_ui_admin = require_ui_admin or require_admin
     require_ui_user = require_ui_user or require_admin
 
     async def _require_agent(agent_id: str, user: dict[str, Any]):
@@ -373,7 +361,7 @@ def mount_agent_routes(
         user: dict[str, Any] = Depends(require_user_token),
     ) -> dict[str, Any]:
         agent = await _require_agent(agent_id, user)
-        version = _current_bootstrap_version(config)
+        version = bootstrap_version(config.db_path)
         if not version:
             raise HTTPException(
                 status_code=409,
@@ -423,8 +411,6 @@ def mount_agent_routes(
 
 
 async def _get_agent_by_numeric_or_string_id(store: TaskStore, agent_id: str):
-    from agent_mesh.shared.schemas import AgentStatus
-
     try:
         numeric_id = int(agent_id)
         agent = await store.store.get_agent_by_id(numeric_id)

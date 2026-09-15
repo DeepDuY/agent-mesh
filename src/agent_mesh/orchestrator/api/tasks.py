@@ -100,12 +100,7 @@ def mount_task_routes(
         return task
 
     async def _can_see_task(task, user: dict[str, Any]) -> bool:
-        if store.is_admin(user):
-            return True
-        user_id, team = await _owner_filter(user)
-        if user_id and task.user_id == user_id:
-            return True
-        return bool(team and task.team_id == team)
+        return await store.can_see_task(user, task)
 
     @router.get("/tasks")
     async def list_tasks(
@@ -197,17 +192,15 @@ def mount_task_routes(
                 body.get("agent_id", ""), body.get("instruction", "")
             )
             if denial:
-                await store.store.append_task_event(
-                    task_id="",
-                    event_type="permission_denied",
-                    agent_id=body.get("agent_id"),
-                    user_id=user.get("user_id"),
-                    details={
-                        "mode": "command",
-                        "instruction": body.get("instruction", ""),
-                        "reason": denial,
-                        "source": "dispatch",
-                    },
+                # A denied dispatch never creates a task, so there is no task_id
+                # to attach an audit row to (orphan rows are unqueryable). Log it
+                # instead of writing a task_events row with an empty task_id.
+                logger.warning(
+                    "dispatch denied by permission policy agent=%s user=%s reason=%s instruction=%r",
+                    body.get("agent_id"),
+                    user.get("user_id"),
+                    denial,
+                    body.get("instruction", ""),
                 )
                 raise HTTPException(status_code=403, detail=denial)
 

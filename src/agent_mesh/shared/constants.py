@@ -14,7 +14,6 @@ DEFAULT_LLM_MODELS = "\n".join(
     )
 )
 
-DEFAULT_HEARTBEAT_INTERVAL_S = 3
 DEFAULT_SWEEP_INTERVAL_S = 5
 DEFAULT_OFFLINE_AFTER_S = 15
 
@@ -27,8 +26,3 @@ class TaskStatus(str, enum.Enum):
     FAILED = "failed"
     TIMED_OUT = "timed_out"
     CANCELLED = "cancelled"
-
-
-class Runtime(str, enum.Enum):
-    OPENCODE = "opencode"
-    CLAUDE = "claude"

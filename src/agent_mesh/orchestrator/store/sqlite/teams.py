@@ -67,6 +67,16 @@ class TeamMixin(SQLiteBase):
 
     async def delete_team(self, team_id: str) -> bool:
         await self._execute("DELETE FROM team_members WHERE team_id = ?", (team_id,))
+        # Detach the deleted team from tasks and node ACLs so it does not linger
+        # as a dangling reference (ghost team pointer).
+        await self._execute("UPDATE tasks SET team_id = NULL WHERE team_id = ?", (team_id,))
+        for agent in await self.list_agents():
+            access = dict(agent.access or {})
+            teams = access.get("teams") or []
+            remaining = [t for t in teams if t != team_id]
+            if remaining != teams:
+                access["teams"] = remaining
+                await self.set_agent_access_by_id(agent.id, access)
         count = await self._execute_rowcount(
             "DELETE FROM teams WHERE team_id = ?", (team_id,)
         )

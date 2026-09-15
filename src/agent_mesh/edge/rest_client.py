@@ -97,25 +97,6 @@ class EdgeRestClient:
             "/edge/mark_started", {"task_id": task_id}
         )
 
-    async def list_skills(self) -> dict[str, Any]:
-        url = f"{self.base_url}/api/skills"
-        resp = await self._client.get(url)
-        resp.raise_for_status()
-        return resp.json()
-
-    async def download_skill(self, name: str, dest_path: str) -> None:
-        import os
-
-        url = f"{self.base_url}/api/skills/{name}/download"
-        os.makedirs(os.path.dirname(dest_path) or ".", exist_ok=True)
-        with open(dest_path, "wb") as f:
-            async with self._client.stream(
-                "GET", url, timeout=httpx.Timeout(120.0)
-            ) as resp:
-                resp.raise_for_status()
-                async for chunk in resp.aiter_bytes():
-                    f.write(chunk)
-
     async def upload_artifacts(
         self, task_id: str, files: list[tuple[str, bytes]]
     ) -> dict[str, Any]:

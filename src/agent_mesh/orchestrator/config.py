@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
@@ -10,6 +11,20 @@ DEFAULT_DB_PATH = "./data/agent-mesh.db"
 DEFAULT_ARTIFACT_DIR = "./data/artifacts"
 DEFAULT_SWEEP_INTERVAL_S = 5.0
 DEFAULT_OFFLINE_AFTER_S = 15.0
+
+
+def bootstrap_version(db_path: str) -> str | None:
+    """Version of the published bootstrap package next to the DB, or None.
+
+    The bootstrap package is stored at ``<db_dir>/bootstrap``; this is the
+    single source of truth shared by the edge poll and the agent-upgrade routes.
+    """
+    version_path = Path(db_path).parent / "bootstrap" / "VERSION"
+    try:
+        value = version_path.read_text(encoding="utf-8").strip()
+        return value or None
+    except OSError:
+        return None
 
 
 class OrchestratorConfig(BaseSettings):
@@ -22,7 +37,10 @@ class OrchestratorConfig(BaseSettings):
 
     host: str = "0.0.0.0"
     port: int = 8000
-    token: str = "change-me-shared-secret"
+    # No hardcoded default: an empty token disables the "global" identity
+    # entirely (require_any_token no longer matches), so an unconfigured
+    # deployment is closed rather than open. Set AGENT_MESH_TOKEN in production.
+    token: str = ""
     public_url: str = ""
 
     # Multi-process
@@ -65,7 +83,8 @@ class EdgeConfig(BaseSettings):
 
     agent_id: str = Field(default_factory=lambda: os.uname().nodename)
     orchestrator_url: str = "http://127.0.0.1:8000"
-    token: str = "change-me-shared-secret"
+    # Empty means "not configured"; edge/agent.py treats "" as the sentinel.
+    token: str = ""
     heartbeat_s: float = 3.0
     runtime: str = "opencode"
     workdir: str = "."

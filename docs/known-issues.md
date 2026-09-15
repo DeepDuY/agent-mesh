@@ -7,14 +7,15 @@
 3. **`depends_on` 仅校验存在、未持久化/未阻塞执行**：依赖任务未完成时派发不会等待。
 4. ~~**节点级 `llm_config` 是死特性**~~ 已修复：`_row_to_agent` 读回 `agents.llm_*`，节点级配置通过 LLM 配置同步（见 [auth-security.md §9](./auth-security.md#9-llm-配置同步)）随心跳下发，优先级高于全局默认。
 5. ~~**产物元数据异步落库**~~ 已修复：改为 `await` 同步落库（`INSERT OR IGNORE` 幂等兜底不变）。
-6. **`task_events` 表已无写入方**：审计接口后续可基于它实现。
+6. ~~**`task_events` 表已无写入方**~~ 已实现：写入方 `append_task_event`（`dispatched`/`cancelled`/`permission_denied`，见 §25/§27），查询 `GET /api/tasks/{id}/events`。
 7. ~~**`GET /api/bootstrap/install.sh` 内嵌全局 LLM apiKey 明文**~~ 已修复：外层安装脚本不再内嵌任何 LLM 配置（`api/bootstrap.py`），新节点注册后由心跳 config-sync 下发 LLM 配置（见 [auth-security.md §9](./auth-security.md#9-llm-配置同步)），安装脚本与进程列表不再出现任何凭据。`os/arch` 查询参数未校验（仅影响下载文件名）。
 8. ~~**`tests/e2e.py` 目标错误**~~ 已移除：该文件（连同遗留的 `edge/mcp_client.py`）已删除，探针纯走 REST，不再引用 MCP 客户端。
-9. Web 看板为静态轮询（5s），后续可升级 WebSocket。10. Windows 边沿安装尚未支持。
-11. 后续支持按用户生成 MCP skills（每个 skill 携带用户 token）；增强审计与任务日志。
+9. Web 看板为静态轮询（5s），后续可升级 WebSocket。
+10. Windows 边沿安装尚未支持。
+11. 增强审计与任务日志（原"按用户生成 MCP skills"已随 MCP 通道移除而取消）。
 12. ~~**规划中：agent 自升级机制**~~ 已实现：`POST /api/agents/{id}/upgrade`（或看板「升级」按钮）→ 心跳下发 `upgrade` 指令（版本 + 包名）→ edge 空闲时从 `/api/bootstrap/{pkg}` 下载 → staging 校验后原子替换 `bin/agent-mesh-edge.bin`（保留 `.bin.old` 与 `agent_version.bak`）→ 写入 rollback-aware wrapper 与 `etc/upgrading` 标记 → `execv` 重启。回滚采用两阶段握手：首次重启时 wrapper 记录 `etc/upgrade-started` 并运行新二进制；新二进制首次成功心跳后由 edge 清除标记与备份（升级确认健康）；若新二进制启动失败、systemd 再次拉起 wrapper 时发现 `upgrading` + `upgrade-started` 同时存在则自动回滚 `.bin.old` 并恢复旧版本号。新增 `agents.version/arch/upgrade_requested/upgrade_version/upgrade_requested_at` 列（迁移 007），`bootstrap_download` 改为 `require_any_token` 以便全局 token 的边沿下载安装包。详见 [auth-security.md §8](./auth-security.md#8-agent-自升级)。
 13. ~~**规划中：LLM 配置同步**~~ 已实现：看板/`PATCH /api/settings` 保存 `llm_*` 或 `PATCH /api/agents/{id}/llm_config` 时 `config_version` 自增 → 心跳响应携带 `config_version` 与解析后的 `config`（全局默认，节点级 llm_config 优先）→ edge 对比本地 `etc/config_version`，变更时更新 executor、重写 `edge.env` 并落盘版本号。新增 `config_version` setting（迁移 007）。详见 [auth-security.md §9](./auth-security.md#9-llm-配置同步)。
-14. **agent 独立 token 机制已实现**（见 [auth-security.md §7](./auth-security.md#7-agent-独立-token-与设备-用户关联)）：首次注册自动签发、轮换接口、token 绑定 device_id、`agent_users` 设备-用户关联表（迁移 008）。**多用户权限管控尚未实现**：`agent_users.allowed_users` 目前只记录，派发/取消/删除任务时尚未按 allowed_users 校验——admin 默认全权，普通用户操作任意节点的权限管控需后续实现。旧二进制（无 token 持久化逻辑）不重装则只能继续用全局/用户 token。
+14. **agent 独立 token 机制已实现**（见 [auth-security.md §7](./auth-security.md#7-agent-独立-token-与设备-用户关联)）：首次注册自动签发、轮换接口、token 绑定 device_id、`agent_users` 设备-用户关联表（迁移 008）。**多用户权限管控已实现**（§28）：节点 ACL `agents.access` + `TaskStore.can_access_agent()` 在派发/查看时按用户或团队校验（admin 全权）；`agent_users` 仅作操作者审计记录。旧二进制（无 token 持久化逻辑）不重装则只能继续用全局/用户 token。
 15. **2026-08-17 线上故障记录（LLM 任务全部失败 + 排查与修复）**：
     - **表象**：LLM 任务全挂，command 正常。`list_agents` 的 `llm_*` 为 null 被误判为"节点缺配置"（实际那三列是节点级覆盖字段，全局走 settings + 心跳 `config`，与它无关）。
     - **根因①（真 bug）**：`build_opencode_config()` 生成的 opencode `models` map 用了带前缀的 key（`lite/deepseek-v4-flash`、`vip/deepseek-v4-pro`），而网关真实模型是 `deepseek-v4-flash`、`deepseek-v4-pro`（无前缀）。探针 per-task 配置里模型解析失败 → 网关 404/5xx。198 一直能跑只是因为 root 家目录有份手动全局 `~/.config/opencode/opencode.jsonc` 补对了 map。**修复**：`models` map 改为网关真实 id，并 `_canonical_model_id()` 去 `lite/`/`vip/` 前缀后 setdefault（见 `config_writer.py`）。
@@ -30,8 +31,8 @@
 17. **v1.4.0 存储层重构：统一数据库对接层 + 生产切换 PostgreSQL**：
     - **新增 `store/connection.py`**（统一连接层）：`Database` 抽象 + `SQLiteDatabase` + `PostgresDatabase`，集中管理两侧连接生命周期与执行原语；SQL 统一 `?` 占位符（PG 层内部转 `$n`）；SQLite 连接从 `sqlite/connection.py` 迁入。
     - **修复 PG 后端隐藏 bug**（此前 PG 后端从未真实跑通）：① `main.py` 用 `asyncio.run(_init())` 独立 loop 建 asyncpg pool、后续服务器 loop 复用 → 跨 loop 崩溃；② uvicorn 多进程 fork 后 worker 继承主进程 pool → 崩溃；③ `task_results` 缺 `session_id` 列；④ `get_user_by_username`/`get_user_by_token_hash` SELECT 漏 `password_hash`；⑤ PG `TIMESTAMP` 列要求 naive datetime（`_iso_to_dt` 对 naive 加 UTC、`_pg_param` 把 aware 归一化为 naive）。
-    - **多进程支持**：`PostgresDatabase._acquire()` 按 `os.getpid()` 惰性建池，fork 的 worker 自动重建各自连接池——**无需强制单进程**，8 worker 生产照常。
-    - **生产切换**：`orchestrator.env` 加 `AGENT_MESH_DB_TYPE=pg` + `AGENT_MESH_PG_DSN`；数据经 `scripts/migrate_sqlite_to_pg.py` 迁移（users/agents/tasks/results/artifacts/files/skills/settings/logs 全量，序列同步）。SQLite DB 保留 `.db.bak.pg-migrate-*` 可回滚。
+    - **多进程支持（预留）**：`PostgresDatabase._acquire()` 按 `os.getpid()` 惰性建池，fork 的 worker 会自动重建各自连接池；但当前 orchestrator 实际**单进程**运行（`AGENT_MESH_WORKERS>1` 不生效，见 §29）。
+    - **生产切换**：`orchestrator.env` 加 `AGENT_MESH_DB_TYPE=pg` + `AGENT_MESH_PG_DSN`；数据经 `scripts/migrate_sqlite_to_pg.py` 迁移（users/agents/agent_users/tasks/queue/results/artifacts/files/skills/settings/logs + 序列同步，幂等）。⚠️ 该脚本**尚未覆盖 `teams`/`team_members`/`templates`/`task_events` 与 `tasks.user_id/team_id`**，且迁移 015 后仍读取已删除的 `allowed_tools` 列会报错（见 §29，待修复）。SQLite DB 保留 `.db.bak.pg-migrate-*` 可回滚。
 18. **2026-09-01 P0 代码审查修复**（[../code-review-report.md](../code-review-report.md) 高优先级项，全部修复并通过 90 项回归测试）：
     - **`edge/execution/command.py` 重复等待**：`run_command` 已 `await _wait_proc` 并进入 `finally` 清理 `log_task`，随后又重复调用 `_wait_proc`（第二次不再读取输出、重复创建 wait/cancel 任务）。已删除第二次调用。
     - **空 `session_secret` 可签发/伪造 session token**：登录时 `secret or ""` 会用空 secret 签发。已改为空 secret 直接 500（fail-closed）；`verify_session_token()` 对空 secret 一律返回 `None`。`_ensure_session_secret` 仍保证首启生成。
@@ -113,6 +114,18 @@
     - **Web**：新增「团队」页（增删团队、勾选成员，单团队约束）；节点详情新增「访问权限」编辑器；模板弹窗区分「说明」与「节点描述」；「模板/配置/团队/用户」tab 均 `admin-only`（模板页对普通用户展示其自身模板）。
     - **存量**：现有节点默认只有 admin 可访问（半自动只影响此后用用户 token 安装/轮询的节点）。
     - **测试**：新增 `tests/test_tenancy.py`（团队 CRUD/单团队、节点访问过滤与派发、团队授权、任务可见性、文件隔离、非 admin 禁管团队），全量 **134 项通过**。
+29. **2026-09-14 代码审核整改（第一批：不影响架构的条目；计划见根目录 `代码审核整改计划.md`）**：
+    - **安全收口**：edge `submit_result`/`mark_started`/`get_task_status`/`task_log` 与产物上传/读取补任务归属校验（global 全权；user 需同租户；agent 仅限自身队列键）。越权写返回 403，越权读返回 `{found:false}`。
+    - **产物路径穿越**：`ArtifactStore` 对 `task_id` 做白名单净化（`^[A-Za-z0-9._-]+$`）；非法值读侧返回空/None、写侧抛 `ValueError`。
+    - **全局密钥**：`OrchestratorConfig.token` / `EdgeConfig.token` 默认改为空串；空值时 `require_any_token` 不再匹配 global 身份，启动打印告警（彻底去掉 `change-me-shared-secret` 开放口）。
+    - **边沿落盘**：`apply_llm_config` 在 `edge.env` 不存在时也会创建并写入 `EDGE_LLM_*`（不再丢凭据）。
+    - **孤儿审计**：command 派发被权限拒绝时不再写空 `task_id` 的 `task_events` 行，改为结构化日志。
+    - **级联清理**：删除用户清理 `team_members`/`agent_users`；删除团队清理 `team_members`、`tasks.team_id`、`agents.access.teams`。
+    - **离线判定**：`set_agent_online` / `set_agent_current_task` 在 `device_id` 为空时按 `agent_id` 匹配。
+    - **契约/死代码**：`AbstractStore` 补齐 `owner_*`/`owner` 形参；删除 `Runtime`、`DEFAULT_HEARTBEAT_INTERVAL_S`、`set_agent_alias`、`EdgeRestClient.list_skills/download_skill`、`require_ui_admin` 及未用 import；合并 `_max_concurrent`/bootstrap 版本助手。
+    - **孤岛文件**：删除 `scripts/mcp_bridge.py`、`mcp-config.example.json`、`mcp_server.pyc`、空 `examples/`。
+    - **测试**：新增 `tests/test_edge_authz.py` 及 3 条小逻辑用例，全量 **144 项通过**。
+    - **暂缓（影响架构）**：多进程真正生效、heartbeat 容量检查原子性、agent 键解析统一、SQLite→PG 迁移脚本补齐新表、超时重试状态翻转。
 
 ---
 
@@ -123,21 +136,21 @@
 - ~~任务级 `allowed_tools` / `permission` 真正下发生效~~ 已实现（改为**模板级** `templates.permission`，llm 与 command 共用 OpenCode permission 规格；原任务级参数已移除）。
 - ~~command 模式指令白名单/风险校验~~ 已实现（edge 共享引擎 matcher；`ask` 视为 deny；**仅防误操作，非安全边界**）。
 - ~~基于 `task_events` 表补执行审计~~ 已实现（`append_task_event` + `GET /api/tasks/{id}/events` + 任务详情时间线）。
-- **未做**：`Constraints.skills` 任务级技能提示落地（schema 已有字段，edge executor 未读取）；多用户节点授权（关联补充建议 1）；强隔离沙箱 / 结构化 argv。
+- **未做**：`Constraints.skills` 任务级技能提示落地（schema 已有字段，edge executor 未读取）；强隔离沙箱 / 结构化 argv。
 
 ### 方向二：个性化 agent 模板（llm 提示词 + 节点描述 + 模型选择）—— ✅ 2026-09-11 完成（§23）
 - ~~**LLM 提示词拼接**：节点级 system prompt 模板~~ 已实现：节点级 `agents.system_prompt` + 全局 `settings.system_prompt`，config-sync 下发，edge 注入 `_wrap_llm_instruction()` 顶部。
-- ~~**节点描述主 agent 可见**：`AgentStatus` 增加 `description`~~ 已实现：`agents.description` + `PATCH /api/agents/{id}/description`，MCP `list_agents`/`get_agent_detail` 返回。
-- ~~**edge-agent 的 LLM 模型可选其他模型**~~ 已实现：`Constraints.model` 任务级下发 + `settings.llm_models` 白名单校验 + MCP `list_models`；模型列表去硬编码、由配置页维护；无默认兜底（强制配置）。
+- ~~**节点描述主 agent 可见**：`AgentStatus` 增加 `description`~~ 已实现：`agents.description` + `PATCH /api/agents/{id}/description`，REST `list_agents`/`get_agent_detail` 返回。
+- ~~**edge-agent 的 LLM 模型可选其他模型**~~ 已实现：`Constraints.model` 任务级下发 + `settings.llm_models` 白名单校验；模型列表去硬编码、由配置页维护；无默认兜底（强制配置）。
 - 说明：**任务级 system prompt 未单独加字段**（任务自身的 `instruction` 即任务级内容，需角色/上下文直接写进指令）。
 
 ### 补充建议（同优先级，按价值排序）
-1. **多用户权限管控落地**（关联方向一）：`agent_users.allowed_users` 目前只记录不校验，按用户限制派发/取消/删除任务（§14 已预告）。
+1. ~~**多用户权限管控落地**（关联方向一）：`agent_users.allowed_users` 目前只记录不校验，按用户限制派发/取消/删除任务（§14 已预告）~~ 已实现（§28）。
 2. **删除任务时清理 artifact_store 磁盘产物**：当前只删 DB 记录，磁盘文件残留。
 3. **任务依赖 `depends_on` 落地**：当前仅校验存在、未持久化/未阻塞执行。
 4. **WebSocket 实时推送**：替代看板 5s 静态轮询（§9 已预告）。
 5. **`GET /api/bootstrap/install.sh` 的 `host` 注入校验**：当前未校验格式（代码审查 §4.2 遗留，中风险）。
-6. **MCP skills 按用户生成**：每个 skill 携带用户 token（§11 已预告）。
+6. ~~**MCP skills 按用户生成**：每个 skill 携带用户 token（§11 已预告）~~ 取消（MCP 通道已移除）。
 7. **看板「任务详情/操作」错误提示补全**：`agents.js`/`tasks.js`/`files.js`/`skills.js` 多处操作仍未校验响应状态（仅 `config.js` 已修）。
 
 ### 远期规划（较远实现，低优先级）
@@ -150,4 +163,4 @@
   - `get_device_id`/`get_arch`/`get_distro` 的 Windows 实现（machine-id 改用注册表/`HKLM`，arch 用 `PROCESSOR_ARCHITECTURE`）。
   - 端到端验证：Windows 节点注册→心跳→command/llm 任务→产物上传→自升级。
 
-> 实施顺序：方向一第一期（§25，统一权限模板 + command 白名单 + 审计）✅ 2026-09-14；方向二（§23/§24）✅；补充建议「可快速见效」的 2/5/7 待做；方向一后续（多用户节点授权、沙箱/结构化 argv、`skills` 下发）与 Windows 支持按优先级推进。
+> 实施顺序：方向一第一期（§25，统一权限模板 + command 白名单 + 审计）✅ 2026-09-14；方向二（§23/§24）✅；多租户/多用户权限（§28）✅；补充建议「可快速见效」的 2/5/7 待做；方向一后续（沙箱/结构化 argv、`skills` 下发）与 Windows 支持按优先级推进。

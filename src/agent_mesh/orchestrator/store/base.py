@@ -68,9 +68,6 @@ class AbstractStore(abc.ABC):
     ) -> None: ...
 
     @abc.abstractmethod
-    async def set_agent_alias(self, device_id: str, alias: str | None) -> None: ...
-
-    @abc.abstractmethod
     async def set_agent_alias_by_id(self, agent_id: int, alias: str | None) -> None: ...
 
     @abc.abstractmethod
@@ -255,6 +252,8 @@ class AbstractStore(abc.ABC):
         started_before: datetime | None = None,
         limit: int = 100,
         offset: int = 0,
+        owner_user_id: str | None = None,
+        owner_team_id: str | None = None,
     ) -> list[Task]: ...
 
     @abc.abstractmethod
@@ -266,6 +265,8 @@ class AbstractStore(abc.ABC):
         search: str | None = None,
         started_after: datetime | None = None,
         started_before: datetime | None = None,
+        owner_user_id: str | None = None,
+        owner_team_id: str | None = None,
     ) -> int: ...
 
     @abc.abstractmethod
@@ -372,11 +373,13 @@ class AbstractStore(abc.ABC):
     async def get_files_by_ids(self, file_ids: list[str]) -> list[dict[str, Any]]: ...
 
     @abc.abstractmethod
-    async def find_file_by_md5(self, md5: str, filename: str) -> dict[str, Any] | None: ...
+    async def find_file_by_md5(
+        self, md5: str, filename: str, owner: str | None = None
+    ) -> dict[str, Any] | None: ...
 
     @abc.abstractmethod
     async def list_files(
-        self, search: str | None = None
+        self, search: str | None = None, owner: str | None = None
     ) -> list[dict[str, Any]]: ...
 
     @abc.abstractmethod

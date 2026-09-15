@@ -1,12 +1,27 @@
 from __future__ import annotations
 
 import mimetypes
+import re
 import threading
 import tempfile
 import uuid
 from pathlib import Path
 
 from agent_mesh.shared.schemas import ArtifactRef
+
+_TASK_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _safe_task_id(task_id: str) -> str | None:
+    """Return a path-safe task id, or None when it could escape base_dir.
+
+    Task ids are generated as ``t-<hex>``; anything containing path separators
+    or ``.``/``..`` is rejected so a crafted URL cannot traverse the artifact
+    directory.
+    """
+    if not task_id or not _TASK_ID_RE.match(task_id) or task_id in (".", ".."):
+        return None
+    return task_id
 
 
 class ArtifactStore:
@@ -29,7 +44,10 @@ class ArtifactStore:
         self._lock = threading.Lock()
 
     def _task_dir(self, task_id: str) -> Path:
-        d = self.base_dir / task_id
+        safe = _safe_task_id(task_id)
+        if safe is None:
+            raise ValueError(f"invalid task id: {task_id!r}")
+        d = self.base_dir / safe
         d.mkdir(parents=True, exist_ok=True)
         return d
 
@@ -72,7 +90,10 @@ class ArtifactStore:
         )
 
     def list(self, task_id: str) -> list[ArtifactRef]:
-        task_dir = self.base_dir / task_id
+        safe = _safe_task_id(task_id)
+        if safe is None:
+            return []
+        task_dir = self.base_dir / safe
         if not task_dir.exists():
             return []
         refs: list[ArtifactRef] = []
@@ -99,7 +120,10 @@ class ArtifactStore:
 
     def resolve(self, task_id: str, artifact_id: str) -> tuple[Path, str] | None:
         """Return (path, original_filename) or None if not found."""
-        task_dir = self.base_dir / task_id
+        safe = _safe_task_id(task_id)
+        if safe is None:
+            return None
+        task_dir = self.base_dir / safe
         if not task_dir.exists():
             return None
         for p in task_dir.iterdir():

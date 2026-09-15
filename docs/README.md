@@ -7,7 +7,7 @@
 | 文档 | 内容 |
 |------|------|
 | [architecture.md](./architecture.md) | 项目目标与组成、进程划分与总体架构、目录结构 |
-| [protocol.md](./protocol.md) | 进程间交互总览、节点标识、通信协议（MCP / REST / 上报） |
+| [protocol.md](./protocol.md) | 进程间交互总览、节点标识、通信协议（REST / 上报） |
 | [task-and-execution.md](./task-and-execution.md) | 任务模型与双执行模式、任务状态机、边沿 Agent 内部逻辑 |
 | [orchestrator.md](./orchestrator.md) | orchestrator 内部逻辑、数据模型、持久化层与迁移 |
 | [auth-security.md](./auth-security.md) | 认证与安全、agent 独立 token、自升级、LLM 配置同步 |
@@ -22,10 +22,9 @@
 
 构建一个通用的多 Agent 远程协同执行框架：
 
-- **主 Agent（外部进程）**：你自己的 LLM Agent（DeepChat、OpenCode、Claude 等）。用自然语言"帮我在那台机器跑个测试"，主 Agent 通过 MCP（SSE :8001）或 REST（:8000）调用 orchestrator 完成派发与查询。
-- **orchestrator（独立调度器/Broker，多进程）**：持有任务队列、维护边沿节点心跳状态、持久化到 SQLite/PostgreSQL。默认多 worker 模式：主进程跑 MCP SSE（:8001）与后台清扫器，多个 uvicorn worker 进程承载 FastAPI（:8000）。可用 `AGENT_MESH_WORKERS=1` 切回单进程。
+- **主 Agent（外部进程）**：你自己的 LLM Agent（DeepChat、OpenCode、Claude 等）。用自然语言"帮我在那台机器跑个测试"，主 Agent 通过 REST（:8000）调用 orchestrator 完成派发与查询。
+- **orchestrator（独立调度器/Broker，单进程）**：持有任务队列、维护边沿节点心跳状态、持久化到 SQLite/PostgreSQL。当前以单进程运行（FastAPI :8000 与后台清扫器同一事件循环）；`AGENT_MESH_WORKERS>1` 目前**不生效**（uvicorn `Server.serve()` 忽略 `workers`，多 worker 启动尚待修复，见 [known-issues.md](./known-issues.md)）。
   - **FastAPI（:8000）**：REST 查询/管理接口 `/api/*` + 边沿 REST 协议 `/api/edge/*` + Web 看板 `/` + `/static`。
-  - **MCP SSE（:8001）**：主进程 `mcp_server.sse_app(...)` 自建 Starlette app 并套 **Bearer 鉴权中间件**，给主 Agent 的 MCP 客户端调用。
 - **边沿 Agent（每台远端机器一个守护进程）**：循环 HTTP 心跳拉取任务，调用本机已安装的 **opencode**（或 `claude`）执行任务，上传产物、回报结果。
 - **Web 浏览器（可选）**：静态页面，每 5 秒轮询 REST 接口展示节点/任务/配置。
 
@@ -35,7 +34,7 @@
 
 任何修改都必须按下面的规则同步产物与文档，否则会让主 Agent / 边沿探针拿到过期版本而行为不一致。
 
-### A. 修改 REST/MCP 接口（新增/变更端点或参数）
+### A. 修改 REST 接口（新增/变更端点或参数）
 
 必须同步更新：
 

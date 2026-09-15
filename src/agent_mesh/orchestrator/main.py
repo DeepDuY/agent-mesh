@@ -126,6 +126,11 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     config = OrchestratorConfig()
+    if not config.token:
+        logger.warning(
+            "AGENT_MESH_TOKEN is not set: the global edge token is disabled. "
+            "Set it (or use per-user/per-agent tokens) before exposing the edge API."
+        )
     store, store_backend = _build_store(config)
 
     async def _init():
