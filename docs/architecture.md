@@ -79,7 +79,7 @@ agent-mesh/
 │   │   │   ├── auth.py  tasks.py  agents.py  edge.py  artifacts.py  files.py  bootstrap.py  skills.py
 │   │   │   └── teams.py  templates.py
 │   │   ├── store/
-│   │   │   ├── connection.py  base.py  pg.py
+│   │   │   ├── connection/{__init__,base,sqlite,pg,pg_schema}.py  base.py  pg.py
 │   │   │   ├── sqlite/{__init__,connection,agents,tasks,artifacts,files,logs,settings,skills,users,teams,templates}.py
 │   │   │   └── migrations/001-018_*.sql
 │   │   └── web_ui/{index.html,style.css,js/app,auth,agents,tasks,files,skills,users,teams,templates,config}.js

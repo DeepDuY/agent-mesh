@@ -77,7 +77,7 @@ TOKEN='<token>' bash <(curl -fsSL -H "Authorization: Bearer <token>" <public_url
 
 ### 2.2 边沿 Agent（`EDGE_` 前缀，EdgeConfig）
 
-> **PostgreSQL**（v1.4.0）：统一连接层 `store/connection.py` 的 `PostgresDatabase` 按 `os.getpid()` **惰性建 asyncpg 池**，为将来多 worker 预留（当前实际单进程运行，见 architecture.md §1.3）。
+> **PostgreSQL**（v1.4.0）：统一连接层 `store/connection/`（`base.py`/`sqlite.py`/`pg.py`）的 `PostgresDatabase` 按 `os.getpid()` **惰性建 asyncpg 池**，为将来多 worker 预留（当前实际单进程运行，见 architecture.md §1.3）。
 >
 > **从 SQLite 迁移到 PostgreSQL**：
 > 1. 启动 PostgreSQL 并建库/用户（`agent_mesh`）。

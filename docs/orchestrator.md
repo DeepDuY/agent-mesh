@@ -83,7 +83,7 @@ REST 端点按领域拆分到 `orchestrator/api/` 包，`__init__.py` 的 `creat
 ### 1.5 存储层（orchestrator/store/）
 
 - `base.py`：`AbstractStore` 抽象接口 + `_new_task_id()`（`t-<uuid8>`）。接口含 `list_tasks(..., offset=0)` 与 `remove_from_queue()`。
-- **`connection.py`（统一数据库对接层，v1.4.0）**：集中管理两侧连接生命周期与执行原语，store 层只写 SQL + 行映射：
+- **`connection/`（统一数据库对接层，v1.4.0）**：集中管理两侧连接生命周期与执行原语，store 层只写 SQL + 行映射。按职责拆分：`base.py`（`Database` 抽象 + 值转换助手）、`sqlite.py`（`SQLiteDatabase`）、`pg.py`（`PostgresDatabase` + 占位符重写）、`pg_schema.py`（PG 建表/种子）、`pg_schema_upgrade.py`（PG 列级升级）。
   - `Database` 抽象：`execute`（返回 dict-like 行）/ `execute_rowcount`（写返回受影响行数）/ `fetchrow`（单行）/ `executemany` / `dequeue`。**所有 SQL 统一用 `?` 占位符**。
   - `SQLiteDatabase`：每连接新建 + `asyncio.Lock` 串行化；WAL（`PRAGMA journal_mode=WAL` + `busy_timeout=5000`）；SQL 迁移（`store/migrations/*.sql`）；`_ensure_admin_user`/`_ensure_session_secret`。
   - `PostgresDatabase`：**per-process 惰性 asyncpg 池**（`_acquire()` 按 `os.getpid()` 建池，fork 的 uvicorn worker 自动重建自己的池，规避 asyncpg loop 绑定与 fork 陷阱）；`initialize()` 用一次性连接建 schema + 列级升级；`?`→`$n` 占位符转换；aware datetime 自动归一化为 naive（匹配 PG `TIMESTAMP` 无时区列）。
@@ -219,7 +219,7 @@ class TaskStatus(str, enum.Enum):
 ```
 store/
 ├── base.py              # AbstractStore 接口 + _new_task_id()
-├── connection.py        # 统一数据库对接层：Database 抽象 + SQLiteDatabase + PostgresDatabase（v1.4.0）
+├── connection/          # 统一数据库对接层：base/sqlite/pg/pg_schema（v1.4.0）
 ├── sqlite/              # SQLite 生产实现（按数据域拆分为 mixin）
 │   ├── __init__.py      # SQLiteStore 组合类
 │   ├── connection.py    # SQLiteBase 薄壳（持有 SQLiteDatabase，委托 _execute/_execute_rowcount）
@@ -256,7 +256,7 @@ store/
 
 ### 3.2 迁移机制
 - SQLite `_run_migrations()` 按文件名前缀序号升序执行，`schema_migrations(version)` 记录已应用版本，`executescript` 原子执行，幂等。
-- PG `initialize()` 用一次性连接建 schema + 列级升级：`_ensure_agent_schema_upgrade()` / `_ensure_user_schema_upgrade()` / `_ensure_task_schema_upgrade()` 用 `information_schema.columns` 做列级增量升级（`ALTER TABLE ADD COLUMN`），新列只需在 `additions` 字典登记；模板/settings 由 `_ensure_default_templates()` / `_ensure_settings()` seed。
+- PG `initialize()` 用一次性连接建 schema + 列级升级（`connection/pg_schema.py` 的 `create_schema`/`ensure_settings`/`ensure_default_templates`/`ensure_session_secret`/`ensure_admin_user`，`connection/pg_schema_upgrade.py` 的 `ensure_user_schema_upgrade`/`ensure_agent_schema_upgrade`/`ensure_task_schema_upgrade`）用 `information_schema.columns` 做列级增量升级（`ALTER TABLE ADD COLUMN`），新列只需在 `additions` 字典登记。
 
 ### 3.3 表清单
 | 表 | 说明 | 备注 |

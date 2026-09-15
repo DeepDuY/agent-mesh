@@ -88,7 +88,7 @@ uv sync
 - REST/Web：`http://0.0.0.0:8000`
 
 > 当前为**单进程**运行：`AGENT_MESH_WORKERS>1` 不生效（`uvicorn.Server.serve()` 忽略 `workers`），多 worker 待修复。
-> 使用 PostgreSQL：`AGENT_MESH_DB_TYPE=pg AGENT_MESH_PG_DSN='postgresql://user:pass@host/db'`（统一连接层 `store/connection.py` 按进程惰性建 asyncpg 池）。
+> 使用 PostgreSQL：`AGENT_MESH_DB_TYPE=pg AGENT_MESH_PG_DSN='postgresql://user:pass@host/db'`（统一连接层 `store/connection/` 按进程惰性建 asyncpg 池）。
 > ⚠️ 一律用 `uv run --no-sync`：直接 `uv run` 会重新解析依赖并尝试源码编译 `asyncpg`，在旧 glibc（<2.28）上会失败。
 
 ### 4. 启动 edge agent
@@ -300,7 +300,7 @@ agent-mesh/
 ├── src/agent_mesh/          # 源码
 │   ├── orchestrator/        # 调度器
 │   │   ├── api/             # REST 层（按领域拆分：auth/tasks/agents/edge/artifacts/bootstrap/files/skills）
-│   │   ├── store/           # 存储层（connection.py 统一对接层 + sqlite/ pg.py / migrations）
+│   │   ├── store/           # 存储层（connection/ 统一对接层 + sqlite/ pg.py / migrations）
 │   │   └── web_ui/          # 看板（index.html / style.css / js/*）
 │   ├── edge/                # 边沿 Agent
 │   │   └── execution/       # 任务执行（common/command/llm）

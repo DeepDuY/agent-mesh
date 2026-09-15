@@ -98,7 +98,7 @@ def validate_telemetry(telemetry) -> None  # 非注册键抛 ValueError（防注
 
 1. **注册表登记**：在 `shared/schemas.py` 的 `SYSTEM_FIELDS`（静态，保留旧值）或 `METRIC_FIELDS`（动态，覆盖）中加一行。该行即声明了类型归属与持久化策略。
 2. **数据库迁移**：新增 `orchestrator/store/migrations/0XX_<name>.sql`：`ALTER TABLE agents ADD COLUMN <field> <type>;`。
-3. **PG schema 同步**：`orchestrator/store/connection.py` 的 `PostgresDatabase._ensure_agent_schema_upgrade()` 的 `additions` 字典加同名列。
+3. **PG schema 同步**：`orchestrator/store/connection/pg_schema_upgrade.py` 的 `ensure_agent_schema_upgrade()` 的 `additions` 字典加同名列。
 4. **数据模型暴露**：`shared/schemas.py` 的 `AgentStatus` 加字段 + `model_dump_json_safe()` 输出。
 5. **Web 展示**：`orchestrator/web_ui/js/agents.js` 列表/详情按需展示。
 6. **测试**：`tests/test_edge_telemetry.py` 补一条心跳落库断言（含 keep-on-null / 覆盖策略）。
