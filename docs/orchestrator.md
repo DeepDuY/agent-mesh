@@ -71,7 +71,7 @@ REST 端点按领域拆分到 `orchestrator/api/` 包，`__init__.py` 的 `creat
 - `api/__init__.py`：`create_query_router()` + 认证依赖（`require_user_token` / `require_admin` / `require_ui_user` / `require_any_token`）+ `_store_artifact_ref`。`require_ui_user` 要求页面专用头 `X-Agent-Mesh-UI: 1`，外部调用一律 404。
 - `api/auth.py`：`POST /api/auth/login`、`GET /api/auth/me`、`GET /api/healthz`、admin 用户管理（创建/列表/删除/轮换 token/重置密码）+ 自助改密。
 - `api/tasks.py`：任务列表（含 `offset` 分页与 `total` 计数）/详情/状态/派发/终止/单删/批量删除（`batch-delete` 支持 `task_ids` 与 `all_matching` 两种模式）。
-- `api/agents.py`：节点列表/详情/别名/描述/system prompt/LLM 配置/模板绑定/ACL（单项 + 批量）/独立 token 轮换/升级请求/删除。
+- `api/agents.py`：节点列表/详情/别名/描述；配置（system prompt/LLM）、ACL、生命周期（token/升级/删除）分别拆到 `api/agent_config.py`、`api/agent_access.py`、`api/agent_lifecycle.py`，共享 `api/agent_common.py`。
 - `api/edge.py`：边沿协议（`poll_for_task`/`submit_result`/`mark_started`/`get_task_status`/`task_log`）。
 - `api/artifacts.py`：产物上传/列表/下载。
 - `api/files.py`：文件库上传/列表/下载/删除（见 [features.md §5](./features.md#5-文件库任务附件)）。

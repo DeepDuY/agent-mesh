@@ -77,6 +77,7 @@ agent-mesh/
 │   │   ├── api/                   # REST 层（按领域拆分）
 │   │   │   ├── __init__.py        # create_query_router + 认证依赖
 │   │   │   ├── auth.py  tasks.py  agents.py  edge.py  artifacts.py  files.py  bootstrap.py  skills.py
+│   │   │   ├── agent_common.py  agent_config.py  agent_access.py  agent_lifecycle.py
 │   │   │   └── teams.py  templates.py
 │   │   ├── store/
 │   │   │   ├── base.py            # AbstractStore
