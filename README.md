@@ -300,7 +300,7 @@ agent-mesh/
 ├── src/agent_mesh/          # 源码
 │   ├── orchestrator/        # 调度器
 │   │   ├── api/             # REST 层（按领域拆分：auth/tasks/agents/edge/artifacts/bootstrap/files/skills）
-│   │   ├── store/           # 存储层（connection/ 统一对接层 + sqlite/ pg.py / migrations）
+│   │   ├── store/           # 存储层（connection/ 统一对接层 + sqlite/ pg/ / migrations）
 │   │   └── web_ui/          # 看板（index.html / style.css / js/*）
 │   ├── edge/                # 边沿 Agent
 │   │   └── execution/       # 任务执行（common/command/llm）

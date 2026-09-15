@@ -90,7 +90,7 @@ REST 端点按领域拆分到 `orchestrator/api/` 包，`__init__.py` 的 `creat
   - 统一工具：`_dt_to_iso`/`_iso_to_dt`/`_load_json`/`_dump_json`/`_utcnow`。
 - `sqlite/`：`SQLiteStore` 生产实现，按数据域拆分为多个 mixin（`agents.py`/`tasks.py`/`artifacts.py`/`settings.py`/`users.py`/`skills.py`/`files.py`/`logs.py`/`teams.py`/`templates.py`）。mixin 基类 `SQLiteBase` 持有 `self._db: SQLiteDatabase`，`_execute`/`_execute_rowcount` 委托统一层；所有写方法基于 `rowcount` 返回正确布尔值；`dequeue` 走统一层原子"取队首+删行"。
   - **上报字段持久化是注册表驱动的**：`upsert_agent(..., telemetry=...)` 的列名只从 `shared.schemas` 的 `SYSTEM_FIELDS`/`METRIC_FIELDS` 常量取；`system` 字段用 `COALESCE(?, col)` 保留旧值、`metrics` 字段直接覆盖（见 [standards/edge-reporting.md](./standards/edge-reporting.md)）。
-- `pg.py`：`PostgresStore` 可选生产实现，持有 `self._db: PostgresDatabase`，只做行映射与 SQL。`dequeue` 走统一层 `FOR UPDATE SKIP LOCKED` 原子出队；幂等建表（`IF NOT EXISTS`）+ 列级 schema 升级。设置 `AGENT_MESH_DB_TYPE=pg` + `AGENT_MESH_PG_DSN` 启用。**多进程支持**：每个 worker 进程在统一层内自动重建连接池。
+- `pg/`：`PostgresStore` 可选生产实现，与 `sqlite/` 同样按数据域拆分为多个 mixin（`agents.py`/`tasks.py`/`artifacts.py`/`settings.py`/`users.py`/`skills.py`/`files.py`/`logs.py`/`teams.py`/`templates.py`），mixin 基类 `PostgresBase` 持有 `self._db: PostgresDatabase`，只做行映射与 SQL。`dequeue` 走统一层 `FOR UPDATE SKIP LOCKED` 原子出队。设置 `AGENT_MESH_DB_TYPE=pg` + `AGENT_MESH_PG_DSN` 启用。**多进程支持**：每个 worker 进程在统一层内自动重建连接池。
 - `auth.py`：`hash_password` / `verify_password`（bcrypt）/ `generate_token`（`secrets.token_urlsafe(32)`）。
 
 ## 2. 数据模型（shared/schemas.py）
@@ -232,7 +232,7 @@ store/
 │   ├── skills.py        # SkillsMixin
 │   ├── teams.py         # TeamMixin（teams/team_members + 用户唯一团队）
 │   └── users.py         # UsersMixin
-├── pg.py                # PostgresStore（可选，持有 PostgresDatabase）
+├── pg/                  # PostgresStore（可选，按域拆分为 mixin，持有 PostgresDatabase）
 └── migrations/
     ├── 001_initial.sql              # 全量初始表 + 默认 admin（占位 hash）
     ├── 002_add_task_mode.sql        # tasks/task_results 增加 mode

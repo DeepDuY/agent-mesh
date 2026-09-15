@@ -28,7 +28,7 @@
         │                                                                │
         │  存储后端 (AbstractStore 可插拔):                               │
         │  ├─ SQLiteStore (默认, WAL 模式) / store/sqlite/*              │
-        │  └─ PostgresStore (可选, asyncpg) / store/pg.py                │
+        │  └─ PostgresStore (可选, asyncpg) / store/pg/               │
         └────────────────────────────────────────────────────────────────┘
                            │                       │
             REST 心跳/领任务/提交                REST 查询 / Web 轮询
@@ -79,8 +79,10 @@ agent-mesh/
 │   │   │   ├── auth.py  tasks.py  agents.py  edge.py  artifacts.py  files.py  bootstrap.py  skills.py
 │   │   │   └── teams.py  templates.py
 │   │   ├── store/
-│   │   │   ├── connection/{__init__,base,sqlite,pg,pg_schema}.py  base.py  pg.py
+│   │   │   ├── base.py            # AbstractStore
+│   │   │   ├── connection/{__init__,base,sqlite,pg,pg_schema,pg_schema_upgrade}.py
 │   │   │   ├── sqlite/{__init__,connection,agents,tasks,artifacts,files,logs,settings,skills,users,teams,templates}.py
+│   │   │   ├── pg/{__init__,base,agents,tasks,artifacts,files,logs,settings,skills,users,teams,templates}.py
 │   │   │   └── migrations/001-018_*.sql
 │   │   └── web_ui/{index.html,style.css,js/app,auth,agents,tasks,files,skills,users,teams,templates,config}.js
 │   └── edge/
