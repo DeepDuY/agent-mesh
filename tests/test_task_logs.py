@@ -104,7 +104,7 @@ def test_delete_task_cascades_logs(client: TestClient):
 
 
 def test_opencode_line_classification():
-    from agent_mesh.edge.execution.common import _classify_opencode_line
+    from agent_mesh.edge.execution.parsing import _classify_opencode_line
 
     assert _classify_opencode_line('{"type":"text","part":{"text":"hello"}}') == {"kind": "text", "content": "hello"}
     assert _classify_opencode_line('{"type":"error","error":{"message":"boom"}}') == {"kind": "error", "content": "boom"}

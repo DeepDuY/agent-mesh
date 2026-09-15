@@ -5,18 +5,15 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from agent_mesh.edge.execution.common import (
-    ExecutionOutcome,
-    _collect_artifacts,
-    _error_outcome,
+from agent_mesh.edge.execution.common import ExecutionOutcome, _error_outcome, stream_task_log
+from agent_mesh.edge.execution.process import (
     _first_line,
     _read_stream,
-    _snapshot_files,
     _tail,
     _wait_proc,
     spawn_kwargs,
-    stream_task_log,
 )
+from agent_mesh.edge.execution.workspace import _collect_artifacts, _snapshot_files
 from agent_mesh.shared.schemas import Task
 
 logger = logging.getLogger(__name__)

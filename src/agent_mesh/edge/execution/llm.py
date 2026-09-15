@@ -8,24 +8,26 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from agent_mesh.edge.config_writer import build_opencode_config, find_runtime
-from agent_mesh.edge.execution.common import (
-    ExecutionOutcome,
+from agent_mesh.edge.execution.common import ExecutionOutcome, _error_outcome, stream_task_log
+from agent_mesh.edge.execution.parsing import (
     _classify_llm_error,
     _classify_opencode_line,
-    _cleanup_config,
-    _collect_artifacts,
-    _error_outcome,
     _extract_session_id,
     _extract_structured_output,
     _extract_summary_from_json,
+)
+from agent_mesh.edge.execution.process import (
     _first_line,
     _read_stream,
-    _snapshot_files,
     _tail,
     _wait_proc,
-    _wrap_llm_instruction,
     spawn_kwargs,
-    stream_task_log,
+)
+from agent_mesh.edge.execution.prompt import _wrap_llm_instruction
+from agent_mesh.edge.execution.workspace import (
+    _cleanup_config,
+    _collect_artifacts,
+    _snapshot_files,
 )
 from agent_mesh.shared.schemas import Task
 

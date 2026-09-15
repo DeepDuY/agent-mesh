@@ -9,7 +9,7 @@ from agent_mesh.edge.config_writer import (
     read_llm_models,
     read_system_prompt,
 )
-from agent_mesh.edge.execution.common import _wrap_llm_instruction
+from agent_mesh.edge.execution.prompt import _wrap_llm_instruction
 
 ADMIN_API_TOKEN = "admin-api-token-123"
 GLOBAL_TOKEN = "mcp-global-token"
