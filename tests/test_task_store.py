@@ -60,6 +60,18 @@ async def test_submit_result(store: TaskStore):
 
 
 @pytest.mark.asyncio
+async def test_heartbeat_records_ip_and_keeps_it(store: TaskStore):
+    await store.heartbeat(
+        "node-ip", "dev-ip", "opencode", "h",
+        telemetry={"os": "linux"}, ip_address="10.0.0.9",
+    )
+    assert (await store.list_agents())[0].ip_address == "10.0.0.9"
+    # A later heartbeat without an IP keeps the last observed value.
+    await store.heartbeat("node-ip", "dev-ip", "opencode", "h", telemetry={"os": "linux"})
+    assert (await store.list_agents())[0].ip_address == "10.0.0.9"
+
+
+@pytest.mark.asyncio
 async def test_offline_flip_by_agent_id_when_device_null(store: TaskStore):
     """Report 3.7: a node without a device_id must still be flippable offline."""
     await store.heartbeat("node-x", None, "opencode", "host", telemetry={"os": "linux"})

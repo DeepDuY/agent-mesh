@@ -767,6 +767,7 @@ class PostgresDatabase(Database):
             "system_prompt": "ALTER TABLE agents ADD COLUMN system_prompt TEXT",
             "access": "ALTER TABLE agents ADD COLUMN access JSONB",
             "template_id": "ALTER TABLE agents ADD COLUMN template_id INTEGER REFERENCES templates(id) ON DELETE SET NULL",
+            "ip_address": "ALTER TABLE agents ADD COLUMN ip_address TEXT",
         }
         for col, sql in additions.items():
             if col not in cols:

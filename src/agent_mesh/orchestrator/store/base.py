@@ -45,6 +45,7 @@ class AbstractStore(abc.ABC):
         llm_model: str | None = None,
         version: str | None = None,
         telemetry: dict[str, Any] | None = None,
+        ip_address: str | None = None,
     ) -> int: ...
 
     @abc.abstractmethod

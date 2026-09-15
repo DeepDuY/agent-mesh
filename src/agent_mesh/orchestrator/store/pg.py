@@ -90,6 +90,7 @@ class PostgresStore(AbstractStore):
             online=bool(row["online"]),
             last_seen=_iso_to_dt(row["last_seen_at"]),
             current_task_id=row["current_task_id"],
+            ip_address=row.get("ip_address"),
             llm_api_key=row.get("llm_api_key"),
             llm_base_url=row.get("llm_base_url"),
             llm_model=row.get("llm_model"),
@@ -120,6 +121,7 @@ class PostgresStore(AbstractStore):
         llm_model: str | None = None,
         version: str | None = None,
         telemetry: dict[str, Any] | None = None,
+        ip_address: str | None = None,
     ) -> int:
         telemetry = dict(telemetry or {})
         validate_telemetry(telemetry)
@@ -129,12 +131,12 @@ class PostgresStore(AbstractStore):
             sets = [
                 "agent_id=?", "runtime=?", "hostname=?", "online=?",
                 "last_seen_at=?", "current_task_id=?", "metadata=?",
-                "version=?", "updated_at=?",
+                "version=?", "ip_address=COALESCE(?, ip_address)", "updated_at=?",
             ]
             params: list[Any] = [
                 agent_id, runtime, hostname, online,
                 last_seen, current_task_id,
-                _dump_json(metadata), version, now,
+                _dump_json(metadata), version, ip_address, now,
             ]
             for col in SYSTEM_FIELDS:
                 if col in telemetry:
@@ -154,12 +156,12 @@ class PostgresStore(AbstractStore):
         cols = [
             "agent_id", "device_id", "runtime", "hostname",
             "online", "last_seen_at", "current_task_id", "metadata",
-            "version", "updated_at",
+            "version", "ip_address", "updated_at",
         ]
         vals: list[Any] = [
             agent_id, device_id, runtime, hostname, online,
             last_seen, current_task_id,
-            _dump_json(metadata), version, now,
+            _dump_json(metadata), version, ip_address, now,
         ]
         for col in TELEMETRY_FIELDS:
             if col in telemetry:

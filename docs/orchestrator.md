@@ -180,6 +180,7 @@ class AgentStatus(BaseModel):
     online: bool
     last_seen: datetime | None
     current_task_id: str | None
+    ip_address: str | None            # 服务端观测到的来源 IP（迁移 018；每次心跳更新，心跳未带 IP 时保留旧值）
     description: str | None            # 节点用途说明（迁移 013；effective_description 由 describe_agents() 计算）
     system_prompt: str | None          # 节点级系统提示（迁移 013）
     template_id: int | None            # 绑定的模板（迁移 014；模板绑定为 UI 专用）
@@ -245,7 +246,8 @@ store/
     ├── 014_templates.sql           # templates 表 + agents.template_id
     ├── 015_permissions.sql         # templates.permission、删除 tasks/templates.allowed_tools、settings.default_permission
     ├── 016_template_node_description.sql  # templates.node_description（与模板说明分离）
-    └── 017_tenancy.sql             # teams/team_members、agents.access、tasks.user_id/team_id、templates.owner_user_id/owner_team_id
+    ├── 017_tenancy.sql             # teams/team_members、agents.access、tasks.user_id/team_id、templates.owner_user_id/owner_team_id
+    └── 018_agent_ip_address.sql    # agents.ip_address（来源 IP，节点详情展示）
 ```
 
 ### 3.2 迁移机制

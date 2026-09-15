@@ -166,6 +166,13 @@ def test_upload_to_unknown_task_rejected(client: TestClient):
     assert r.status_code == 404
 
 
+def test_node_detail_exposes_reported_ip(client: TestClient):
+    _poll(client, DEV1)
+    agent = client.get(f"/api/agents/{DEV1}/detail", headers=_admin()).json()["agent"]
+    # TestClient reports its client host as "testclient".
+    assert agent["ip_address"] == "testclient"
+
+
 def test_legacy_user_token_edge_can_submit_node_task(client: TestClient):
     """A user-token edge (node operator) may submit results for tasks on its node."""
     _poll(client, DEV1)

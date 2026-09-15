@@ -440,6 +440,7 @@ class TaskStore:
         version: str | None = None,
         telemetry: dict[str, Any] | None = None,
         running_tasks: list[str] | None = None,
+        ip_address: str | None = None,
     ) -> tuple[list[Task], str]:
         """Register/re-fresh the agent on heartbeat and claim queued tasks.
 
@@ -470,6 +471,7 @@ class TaskStore:
             last_seen=now,
             current_task_id=current_task_id,
             telemetry=telemetry,
+            ip_address=ip_address,
         )
 
         active = await self.list_active_tasks(key)

@@ -141,6 +141,7 @@ class AgentStatus(BaseModel):
     online: bool = False
     last_seen: datetime | None = None
     current_task_id: str | None = None
+    ip_address: str | None = None
     llm_api_key: str | None = None
     llm_base_url: str | None = None
     llm_model: str | None = None
@@ -174,6 +175,7 @@ class AgentStatus(BaseModel):
             "online": self.online,
             "last_seen": self.last_seen.isoformat() if self.last_seen else None,
             "current_task_id": self.current_task_id,
+            "ip_address": self.ip_address,
             "llm_api_key": self.llm_api_key,
             "llm_base_url": self.llm_base_url,
             "llm_model": self.llm_model,

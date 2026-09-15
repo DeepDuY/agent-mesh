@@ -24,7 +24,7 @@ function filteredAgents() {
     if (agentStatusFilter === 'offline' && a.online) return false;
     if (!q) return true;
     return [a.id, a.agent_id, a.hostname, a.alias, a.display_name, a.distro,
-            a.os, a.description, a.effective_description]
+            a.os, a.description, a.effective_description, a.ip_address]
       .filter(x => x != null).join(' ').toLowerCase().includes(q);
   });
 }
@@ -294,6 +294,7 @@ async function showAgentDetail(agentId) {
       <div class="detail-item"><label>节点描述</label><span>${a.effective_description ? escHtml(a.effective_description) : '-'}</span></div>
       <div class="detail-item"><label>模板</label><span>${escHtml(a.template_name || (currentTemplates || []).find(t => t.id === a.template_id)?.name || '-')}</span></div>
       <div class="detail-item"><label>主机名</label><span>${a.hostname || '-'}</span></div>
+      <div class="detail-item"><label>IP 地址</label><span class="mono">${a.ip_address || '-'}</span></div>
       <div class="detail-item"><label>探针版本</label><span class="mono">${a.version || '-'}</span></div>
       <div class="detail-item"><label>系统</label><span>${a.distro || a.os || '-'} ${a.arch || ''}</span></div>
       <div class="detail-item"><label>运行时</label><span>${a.runtime || '-'}</span></div>

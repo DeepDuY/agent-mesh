@@ -120,6 +120,7 @@ def mount_edge_routes(
         task, key = await store.heartbeat(
             agent_id, device_id, runtime, hostname, version, telemetry,
             running_tasks=body.get("running_tasks") or [],
+            ip_address=request.client.host if request.client else None,
         )
         agent = await store.resolve_agent(key)
 

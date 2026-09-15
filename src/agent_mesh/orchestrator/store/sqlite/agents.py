@@ -33,6 +33,7 @@ class AgentMixin(SQLiteBase):
             online=bool(row["online"]),
             last_seen=_iso_to_dt(row["last_seen_at"]),
             current_task_id=row["current_task_id"],
+            ip_address=_row_get(row, "ip_address"),
             llm_api_key=_row_get(row, "llm_api_key"),
             llm_base_url=_row_get(row, "llm_base_url"),
             llm_model=_row_get(row, "llm_model"),
@@ -63,6 +64,7 @@ class AgentMixin(SQLiteBase):
         llm_model: str | None = None,
         version: str | None = None,
         telemetry: dict[str, Any] | None = None,
+        ip_address: str | None = None,
     ) -> int:
         """Upsert an agent row.
 
@@ -86,12 +88,13 @@ class AgentMixin(SQLiteBase):
                 "current_task_id=?",
                 "metadata=?",
                 "version=?",
+                "ip_address=COALESCE(?, ip_address)",
                 "updated_at=?",
             ]
             params: list[Any] = [
                 agent_id, runtime, hostname, online,
                 _dt_to_iso(last_seen), current_task_id,
-                _dump_json(metadata), version, now,
+                _dump_json(metadata), version, ip_address, now,
             ]
             for col in SYSTEM_FIELDS:
                 if col in telemetry:
@@ -110,12 +113,12 @@ class AgentMixin(SQLiteBase):
         cols = [
             "agent_id", "device_id", "runtime", "hostname",
             "online", "last_seen_at", "current_task_id", "metadata",
-            "version", "updated_at",
+            "version", "ip_address", "updated_at",
         ]
         vals: list[Any] = [
             agent_id, device_id, runtime, hostname, online,
             _dt_to_iso(last_seen), current_task_id,
-            _dump_json(metadata), version, now,
+            _dump_json(metadata), version, ip_address, now,
         ]
         for col in TELEMETRY_FIELDS:
             if col in telemetry:
