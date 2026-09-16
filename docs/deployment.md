@@ -71,8 +71,8 @@ TOKEN='<token>' bash <(curl -fsSL -H "Authorization: Bearer <token>" <public_url
 | `AGENT_MESH_PG_PASSWORD` | `""` | PG 密码 |
 | `AGENT_MESH_PG_DATABASE` | `agent_mesh` | PG 数据库名 |
 | `AGENT_MESH_ARTIFACT_DIR` | `./data/artifacts` | 产物目录 |
-| `AGENT_MESH_ARTIFACT_MAX_SIZE_MB` | `50` | 单文件上限 |
-| `AGENT_MESH_ARTIFACT_MAX_TOTAL_MB` | `200` | 总量上限 |
+| `AGENT_MESH_ARTIFACT_MAX_SIZE_MB` | `50` | 单文件上限（**已弃用**，仅 ArtifactStore 兜底） |
+| `AGENT_MESH_ARTIFACT_MAX_TOTAL_MB` | `200` | 总量上限（**已弃用**，仅 ArtifactStore 兜底） |
 | `AGENT_MESH_SWEEP_INTERVAL_S` | `5` | 清扫间隔（秒） |
 | `AGENT_MESH_OFFLINE_AFTER_S` | `15` | 心跳超时判离线（秒）。⚠️ `deploy/install.sh` 生成的 `orchestrator.env` 会覆盖为 `30` |
 | `AGENT_MESH_SESSION_TTL_S` | `86400` | 登录 session token 有效期（秒） |

@@ -341,10 +341,12 @@ agent-mesh/
 | `AGENT_MESH_OFFLINE_AFTER_S` | `15` | 离线判定时间（`deploy/install.sh` 生成的 `orchestrator.env` 会覆盖为 `30`） |
 | `AGENT_MESH_SESSION_TTL_S` | `86400` | 登录 session token 有效期（秒） |
 | `AGENT_MESH_ARTIFACT_DIR` | `./data/artifacts` | 产物存储目录 |
-| `AGENT_MESH_ARTIFACT_MAX_SIZE_MB` | `50` | 单产物大小上限 |
-| `AGENT_MESH_ARTIFACT_MAX_TOTAL_MB` | `200` | 产物总上限 |
+| `AGENT_MESH_ARTIFACT_MAX_SIZE_MB` | `50` | 单产物大小上限（**已弃用**，仅作 ArtifactStore 兜底；改用配置页设置） |
+| `AGENT_MESH_ARTIFACT_MAX_TOTAL_MB` | `200` | 产物总上限（**已弃用**，仅作 ArtifactStore 兜底；改用配置页设置） |
 
-> `max_concurrent`（每节点并发任务数，默认 2）不是环境变量，而是运行时可调设置（配置页或 `PATCH /api/settings`），随心跳下发到在线节点。
+> **上传大小限制是运行时可调设置**（不是环境变量）：文件库单文件 `file_max_size_mb`、产物单文件 `artifact_max_size_mb`、单任务产物总量 `artifact_task_total_mb`、产物全库总量 `artifact_total_mb`、超出全库时回收最旧 `artifact_evict_oldest`、产物传输超时 `artifact_timeout_s`。在「配置 → 上传大小限制」或 `PATCH /api/settings` 调整；默认 100/100/100/200/开/300s。其中 `artifact_timeout_s` 随心跳下发给探针（探针上传用），页面下载产物也按此超时。
+>
+> `max_concurrent`（每节点并发任务数，默认 2）同样不是环境变量，而是运行时可调设置（配置页或 `PATCH /api/settings`），随心跳下发到在线节点。
 
 ### edge agent 环境变量
 

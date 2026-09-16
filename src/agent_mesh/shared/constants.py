@@ -1,7 +1,7 @@
 import enum
 
 VERSION = "1.6.3"          # edge probe / bootstrap package version
-SERVER_VERSION = "1.7.0"   # orchestrator (server) version
+SERVER_VERSION = "1.7.1"   # orchestrator (server) version
 
 # Initial gateway model ids seeded into `settings.llm_models` on a fresh
 # database. This is only a default value, not a hardcoded allow-list: the edge

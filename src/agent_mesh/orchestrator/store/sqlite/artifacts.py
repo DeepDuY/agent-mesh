@@ -38,3 +38,9 @@ class ArtifactMixin(SQLiteBase):
             }
             for row in rows
         ]
+
+    async def delete_artifact(self, artifact_id: str) -> bool:
+        affected = await self._execute_rowcount(
+            "DELETE FROM artifacts WHERE artifact_id = ?", (artifact_id,)
+        )
+        return affected > 0

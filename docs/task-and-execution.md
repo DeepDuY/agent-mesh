@@ -34,7 +34,8 @@
 - 磁盘：`<artifact_dir>/<task_id>/<artifact_id>_<原始文件名>`，`artifact_id = a-<uuid8>`。
 - 元数据：`artifacts` 表（`INSERT OR IGNORE` 幂等）。
 - 下载：`GET /api/artifacts/{task_id}/{artifact_id}` 用 `FileResponse` 返回，`content_type` 由 `mimetypes` 猜测。
-- 大小限制：单文件 `artifact_max_size_mb`（默认 50MB），总量 `artifact_max_total_mb`（默认 200MB）。
+- 大小限制（**运行时可调**，配置页「上传大小限制」/`PATCH /api/settings`，逐请求读取）：单文件 `artifact_max_size_mb`（默认 100MB）、单任务总量 `artifact_task_total_mb`（默认 100MB）、全库总量 `artifact_total_mb`（默认 200MB）。超出全库总量且 `artifact_evict_oldest=1`（默认）时按 mtime **回收最旧的产物**（同时删磁盘文件与 `artifacts` 行）腾空间；关闭回收则直接 `413`。超限返回 `413`，detail 含文件名与上限（探针会把它写入任务日志/结果）。
+- 传输超时 `artifact_timeout_s`（默认 300s）：探针上传产物与页面下载产物共用，随心跳下发给探针。
 
 ## 2. 任务状态机
 

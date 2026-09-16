@@ -6,9 +6,41 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-from agent_mesh.orchestrator.artifact_store import ArtifactStore
+from agent_mesh.orchestrator.artifact_store import ArtifactStore, ArtifactTooLarge
 from agent_mesh.orchestrator.config import OrchestratorConfig
+from agent_mesh.orchestrator.limits import MB, get_int_setting
 from agent_mesh.orchestrator.task_store import TaskStore
+
+
+async def _ensure_global_capacity(
+    artifact_store: ArtifactStore,
+    store: TaskStore,
+    needed: int,
+    global_total: int,
+    evict_oldest: bool,
+) -> None:
+    """Free space for ``needed`` bytes, recycling the oldest artifacts.
+
+    When ``evict_oldest`` is on (default), artifacts are deleted oldest-first
+    until the new upload fits under the global quota; their DB rows are removed
+    too. When it is off, an over-quota upload is rejected outright.
+    """
+    used = artifact_store.total_size()
+    if used + needed <= global_total:
+        return
+    if not evict_oldest:
+        raise HTTPException(status_code=413, detail="artifact storage quota exceeded")
+    for item in artifact_store.oldest_files():
+        if used + needed <= global_total:
+            break
+        artifact_store.remove(item["path"])
+        await store.store.delete_artifact(item["artifact_id"])
+        used -= item["size"]
+    if used + needed > global_total:
+        raise HTTPException(
+            status_code=413,
+            detail="artifact storage quota exceeded (nothing left to evict)",
+        )
 
 
 def mount_artifact_routes(
@@ -34,10 +66,38 @@ def mount_artifact_routes(
             raise HTTPException(status_code=404, detail="task not found")
         if not await store.edge_can_access_task(auth, task):
             raise HTTPException(status_code=403, detail="no access to this task")
+
+        # Effective limits are read per request from settings so a config-page
+        # change applies immediately (and in every worker).
+        max_per_file = await get_int_setting(store, "artifact_max_size_mb") * MB
+        task_total = await get_int_setting(store, "artifact_task_total_mb") * MB
+        global_total = await get_int_setting(store, "artifact_total_mb") * MB
+        evict_oldest = bool(await get_int_setting(store, "artifact_evict_oldest"))
+
         refs: list[dict[str, Any]] = []
         for upload in files:
             content = await upload.read()
-            ref = artifact_store.save(task_id, upload.filename or "unnamed", content)
+            if len(content) > max_per_file:
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        f"artifact {upload.filename} exceeds max size "
+                        f"{max_per_file // MB}MB"
+                    ),
+                )
+            await _ensure_global_capacity(
+                artifact_store, store, len(content), global_total, evict_oldest
+            )
+            try:
+                ref = artifact_store.save(
+                    task_id,
+                    upload.filename or "unnamed",
+                    content,
+                    max_size=max_per_file,
+                    task_total=task_total,
+                )
+            except ArtifactTooLarge as e:
+                raise HTTPException(status_code=413, detail=str(e))
             await _store_artifact_ref(task_id, ref)
             refs.append(ref.model_dump())
         return {"artifacts": refs}

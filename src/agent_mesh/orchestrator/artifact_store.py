@@ -6,10 +6,15 @@ import threading
 import tempfile
 import uuid
 from pathlib import Path
+from typing import Any
 
 from agent_mesh.shared.schemas import ArtifactRef
 
 _TASK_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+class ArtifactTooLarge(Exception):
+    """Raised when a single artifact or a task's artifact total exceeds its cap."""
 
 
 def _safe_task_id(task_id: str) -> str | None:
@@ -39,6 +44,8 @@ class ArtifactStore:
         else:
             self.base_dir = Path(base_dir).expanduser().resolve()
             self.base_dir.mkdir(parents=True, exist_ok=True)
+        # Fallback caps used when a caller does not pass explicit limits; the
+        # effective limits come from DB settings (see orchestrator/limits.py).
         self.max_size = max_size_mb * 1024 * 1024
         self.max_total = max_total_mb * 1024 * 1024
         self._lock = threading.Lock()
@@ -51,25 +58,69 @@ class ArtifactStore:
         d.mkdir(parents=True, exist_ok=True)
         return d
 
-    def _total_size(self) -> int:
-        total = 0
+    def task_size(self, task_id: str) -> int:
+        """Total bytes stored for one task (0 when unknown/empty)."""
+        safe = _safe_task_id(task_id)
+        if safe is None:
+            return 0
+        d = self.base_dir / safe
+        if not d.exists():
+            return 0
+        return sum(p.stat().st_size for p in d.iterdir() if p.is_file())
+
+    def total_size(self) -> int:
+        """Total bytes stored across every task (the global quota basis)."""
+        return sum(p.stat().st_size for p in self.base_dir.rglob("*") if p.is_file())
+
+    def oldest_files(self) -> list[dict[str, Any]]:
+        """Every stored artifact, oldest first (by mtime), for quota eviction."""
+        items: list[dict[str, Any]] = []
         for p in self.base_dir.rglob("*"):
-            if p.is_file():
-                total += p.stat().st_size
-        return total
+            if not p.is_file():
+                continue
+            st = p.stat()
+            items.append(
+                {
+                    "path": p,
+                    "task_id": p.parent.name,
+                    "artifact_id": p.name.partition("_")[0],
+                    "size": st.st_size,
+                    "mtime": st.st_mtime,
+                }
+            )
+        items.sort(key=lambda i: i["mtime"])
+        return items
+
+    @staticmethod
+    def remove(path: Path) -> bool:
+        try:
+            Path(path).unlink()
+            return True
+        except OSError:
+            return False
 
     def save(
-        self, task_id: str, filename: str, content: bytes
+        self,
+        task_id: str,
+        filename: str,
+        content: bytes,
+        *,
+        max_size: int | None = None,
+        task_total: int | None = None,
     ) -> ArtifactRef:
+        limit = self.max_size if max_size is None else max_size
         # Serialize the size checks and the file write so concurrent uploads
-        # cannot race past the total-storage quota (TOCTOU).
+        # cannot race past the per-file limit.
         with self._lock:
-            if len(content) > self.max_size:
-                raise ValueError(
-                    f"artifact {filename} exceeds max size {self.max_size} bytes"
+            if len(content) > limit:
+                raise ArtifactTooLarge(
+                    f"artifact {filename} exceeds max size {limit // (1024 * 1024)}MB"
                 )
-            if self._total_size() + len(content) > self.max_total:
-                raise ValueError("artifact upload exceeds total storage quota")
+            if task_total is not None and self.task_size(task_id) + len(content) > task_total:
+                raise ArtifactTooLarge(
+                    f"task {task_id} artifact total exceeds "
+                    f"{task_total // (1024 * 1024)}MB"
+                )
 
             artifact_id = f"a-{uuid.uuid4().hex[:8]}"
             # Sanitize filename.

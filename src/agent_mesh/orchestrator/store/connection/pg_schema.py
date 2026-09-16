@@ -177,6 +177,13 @@ async def ensure_settings(conn: Any) -> None:
         ("llm_models", DEFAULT_LLM_MODELS),
         ("config_version", "0"),
         ("auto_upgrade", "1"),
+        # Runtime-configurable upload / transfer limits (see migration 020).
+        ("file_max_size_mb", "100"),
+        ("artifact_max_size_mb", "100"),
+        ("artifact_task_total_mb", "100"),
+        ("artifact_total_mb", "200"),
+        ("artifact_evict_oldest", "1"),
+        ("artifact_timeout_s", "300"),
     ):
         await conn.execute(
             "INSERT INTO settings (key, value) VALUES ($1, $2) "

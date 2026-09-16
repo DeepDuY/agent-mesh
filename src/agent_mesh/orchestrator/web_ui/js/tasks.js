@@ -330,8 +330,14 @@ async function loadTaskEvents(taskId) {
 }
 
 async function downloadArtifact(taskId, artifactId, filename) {
+  const timeoutS = window.ARTIFACT_TIMEOUT_S || 300;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutS * 1000);
   try {
-    const res = await fetch(`/api/artifacts/${taskId}/${artifactId}`, { headers });
+    const res = await fetch(`/api/artifacts/${taskId}/${artifactId}`, {
+      headers,
+      signal: controller.signal,
+    });
     if (!res.ok) throw new Error(`下载失败：HTTP ${res.status}`);
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
@@ -343,7 +349,13 @@ async function downloadArtifact(taskId, artifactId, filename) {
     a.remove();
     URL.revokeObjectURL(url);
   } catch (e) {
-    alert(e.message || '下载失败');
+    if (e.name === 'AbortError') {
+      alert(`下载超时（${timeoutS}s）；可在「配置 → 上传大小限制」调整产物传输超时`);
+    } else {
+      alert(e.message || '下载失败');
+    }
+  } finally {
+    clearTimeout(timer);
   }
 }
 

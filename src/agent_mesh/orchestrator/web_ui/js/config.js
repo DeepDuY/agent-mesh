@@ -41,6 +41,21 @@ async function loadConfig() {
     if (document.activeElement !== pollInput) pollInput.value = settings.task_log_poll_interval || '5';
 
     window.TASK_LOG_POLL_S = parseInt(settings.task_log_poll_interval, 10) || 5;
+
+    const fileMax = document.getElementById('file-max-size-mb');
+    if (fileMax && document.activeElement !== fileMax) fileMax.value = settings.file_max_size_mb || '100';
+    const artMax = document.getElementById('artifact-max-size-mb');
+    if (artMax && document.activeElement !== artMax) artMax.value = settings.artifact_max_size_mb || '100';
+    const artTask = document.getElementById('artifact-task-total-mb');
+    if (artTask && document.activeElement !== artTask) artTask.value = settings.artifact_task_total_mb || '100';
+    const artTotal = document.getElementById('artifact-total-mb');
+    if (artTotal && document.activeElement !== artTotal) artTotal.value = settings.artifact_total_mb || '200';
+    const evictEl = document.getElementById('artifact-evict-oldest');
+    if (evictEl) evictEl.checked = (settings.artifact_evict_oldest ?? '1') !== '0';
+    const artTimeout = document.getElementById('artifact-timeout-s');
+    if (artTimeout && document.activeElement !== artTimeout) artTimeout.value = settings.artifact_timeout_s || '300';
+    window.ARTIFACT_TIMEOUT_S = parseInt(settings.artifact_timeout_s, 10) || 300;
+
     loadVersionInfo();
   } catch (e) {
     console.error('load config failed', e);
@@ -218,6 +233,33 @@ async function saveDefaultPermission() {
   }
   try {
     await patchSettings({ default_permission: raw });
+    el.textContent = '已保存';
+    el.style.color = '';
+  } catch (e) {
+    el.textContent = '保存失败：' + e.message;
+    el.style.color = 'var(--danger)';
+  }
+  setTimeout(() => el.textContent = '', 3000);
+}
+
+async function saveUploadLimits() {
+  const el = document.getElementById('upload-limits-status');
+  const clamp = (id, def, min, max) => {
+    const v = parseInt(document.getElementById(id).value, 10);
+    const n = Number.isFinite(v) ? Math.max(min, Math.min(max, v)) : def;
+    document.getElementById(id).value = String(n);
+    return n;
+  };
+  try {
+    await patchSettings({
+      file_max_size_mb: String(clamp('file-max-size-mb', 100, 1, 102400)),
+      artifact_max_size_mb: String(clamp('artifact-max-size-mb', 100, 1, 102400)),
+      artifact_task_total_mb: String(clamp('artifact-task-total-mb', 100, 1, 1048576)),
+      artifact_total_mb: String(clamp('artifact-total-mb', 200, 1, 1048576)),
+      artifact_evict_oldest: document.getElementById('artifact-evict-oldest').checked ? '1' : '0',
+      artifact_timeout_s: String(clamp('artifact-timeout-s', 300, 1, 86400)),
+    });
+    window.ARTIFACT_TIMEOUT_S = parseInt(document.getElementById('artifact-timeout-s').value, 10) || 300;
     el.textContent = '已保存';
     el.style.color = '';
   } catch (e) {

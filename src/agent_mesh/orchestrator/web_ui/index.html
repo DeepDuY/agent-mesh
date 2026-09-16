@@ -369,6 +369,39 @@
                 <span id="task-log-poll-status" class="status-msg"></span>
               </div>
             </div>
+
+            <div class="setting setting-lg">
+              <div class="setting-label">上传大小限制 <span class="help" data-tip="文件库与产物的上传大小上限、全库配额与传输超时。改动立即生效；产物传输超时会随心跳下发给探针。">?</span></div>
+              <div class="setting-control">
+                <div class="sub-field">
+                  <label>文件库单文件上限 (MB)</label>
+                  <input id="file-max-size-mb" type="number" min="1" max="102400" value="100" placeholder="100">
+                </div>
+                <div class="sub-field">
+                  <label>产物单文件上限 (MB)</label>
+                  <input id="artifact-max-size-mb" type="number" min="1" max="102400" value="100" placeholder="100">
+                </div>
+                <div class="sub-field">
+                  <label>单任务产物总量上限 (MB)</label>
+                  <input id="artifact-task-total-mb" type="number" min="1" max="1048576" value="100" placeholder="100">
+                </div>
+                <div class="sub-field">
+                  <label>产物全库总量上限 (MB)</label>
+                  <input id="artifact-total-mb" type="number" min="1" max="1048576" value="200" placeholder="200">
+                </div>
+                <div class="sub-field">
+                  <label class="toggle-line"><input type="checkbox" id="artifact-evict-oldest"> 超出全库总量时自动回收最旧的产物</label>
+                </div>
+                <div class="sub-field">
+                  <label>产物传输超时 (秒，探针上传 / 页面下载)</label>
+                  <input id="artifact-timeout-s" type="number" min="1" max="86400" value="300" placeholder="300">
+                </div>
+                <div class="sub-actions">
+                  <button class="btn" onclick="saveUploadLimits()">保存上传限制</button>
+                  <span id="upload-limits-status" class="status-msg"></span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </section>

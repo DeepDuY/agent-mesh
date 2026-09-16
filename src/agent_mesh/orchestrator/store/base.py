@@ -337,6 +337,9 @@ class AbstractStore(abc.ABC):
     @abc.abstractmethod
     async def list_artifacts(self, task_id: str) -> list[dict[str, Any]]: ...
 
+    @abc.abstractmethod
+    async def delete_artifact(self, artifact_id: str) -> bool: ...
+
     # ------------------------------------------------------------------
     # Task logs (live execution stream)
     # ------------------------------------------------------------------

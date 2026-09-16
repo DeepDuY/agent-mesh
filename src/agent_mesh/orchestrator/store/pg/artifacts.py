@@ -40,3 +40,8 @@ class ArtifactMixin(PostgresBase):
             }
             for row in rows
         ]
+
+    async def delete_artifact(self, artifact_id: str) -> bool:
+        return await self._db.execute_rowcount(
+            "DELETE FROM artifacts WHERE artifact_id = ?", (artifact_id,)
+        ) > 0

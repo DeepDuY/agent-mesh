@@ -82,7 +82,7 @@ REST 端点按领域拆分到 `orchestrator/api/` 包，`__init__.py` 的 `creat
 关键行为：
 - 认证：`require_user_token`（用户 token：API token 按 SHA-256 查表，session token 按 HMAC 解析，禁用用户拒绝）；`require_admin`（admin 角色限定）；`require_any_token`（全局 `config.token` / 用户 token / **agent 独立 token** 任一，返回调用者身份 `{auth:...}`）。Edge 端点、产物上传、bootstrap 下载用后者。详见 [auth-security.md](./auth-security.md)。
 - 登录：`POST /api/auth/login` 校验 bcrypt，返回**短期 session token**（不再返回长期 API token）。
-- 产物上传：`artifact_store.save()` 写磁盘（`threading.Lock` 内串行做大小/总量校验与写盘，避免并发超配额）+ `await` 同步落库元数据。
+- 产物上传：`artifact_store.save()` 写磁盘（`threading.Lock` 内串行做**单文件/单任务**上限校验与写盘）+ `await` 同步落库元数据；**全库配额**在路由层处理——超限时按 mtime 回收最旧产物（删磁盘 + `artifacts` 行），回收关闭则 `413`。上限与传输超时均为运行时设置（`orchestrator/limits.py` 逐请求读取）。
 - 删除节点（`DELETE /api/agents/{id}`）：先下发 command 自毁命令（见 [task-and-execution.md §4.2](./task-and-execution.md#42-apitaskspy--apiagentspy)），随后立即删 DB 记录。
 - `GET /api/bootstrap/install.sh`：动态生成安装脚本（见 [deployment.md §1](./deployment.md)），内嵌 orchestrator `base_url`；**不再内嵌全局 LLM 配置**（v1.3.3 起改由心跳 config-sync 下发，见 [auth-security.md §9](./auth-security.md#9-llm-配置同步)）。
 - `GET /api/bootstrap/{filename}`：静态文件服务，目录为 `<db_path 父目录>/bootstrap`（鉴权为 `require_any_token`，edge 可用全局 token 下载升级包）。

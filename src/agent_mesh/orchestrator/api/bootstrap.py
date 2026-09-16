@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 
 from agent_mesh.orchestrator.config import OrchestratorConfig, bootstrap_version
+from agent_mesh.orchestrator.limits import LIMIT_SPECS, validate_limit
 from agent_mesh.orchestrator.task_store import TaskStore
 from agent_mesh.shared.constants import SERVER_VERSION
 
@@ -54,9 +55,14 @@ def mount_bootstrap_routes(
     ) -> dict[str, Any]:
         body = await request.json()
         for key, value in body.items():
+            if key in LIMIT_SPECS:
+                error = validate_limit(key, value)
+                if error:
+                    raise HTTPException(status_code=400, detail=error)
+                value = str(int(value))
             await store.store.set_setting(key, str(value))
-        # Any change to LLM defaults or the fallback permission must be pushed to
-        # edges via config sync.
+        # Any change to LLM defaults, the fallback permission, or the probe
+        # transfer timeout must be pushed to edges via config sync.
         if any(
             k in body
             for k in (
@@ -65,6 +71,7 @@ def mount_bootstrap_routes(
                 "llm_model",
                 "llm_models",
                 "default_permission",
+                "artifact_timeout_s",
             )
         ):
             await store.bump_config_version()

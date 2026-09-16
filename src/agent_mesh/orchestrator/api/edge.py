@@ -50,6 +50,7 @@ async def _resolve_edge_config(store: TaskStore, agent) -> dict[str, str]:
     llm_base_url = (await store.store.get_setting("llm_base_url")) or ""
     llm_model = (await store.store.get_setting("llm_model")) or ""
     llm_models = (await store.store.get_setting("llm_models")) or ""
+    artifact_timeout_s = (await store.store.get_setting("artifact_timeout_s")) or "300"
 
     template = None
     if agent is not None and agent.template_id:
@@ -82,6 +83,7 @@ async def _resolve_edge_config(store: TaskStore, agent) -> dict[str, str]:
         "llm_models": llm_models,
         "system_prompt": system_prompt,
         "permission": permission,
+        "artifact_timeout_s": artifact_timeout_s,
     }
 
 

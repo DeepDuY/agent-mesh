@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from agent_mesh.orchestrator.config import OrchestratorConfig
+from agent_mesh.orchestrator.limits import MB, get_int_setting
 from agent_mesh.orchestrator.task_store import TaskStore
 
 logger = logging.getLogger(__name__)
@@ -94,14 +95,17 @@ def mount_file_routes(
             raise HTTPException(status_code=400, detail="no files provided")
         files_dir = _files_dir(config)
         files_dir.mkdir(parents=True, exist_ok=True)
-        max_size = config.artifact_max_size_mb * 1024 * 1024
+        max_size = await get_int_setting(store, "file_max_size_mb") * MB
         refs: list[dict[str, Any]] = []
         for upload in files:
             content = await upload.read()
             if len(content) > max_size:
                 raise HTTPException(
-                    status_code=400,
-                    detail=f"file {upload.filename} exceeds max size {config.artifact_max_size_mb}MB",
+                    status_code=413,
+                    detail=(
+                        f"file {upload.filename} exceeds max size "
+                        f"{max_size // MB}MB"
+                    ),
                 )
             md5 = hashlib.md5(content).hexdigest()
             safe_name = Path(upload.filename or "unnamed").name

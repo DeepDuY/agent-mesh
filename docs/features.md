@@ -37,6 +37,8 @@
 - **下载与校验**：探针执行前把附件下载到工作目录（原文件名），流式 md5 与快照比对；**失败/不符 → 任务标记失败**（`exit_code=-3`、`summary="attachment download failed"`）。下载在 `_snapshot_files` 之前，附件不会误收成产物；llm 提示词追加"工作目录可能已放入附件"提示。
 - **管理**：Web 看板「文件」页（搜索/上传/列表/下载/删除/批量删除/批量下载为 ZIP）；`DELETE /api/files/{file_id}` 不校验引用（被删文件的任务执行时下载失败而标记失败）。右上角用户菜单「个人中心」可下载**个性化** agent-mesh 技能包（`GET /api/skill-pack/agent-mesh`，返回 zip：SKILL.md 索引 + `references/`（已填充公开地址）+ 自动生成的 `.env`（token 放这里，不写入 Markdown））。
 
+- **上传大小限制（运行时可调）**：文件库单文件 `file_max_size_mb`、产物单文件 `artifact_max_size_mb`、单任务产物总量 `artifact_task_total_mb`、产物全库总量 `artifact_total_mb`、超出全库回收最旧 `artifact_evict_oldest`、产物传输超时 `artifact_timeout_s`（默认 100/100/100/200/开/300s）。配置页「上传大小限制」或 `PATCH /api/settings` 调整，逐请求生效；超限返回 `413`（探针把原因写入任务日志/结果），`artifact_timeout_s` 随心跳下发探针。
+
 ## 6. 多任务并发执行（v1.4.0）
 
 - **并发上限**：全局设置 `max_concurrent`（默认 `2`，配置页或 `PATCH /api/settings` 调整），随心跳 `poll_for_task` 响应顶层 `max_concurrent` 下发到边沿。
