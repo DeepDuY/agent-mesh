@@ -19,6 +19,8 @@ uv run --no-sync python scripts/build-agent-bootstrap.py
 - `install.sh`：包内安装脚本的副本，供直接 curl。
 - `VERSION`：版本清单（= `shared/constants.py:VERSION`），升级比对用。
 
+> 服务端（orchestrator）版本独立于探针版本，见 `shared/constants.py:SERVER_VERSION`，通过 `GET /api/healthz` 与 `GET /api/bootstrap/info` 暴露。探针包除用本脚本构建外，也可由 admin 在 Web「配置」页上传替换（`POST /api/bootstrap`）。
+
 `data/bootstrap/install.sh` 是包内安装脚本的唯一真源（构建脚本直接复制，不再动态生成）。流程：
 1. 读取 `INSTALL_DIR`（默认 `/opt/agent-mesh-agent`）、`ORCHESTRATOR_URL`、`TOKEN`（缺失即报错退出）、`EDGE_ALIAS`、`EDGE_LLM_*`。
 2. **前置检查**：非 root 且 systemd 存在时提示跳过 service；磁盘空间不足 500MB 报错；`$INSTALL_DIR` 已存在时要求 `FORCE_REINSTALL=1`（否则退出）。

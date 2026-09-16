@@ -62,6 +62,7 @@ queued ──心跳领取──▶ assigned ──mark_started──▶ working 
 - 离线扫描：`assigned` 但心跳超时 → 回 `queued` 并重新入队；`working` 的任务不会被误判离线（节点仍在执行，保持在线）。
 - **终止**：`cancel_task()` 只对非终态任务生效——`queued` 直接从队列移除；`assigned/working` 置为 `cancelled`（终态），边沿 agent 通过执行期间的 cancel 监视协程（`agent.py:_monitor_cancel`）轮询到 `cancelled` 后终止正在运行的子进程，且不再提交结果。
 - 队列与 `agents.current_task_id` 均以节点 **device_id（稳定键）** 匹配。
+- **派发被拦截（`denied`）**：`command` 模式在服务端权限预检被拒时不入队、不执行，而是直接写一条终态 `denied` 任务（`task_results.summary` = 拒绝原因）并追加 `permission_denied` 审计事件，使被拒的派发在任务列表可追溯；REST 仍返回 `403`。
 
 ## 3. 边沿 Agent 内部逻辑
 

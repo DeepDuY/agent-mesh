@@ -35,7 +35,7 @@
 - **上传**：`POST /api/files`（multipart `files`，可多文件，用户 token）→ 计算 md5 入库；**同 md5+文件名 去重**返回已有 `file_id`（非 admin 的去重范围限于自己创建的文件，admin 全局）；响应含 `{file_id, filename, size, content_type, md5, download_url}`。
 - **引用**：REST `POST /api/tasks/dispatch` 的 `attachments: [file_id]` → 服务端解析成 `FileRef` 快照存 `tasks.attachments`（JSON 列），id 无效报错。附件二进制只能走 REST 上传。
 - **下载与校验**：探针执行前把附件下载到工作目录（原文件名），流式 md5 与快照比对；**失败/不符 → 任务标记失败**（`exit_code=-3`、`summary="attachment download failed"`）。下载在 `_snapshot_files` 之前，附件不会误收成产物；llm 提示词追加"工作目录可能已放入附件"提示。
-- **管理**：Web 看板「文件」页（搜索/上传/列表/下载/删除/批量删除/批量下载为 ZIP）；`DELETE /api/files/{file_id}` 不校验引用（被删文件的任务执行时下载失败而标记失败）。配置页可下载**个性化** agent-mesh SKILL.md（`GET /api/skill-doc/agent-mesh`，自动填充公开地址 + 当前用户 token，未配置地址时给出索取提示）。
+- **管理**：Web 看板「文件」页（搜索/上传/列表/下载/删除/批量删除/批量下载为 ZIP）；`DELETE /api/files/{file_id}` 不校验引用（被删文件的任务执行时下载失败而标记失败）。右上角用户菜单「个人中心」可下载**个性化** agent-mesh 技能包（`GET /api/skill-pack/agent-mesh`，返回 zip：SKILL.md 索引 + `references/`（已填充公开地址）+ 自动生成的 `.env`（token 放这里，不写入 Markdown））。
 
 ## 6. 多任务并发执行（v1.4.0）
 

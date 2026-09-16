@@ -13,7 +13,7 @@
 ## 2. 密钥与哈希
 
 - 密码：bcrypt（`passlib`）。
-- API token：`generate_token()`（`secrets.token_urlsafe(32)`）创建，**仅以 SHA-256 摘要（`hash_token()`）入库**；创建/轮换时明文只返回一次。
+- API token：`generate_token()`（`secrets.token_urlsafe(32)`）创建，**仅以 SHA-256 摘要（`hash_token()`）入库**；创建/轮换时明文只返回一次。可选有效期 `users.token_expires_at`（`NULL` = 永久）：签发时可设天数，鉴权时 `resolve_token_user()` 对已过期的 API token 返回 `None`（迁移 019；PG 在 `ensure_user_schema_upgrade` 补列）。
 - session token：登录时签发，`make_session_token(username, session_secret, ttl_s)` = `base64url(payload).HMAC-SHA256` 无状态签名，含 `exp` 过期时间；`session_secret` 首次启动随机生成并持久化到 `settings` 表。**多 worker 安全**（无服务端会话存储）。**fail-closed**：若 `session_secret` 缺失/为空，登录直接拒绝（HTTP 500），`verify_session_token()` 对空 secret 一律返回 `None`——绝不使用空 secret 签发或校验 token。
 - token 对比：`hmac.compare_digest` 常数时间比较。
 
@@ -21,12 +21,13 @@
 
 - 迁移写入占位 hash，`_ensure_admin_user()` 启动时检查：仅当 hash 为占位符/非法时重置为 `hash_password("admin")`——**已改密码不会在重启时被复位**。
 - admin 的 API token 同样在启动时引导：若 `token_hash` 缺失或仍为占位符摘要，则生成随机 token 并在日志中打印一次（`generated a new admin API token (shown once)`）。
-- admin 可通过 `POST /api/auth/change-password` 修改密码、`POST /api/auth/users/{username}/token` 轮换 token。
+- admin 可通过 `POST /api/auth/change-password` 修改密码、`POST /api/auth/users/{username}/token` 轮换 token（可带 `{expires_in_days}`，留空=永久）。
 - Web 看板登录框**不再预填** `admin/admin`，需手动输入（避免弱口令一键登录）。
 
 ## 4. 用户管理（admin）
 
-- `POST /api/auth/users` 创建用户：校验用户名（`[A-Za-z0-9_.-]`）、角色（`admin`/`user`）**与 `team_id`（必填，且团队必须存在——一个用户只属于一个团队）**，返回一次性 API token；`GET /api/auth/users` 列表（不含任何 token/hash，含 `team_id`/`team_name`）；`DELETE /api/auth/users/{username}` 删除（禁止删 admin 与自身；同时清理 `team_members`/`agent_users` 幽灵关联）；`POST /api/auth/users/{username}/token` 轮换；`POST /api/auth/users/{username}/password` 重置密码；`POST /api/auth/change-password` 自助改密。
+- `POST /api/auth/users` 创建用户：校验用户名（`[A-Za-z0-9_.-]`）、角色（`admin`/`user`）**与 `team_id`（必填，且团队必须存在——一个用户只属于一个团队）**，返回一次性 API token；`GET /api/auth/users` 列表（不含任何 token/hash，含 `team_id`/`team_name`/`token_expires_at`）；`DELETE /api/auth/users/{username}` 删除（禁止删 admin 与自身；同时清理 `team_members`/`agent_users` 幽灵关联）；`POST /api/auth/users/{username}/token` 轮换（可选 `{expires_in_days}`）；`POST /api/auth/users/{username}/password` 重置密码；`POST /api/auth/change-password` 自助改密。
+- **自助轮换**：`POST /api/auth/token`（`require_user_token`）让用户生成/轮换自己的 API token，可选 `{expires_in_days}`（留空 = 永久）；明文只返回一次，旧 API token 立即失效。Web 看板「个人中心」即调用此端点。
 - 禁用用户（`users.disabled=1`）后：REST 鉴权拒绝（401），登录拒绝（403）。
 
 ## 5. LLM apiKey
@@ -70,7 +71,7 @@
 
 ## 8. Agent 自升级
 
-- 触发：`POST /api/agents/{id}/upgrade`（或看板「升级」按钮）写入 `upgrade_requested/upgrade_version`（迁移 007），目标版本 = `data/bootstrap/VERSION`。**自动升级**：心跳时若节点上报版本低于当前 bootstrap 版本且 `auto_upgrade` 设置开启（默认 `1`，配置页可关），无需手动请求即下发升级指令（`api/edge.py`）。
+- 触发：`POST /api/agents/{id}/upgrade`（**admin**；或看板「升级」按钮，仅 admin 可见）写入 `upgrade_requested/upgrade_version`（迁移 007），目标版本 = `data/bootstrap/VERSION`。**自动升级**：心跳时若节点上报版本低于当前 bootstrap 版本且 `auto_upgrade` 设置开启（默认 `1`，配置页可关），无需手动请求即下发升级指令（`api/edge.py`）。探针包可由 admin 在配置页上传替换（`POST /api/bootstrap`，见 [protocol.md](./protocol.md)）。
 - 下发：心跳响应在 `upgrade_requested` 且包存在时携带 `upgrade: {version, filename}`（filename 由 agent 的 `os/arch` 拼出）；节点上报版本 ≥ 目标版本时自动 `clear_agent_upgrade`。
 - 执行（edge **完全空闲**时，即无任何正在执行的任务 `_running` 为空，v1.4.0 多任务并发下同样只在空闲才升级）：从 `/api/bootstrap/{filename}` 下载（`bootstrap_download` 已改为 `require_any_token`，全局 token 可下）→ staging 校验解包 → 备份 `.bin.old` 与 `agent_version.bak` → **用 `os.replace()` 原子替换** `bin/agent-mesh-edge.bin`/`opencode`（⚠️ 不能原地 `copy2` 覆盖——运行中的进程会报 Linux `Text file busy`）→ 写回滚感知 wrapper（`WRAPPER_SCRIPT`）→ 写 `etc/upgrading` 标记与 `etc/agent_version` → **优先 `systemctl restart agent-mesh-edge`（Linux）/ `launchctl kickstart system/com.agentmesh.edge`（macOS）重启**，失败回退 `os.execv(wrapper)`。⚠️ 只替换磁盘文件、进程仍在旧代码（execv 在 PyInstaller onefile 下不可靠）是 1.3.0 之前升级"假成功"的根因，服务管理器重启才是可靠路径。
 - 回滚（两阶段握手）：① 首次重启时 wrapper 发现 `upgrading` 存在且无 `upgrade-started` → 记录 `upgrade-started` 并运行新二进制；② 新二进制**首次成功心跳**后由 edge 清除标记与备份（确认健康）；③ 若新二进制启动失败、systemd 再次拉起 wrapper 时 `upgrading` + `upgrade-started` 同时存在 → 恢复 `.bin.old` 与旧版本号。

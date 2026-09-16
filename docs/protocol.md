@@ -111,7 +111,7 @@ EdgeAgent.run()
 
 **认证（`require_any_token`，见 [auth-security.md §1](./auth-security.md)）接受三类凭据**，并返回调用者身份：
 1. 全局 token（`AGENT_MESH_TOKEN`）→ `{auth: "global"}`；
-2. 用户 token（API token 按 SHA-256 查表 / session token 按 HMAC 解析）→ `{auth: "user", ...}`；
+2. 用户 token（API token 按 SHA-256 查表 / session token 按 HMAC 解析）→ `{auth: "user", ...}`；API token 若设置了 `token_expires_at` 且已过期则失效（`NULL` = 永久）；
 3. **agent 独立 token**（`agents.token_hash` 查表，见 [auth-security.md §7](./auth-security.md#7-agent-独立-token-与设备-用户关联)）→ `{auth: "agent", agent_id, device_id}`，且**绑定 device_id**：用它以其他设备身份轮询会被拒（403）。
 
 产物上传不在此前缀下：`POST /api/artifacts/{task_id}`（multipart `files`，任选 token）。上传/读取均校验调用方对该任务的访问权（同上一段的归属规则；任务不存在返回 404）。边沿把上传返回的 `ArtifactRef` 放进 `submit_result.artifacts`，orchestrator 同步落库（`INSERT OR IGNORE` 幂等）。
@@ -121,9 +121,10 @@ EdgeAgent.run()
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | POST | `/api/auth/login` | **公开**。账号密码 → `{username, token, role}` |
-| GET | `/api/auth/me` | 当前用户信息 |
-| GET | `/api/healthz` | **公开**。健康检查 → `{status:"ok"}` |
-| GET | `/api/tasks` | 任务列表（按身份过滤：自己 + 同团队，admin 全部；`agent_id?`, `status?`, `mode?`(`command`/`llm`), `search?`(指令/任务ID/节点模糊), `started_after?`/`started_before?`(ISO 时间, 开始时间区间), `limit` 1–1000, `offset` 分页；返回 `total` 总数供分页/跨页选择） |
+| GET | `/api/auth/me` | 当前用户信息（含 `token_created_at`/`token_expires_at`） |
+| POST | `/api/auth/token` | **自助**轮换自己的 API token（`require_user_token`）：`{expires_in_days?: int}`（留空/`null` = 永久，1–36500），明文只返回一次；旧 API token 立即失效，session token 不受影响 |
+| GET | `/api/healthz` | **公开**。健康检查 → `{status:"ok", version:"<SERVER_VERSION>"}` |
+| GET | `/api/tasks` | 任务列表（按身份过滤：自己 + 同团队，admin 全部；`agent_id?`, `status?`, `mode?`(`command`/`llm`), `search?`(指令/任务ID/节点/来源用户名模糊), `started_after?`/`started_before?`(ISO 时间, 开始时间区间), `limit` 1–1000, `offset` 分页；返回 `total` 总数供分页/跨页选择。任务含 `dispatched_by`（派发者用户名）、`user_id`/`team_id`） |
 | GET | `/api/tasks/{task_id}` | 任务详情（越权/不存在 → 404） |
 | GET | `/api/tasks/{task_id}/status` | 任务状态（`{found, task}`） |
 | GET | `/api/tasks/{task_id}/logs` | 任务实时执行输出（`?after_id=&limit=`，增量；v1.4.0） |
@@ -131,7 +132,7 @@ EdgeAgent.run()
 | POST | `/api/tasks/{task_id}/cancel` | 终止任务（`{accepted}`） |
 | DELETE | `/api/tasks/{task_id}` | 删除单个任务（含 queue/results/artifacts 关联行） |
 | POST | `/api/tasks/batch-delete` | 批量删除：`{task_ids: [...]}` 按 id，或 `{all_matching: true, status?, mode?, search?, started_after?, started_before?, agent_id?}` 删除匹配筛选的全部任务 |
-| POST | `/api/tasks/dispatch` | 派发任务（REST 版） |
+| POST | `/api/tasks/dispatch` | 派发任务（REST 版）。`command` 模式被权限策略拦截时返回 403，并落一条终态 `denied` 任务（摘要=拒绝原因）便于追溯 |
 | GET | `/api/agents` | 节点列表（按 ACL 过滤：admin 全部，其余仅可见/可操作节点） |
 | GET | `/api/agents/{agent_id}` | 单个节点（数字 id / device_id / agent_id；不可访问 → 404） |
 | GET | `/api/agents/{agent_id}/detail` | 详情 + 最近 20 任务（`metadata.allowed_users` 仅 admin 返回） |
@@ -143,9 +144,9 @@ EdgeAgent.run()
 | PATCH | `/api/agents/{agent_id}/access` | 设置节点访问控制 ACL（admin；`{teams?: [...], users?: [...]}`） |
 | POST | `/api/agents/batch/template` | 批量绑定模板（Web UI，owner/admin；逐节点跳过无权/被锁定者，返回 `{applied, skipped}`） |
 | POST | `/api/agents/batch/access` | 批量设置节点 ACL（admin；`{agent_ids, teams?, users?, mode: add\|remove\|set}` → `{updated}`） |
-| POST | `/api/agents/{agent_id}/upgrade` | 请求升级节点（见 [auth-security.md §8](./auth-security.md#8-agent-自升级)；空闲时自动执行，失败自动回滚） |
+| POST | `/api/agents/{agent_id}/upgrade` | **admin**：请求升级节点（见 [auth-security.md §8](./auth-security.md#8-agent-自升级)；空闲时自动执行，失败自动回滚） |
 | POST | `/api/agents/{agent_id}/token` | 轮换 agent 独立 token（返回一次，旧 token 立即失效，见 [auth-security.md §7](./auth-security.md#7-agent-独立-token-与设备-用户关联)） |
-| DELETE | `/api/agents/{agent_id}` | 删除节点（下发自毁命令 + 立即删记录，见 [task-and-execution.md §4.2](./task-and-execution.md#42-apitaskspy--apiagentspy)） |
+| DELETE | `/api/agents/{agent_id}` | **admin**：删除节点（下发自毁命令 + 立即删记录，见 [task-and-execution.md §4.2](./task-and-execution.md#42-apitaskspy--apiagentspy)） |
 | POST | `/api/artifacts/{task_id}` | 产物上传（**任意 token**） |
 | GET | `/api/artifacts/{task_id}` | 列出产物 |
 | GET | `/api/artifacts/{task_id}/{artifact_id}` | 下载产物 |
@@ -154,6 +155,8 @@ EdgeAgent.run()
 | GET/POST/PATCH/DELETE | `/api/teams*` | 团队/组织 CRUD 与成员（admin；用户归属单一团队）。含 `POST /api/teams/{team_id}/members`、`DELETE .../members/{user_id}`、`PUT /api/teams/{team_id}/nodes`（全量替换团队可见节点） |
 | GET/POST/PATCH/DELETE | `/api/templates*` | 模板 CRUD（`require_ui_user`：**必须携带 `X-Agent-Mesh-UI: 1`**，否则一律 404；Web UI 专用，不对外开放） |
 | GET | `/api/bootstrap/install.sh` | 生成新节点安装命令脚本（内嵌 orchestrator `base_url`；**不再内嵌 LLM 配置**，新节点注册后由心跳 config-sync 下发） |
+| GET | `/api/bootstrap/info` | **admin**：服务端版本（`SERVER_VERSION`）+ 已发布探针包版本（`bootstrap/VERSION`）与文件列表（配置页展示） |
+| POST | `/api/bootstrap` | **admin**：上传/替换探针安装包（multipart `.tar.gz`，校验布局与内嵌 `VERSION` 后发布到 `<db_path>/../bootstrap/`） |
 | GET | `/api/bootstrap/{filename}` | 下载安装包（`<db_path>/../bootstrap/` 下的文件） |
 | GET | `/api/skills` | 技能摘要列表（`require_any_token`，仅 name/description/version/enabled） |
 | GET | `/api/skills/{name}` | 单个技能摘要 |
@@ -167,7 +170,7 @@ EdgeAgent.run()
 | POST | `/api/files/batch-delete` | 批量删除文件库文件（`{file_ids: [...]}`，用户 token，DB+磁盘） |
 | POST | `/api/files/batch-download` | 批量下载为 ZIP（`{file_ids: [...]}`，用户 token；重名自动加 file_id 前缀） |
 | DELETE | `/api/files/{file_id}` | 删除文件库文件（用户 token，不校验引用） |
-| GET | `/api/skill-doc/agent-mesh` | 下载**个性化** agent-mesh SKILL.md（`require_user_token`）：自动填充配置的公开地址 + 当前用户 token，未配置地址时给出索取提示） |
+| GET | `/api/skill-pack/agent-mesh` | 下载**个性化** agent-mesh 技能包 zip（`require_user_token`）：含 SKILL.md 索引 + `references/`（已填充配置的公开地址）+ 自动生成的 `.env`（`AGENT_MESH_BASE_URL`/`AGENT_MESH_TOKEN`）；token 不写入 Markdown。未配置地址时在 SKILL.md 注入索取提示 |
 | GET | `/` | Web 看板（index.html） |
 | GET | `/static/*` | 看板静态资源 |
 

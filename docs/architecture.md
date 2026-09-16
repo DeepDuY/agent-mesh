@@ -95,9 +95,9 @@ agent-mesh/
 │   ├── install.sh                 # systemd 部署 orchestrator（edge 探针单独 bootstrap 安装）
 │   ├── redeploy.sh  status.sh  uninstall.sh  common.sh
 │   └── README.md
-├── skills/agent-mesh/             # OpenCode skill（REST 用法）
-│   ├── SKILL.md
-│   └── references/example-poll.py
+├── skills/agent-mesh/             # OpenCode skill（REST 用法索引 + references/）
+│   ├── SKILL.md                   # 索引：场景速查 + 认证/环境 + 快速节奏
+│   └── references/                # auth / nodes / tasks / files / skills / troubleshooting（.md）
 └── tests/                         # pytest（含 test_task_store/test_auth_api/test_edge_telemetry/
                                    #  test_files_api/test_tenancy/test_permission/test_templates/
                                    #  test_edge_authz/test_upgrade 等）

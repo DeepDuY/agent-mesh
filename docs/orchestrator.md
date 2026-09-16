@@ -69,14 +69,15 @@ elif now - last_seen > offline_after_s:
 REST 端点按领域拆分到 `orchestrator/api/` 包，`__init__.py` 的 `create_query_router()` 统一挂载：
 
 - `api/__init__.py`：`create_query_router()` + 认证依赖（`require_user_token` / `require_admin` / `require_ui_user` / `require_any_token`）+ `_store_artifact_ref`。`require_ui_user` 要求页面专用头 `X-Agent-Mesh-UI: 1`，外部调用一律 404。
-- `api/auth.py`：`POST /api/auth/login`、`GET /api/auth/me`、`GET /api/healthz`、admin 用户管理（创建/列表/删除/轮换 token/重置密码）+ 自助改密。
+- `api/auth.py`：`POST /api/auth/login`、`GET /api/auth/me`、`GET /api/healthz`、admin 用户管理（创建/列表/删除/轮换 token/重置密码）+ 自助改密 + 自助轮换 token（`POST /api/auth/token`，可选有效期天数）。
 - `api/tasks.py`：任务列表（含 `offset` 分页与 `total` 计数）/详情/状态/派发/终止/单删/批量删除（`batch-delete` 支持 `task_ids` 与 `all_matching` 两种模式）。
 - `api/agents.py`：节点列表/详情/别名/描述；配置（system prompt/LLM）、ACL、生命周期（token/升级/删除）分别拆到 `api/agent_config.py`、`api/agent_access.py`、`api/agent_lifecycle.py`，共享 `api/agent_common.py`。
 - `api/edge.py`：边沿协议（`poll_for_task`/`submit_result`/`mark_started`/`get_task_status`/`task_log`）。
 - `api/artifacts.py`：产物上传/列表/下载。
 - `api/files.py`：文件库上传/列表/下载/删除（见 [features.md §5](./features.md#5-文件库任务附件)）。
 - `api/teams.py` / `api/templates.py`：团队 CRUD 与成员；模板 CRUD（`require_ui_user`）。
-- `api/bootstrap.py`：`GET/PATCH /settings`、`/bootstrap/install.sh`、`/bootstrap/{filename}`。
+- `api/bootstrap.py`：`GET/PATCH /settings`、`/bootstrap/install.sh`、`/bootstrap/info`（服务端/探针版本）、`POST /bootstrap`（上传探针包，admin）、`/bootstrap/{filename}`。
+- `api/skills.py`：技能摘要/上传/启停/删除/下载，以及 `GET /api/skill-pack/agent-mesh`（打包 SKILL.md + references + 生成的 `.env`）。
 
 关键行为：
 - 认证：`require_user_token`（用户 token：API token 按 SHA-256 查表，session token 按 HMAC 解析，禁用用户拒绝）；`require_admin`（admin 角色限定）；`require_any_token`（全局 `config.token` / 用户 token / **agent 独立 token** 任一，返回调用者身份 `{auth:...}`）。Edge 端点、产物上传、bootstrap 下载用后者。详见 [auth-security.md](./auth-security.md)。
@@ -113,7 +114,7 @@ class Task(BaseModel):
     mode: Literal["command", "llm"] = "llm"
     instruction: str
     constraints: Constraints
-    status: TaskStatus                # queued/assigned/working/completed/failed/timed_out/cancelled
+    status: TaskStatus                # queued/assigned/working/completed/failed/timed_out/cancelled/denied
     created_at: datetime
     assigned_at: datetime | None
     started_at: datetime | None
@@ -124,6 +125,7 @@ class Task(BaseModel):
     attachments: list[FileRef] = []   # 派发时引用的文件库快照（tasks.attachments JSON 列）
     user_id: str | None = None        # 归属用户（由 token 自动生成；迁移 017）
     team_id: str | None = None        # 归属团队（由 token 自动生成；迁移 017）
+    dispatched_by: str | None = None  # 派发者用户名（tasks.dispatched_by，任务列表/详情展示来源用户）
     # model_dump_json_safe(): 输出 JSON 安全字典（含 constraints、result、attachments）
 ```
 
@@ -216,6 +218,7 @@ class TaskStatus(str, enum.Enum):
     QUEUED="queued"; ASSIGNED="assigned"; WORKING="working"
     COMPLETED="completed"; FAILED="failed"; TIMED_OUT="timed_out"
     CANCELLED="cancelled"          # 人为终止（终态）
+    DENIED="denied"                # 派发被权限策略拦截、从未执行（终态）
 ```
 
 ## 3. 持久化层与迁移
@@ -268,7 +271,7 @@ store/
 | 表 | 说明 | 备注 |
 |----|------|------|
 | `schema_migrations` | 迁移版本 | |
-| `users` | 账号（`username` 唯一、`token_hash` 唯一，**不含明文 token**） | 含 `disabled/created_by/last_login_at/token_created_at`；默认 admin |
+| `users` | 账号（`username` 唯一、`token_hash` 唯一，**不含明文 token**） | 含 `disabled/created_by/last_login_at/token_created_at/token_expires_at`（`NULL`=永久，迁移 019）；默认 admin |
 | `agents` | 节点注册表（`id` 自增、`device_id` UNIQUE） | 含 `llm_api_key/base_url/model` 列（节点级 LLM 覆盖，随心跳 config-sync 下发，见 auth-security.md §9）、`distro`、`ip_address`、`access`(ACL)、`template_id` |
 | `agent_users` | 设备-用户关联（多对多；操作者审计） | 迁移 008；节点注册时自动关联 |
 | `tasks` | 任务（**无外键**，`agent_id` 存稳定键） | |

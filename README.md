@@ -45,16 +45,16 @@ sudo ./deploy/install.sh --opencode /path/opencode  # 指定本机 opencode（�
 - **任务终止**：REST / Web 看板均可取消任务（排队/执行中/已分配），执行中的子进程会被终止
 - 产物按模式精准收集：command 只收新增文件，llm 只收声明的 artifacts
 - 节点以 **数字 id + device_id（machine-id）** 唯一标识，重复上线只更新不重复注册
-- 任务状态机：`queued → assigned → working → completed/failed/timed_out`，另有 `cancelled`（人为终止）
+- 任务状态机：`queued → assigned → working → completed/failed/timed_out`，另有 `cancelled`（人为终止）与 `denied`（派发被权限策略拦截、从未执行，仍记录在任务列表便于追溯）
 - 内置中文 Web 看板（节点/任务/配置），任务列表支持分页、**模糊搜索、状态下拉、模式下拉、开始时间区间（之后/之间/之前）**、弹窗详情、一键终止、批量删除（当前页/跨页全选）、带鉴权的产物下载；文件库支持搜索与**批量删除/批量打包下载**；前端结构拆分为 html/css/js
-- 用户账号系统：创建用户时**随机生成 API token**（SHA-256 哈希入库，仅返回一次），用于 REST；登录返回短期 session token 供 Web/脚本使用；默认账号 `admin/admin`（**务必首登后修改密码**，看板右上角「修改密码」）；admin 可在看板「用户」页创建/删除用户、重置密码、轮换 token
+- 用户账号系统：创建用户时**随机生成 API token**（SHA-256 哈希入库，仅返回一次，可设有效期），用于 REST；登录返回短期 session token 供 Web/脚本使用；用户可在「个人中心」自助生成/轮换 token（留空有效期=永久）；默认账号 `admin/admin`（**务必首登后在「个人中心」修改密码**）；admin 可在看板「用户」页创建/删除用户、重置密码、轮换 token
 - **Agent 自升级**：看板/`POST /api/agents/{id}/upgrade` 下发升级指令，节点空闲时自动下载新版安装包、原子替换二进制（`.bin.old` 备份）、失败自动回滚、重启生效
 - **LLM 配置同步**：配置页保存 LLM 配置（或设置节点级 `llm_config`）后 `config_version` 自增，通过心跳推送给所有在线节点，边沿自动更新并持久化到 `edge.env`（节点级配置优先）
 - **模型列表可配置**：`settings.llm_models`（配置页「可用模型列表」，每行一个网关真实 id）是唯一模型来源，边沿据此生成 opencode 模型表（**无硬编码**）；派发 llm 任务时 `model` 会按列表校验，未配置默认模型则拒绝执行
 - **节点描述与角色设定**：每个节点可设 `description`（节点自身用途说明）；`effective_description` = 节点描述优先、否则取绑定模板的 `node_description`（模板专用于「节点描述」的字段，与模板自身的「说明」`description` 区分开），主 Agent 据此选节点。节点级 `system_prompt` 注入该节点每个 llm 任务提示词顶部（**仅管理员**，页面可编辑）
 - **节点模板**：可复用的节点配置（`system_prompt` / 默认 `llm_model` / **权限 `permission`** / `node_description` 节点描述 / `description` 说明）；节点**引用式绑定**（`agents.template_id`），改模板自动同步到所有绑定节点。生效顺序：模型 `节点 > 模板 > 全局默认`，提示词按 `内置 + 节点 + 模板` 拼接，节点描述 `节点 > 模板`
 - **模板/权限管理只通过页面**：模板读/写与节点改绑模板接口**已从 API 移除**（`require_ui_user`：需页面专用头 `X-Agent-Mesh-UI`，否则 404），任何人都无法用 curl 等外部调用，只能在 Web 管理平台操作；admin 管理全部模板，非 admin 只能管理自己或本团队的模板。节点级 `llm_config`/`system_prompt`、全局 `settings` 要求 `admin` 角色。主 Agent（`list_agents`）只能读到 `template_name` 与 `effective_description`，**不会拿到模板的具体配置**，防止自我提权
-- **多租户（团队/组 + 资源归属）**：`teams`/`team_members`（**一个用户至多属一个团队**）；节点 `access` JSON 声明可操作的团队/用户（admin 恒旁路，安装节点的用户及其团队**自动加入**）；任务按 `user_id`/`team_id`（**由 token 自动生成**）过滤——可见 `自己 + 自己团队`（无团队则仅自己）；文件按创建者隔离。admin 在「团队」页与节点「访问权限」维护
+- **多租户（团队/组 + 资源归属）**：`teams`/`team_members`（**一个用户至多属一个团队**）；节点 `access` JSON 声明可操作的团队/用户（admin 恒旁路，安装节点的用户及其团队**自动加入**）；任务按 `user_id`/`team_id`（**由 token 自动生成**）过滤——可见 `自己 + 自己团队`（无团队则仅自己），并记录/展示 `dispatched_by`（派发者用户名，任务列表可见「用户」列、可按用户名搜索）；文件按创建者隔离。admin 在「团队」页与节点「访问权限」维护
 - **执行权限（模板级，llm + command 共用）**：采用 OpenCode `permission` 规格（`allow|ask|deny` + 命令 glob），内置 `build`/`plan`/`readonly` 三个模板；未绑定模板的节点用全局 `default_permission`（默认 `readonly`）。llm 模式交由 opencode 强制，command 模式由 edge 在 `bash -c` 前求值；拒绝与关键动作写入 `task_events` 审计。**注意：command 匹配器只防误操作，非安全边界**
 - 数据持久化（SQLite/PostgreSQL），重启不丢失
 - Agent 一键安装脚本（PyInstaller 单二进制 + **内置 opencode**，目标机无需外网）；构建机本机无 opencode 时自动从官方 GitHub releases 下载
@@ -158,7 +158,7 @@ curl -s -X POST http://127.0.0.1:8000/api/tasks/dispatch \
 
 任务完成后的 `result.session_id` 即为本次实际使用的会话 ID。
 
-> 如何拿到用户 API token：首次启动 orchestrator 时日志会打印一次 admin 的 token；或通过 `POST /api/auth/users`（admin）创建用户 / `POST /api/auth/users/{username}/token` 轮换 token 获取。API token 只显示一次，请妥善保存。
+> 如何拿到用户 API token：首次启动 orchestrator 时日志会打印一次 admin 的 token；或通过 `POST /api/auth/users`（admin）创建用户 / `POST /api/auth/users/{username}/token` 轮换 token 获取；用户也可在 Web「个人中心」自助生成（`POST /api/auth/token`）。API token 只显示一次，请妥善保存。
 
 ### 用户管理（admin）
 
@@ -173,10 +173,15 @@ curl -s -X POST http://127.0.0.1:8000/api/auth/users \
 
 # 用户列表 / 轮换 token / 改密 / 删除
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/auth/users
+# 轮换 token（可选 {"expires_in_days":30}，省略=永久）
 curl -s -X POST -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/auth/users/bob/token
 curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"password":"newsecret456"}' http://127.0.0.1:8000/api/auth/users/bob/password
 curl -s -X DELETE -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/auth/users/bob
+
+# 自助轮换自己的 token（任意用户；可选有效期天数，留空=永久）
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"expires_in_days":90}' http://127.0.0.1:8000/api/auth/token
 ```
 
 ### 6. Web 看板
@@ -187,7 +192,7 @@ curl -s -X DELETE -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/au
 http://127.0.0.1:8000/
 ```
 
-使用默认账号 `admin / admin` 登录（**登录后请立即点右上角「修改密码」**）。节点页可安装/删除节点、改别名、查看版本并发起升级；任务页支持分页、按状态过滤、弹窗查看详情、一键终止任务；配置页可设公开地址和默认 LLM（保存后自动同步到所有在线节点）；「用户」页（仅 admin 可见）可创建/删除用户、重置密码、轮换 API token。
+使用默认账号 `admin / admin` 登录（**登录后请在右上角用户菜单「个人中心」修改密码**）。节点页可查看/操作有权访问的节点、改别名与描述（**删除节点、升级探针仅 admin**）；任务页支持分页、按状态过滤、弹窗查看详情、一键终止任务，并显示任务来源用户；配置页可设公开地址和默认 LLM（保存后自动同步到所有在线节点），并查看服务端/探针版本、上传探针安装包；右上角用户菜单「个人中心」可查看账号信息、生成/轮换自己的 API token（可设有效期）并下载 agent-mesh 技能包；「用户」页（仅 admin 可见）可创建/删除用户、重置密码、轮换 API token。
 
 ## 生产部署
 
@@ -368,11 +373,12 @@ agent-mesh/
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | POST | `/api/auth/login` | 账号密码登录，返回**短期 session token**（`token` 字段） |
-| GET | `/api/auth/me` | 当前用户信息 |
+| GET | `/api/auth/me` | 当前用户信息（含 `token_created_at`/`token_expires_at`） |
+| POST | `/api/auth/token` | 自助轮换**自己**的 API token（可选 `{"expires_in_days":N}`，留空=永久；明文返回一次） |
 | POST | `/api/auth/users` | **admin**：创建用户，返回一次性 API token |
 | GET | `/api/auth/users` | **admin**：用户列表 |
 | DELETE | `/api/auth/users/{username}` | **admin**：删除用户 |
-| POST | `/api/auth/users/{username}/token` | **admin**：轮换 API token（返回一次） |
+| POST | `/api/auth/users/{username}/token` | **admin**：轮换 API token（返回一次，可选 `expires_in_days`） |
 | POST | `/api/auth/users/{username}/password` | **admin**：重置指定用户密码 |
 | POST | `/api/auth/change-password` | 修改自己的密码 |
 
@@ -395,14 +401,16 @@ agent-mesh/
 | PATCH | `/api/agents/{id}/description` | 设置节点描述（主 Agent 识别用途；不影响执行） |
 | PATCH | `/api/agents/{id}/system_prompt` | 设置节点级 system prompt（**admin**；随心跳同步到该节点） |
 | PATCH | `/api/agents/{id}/llm_config` | 设置节点级 LLM 配置（**admin**；随心跳同步到该节点） |
-| POST | `/api/agents/{id}/upgrade` | 请求升级节点（空闲时自动执行并回滚） |
-| DELETE | `/api/agents/{id}` | 删除节点（下发卸载任务） |
+| POST | `/api/agents/{id}/upgrade` | **admin**：请求升级节点（空闲时自动执行并回滚） |
+| DELETE | `/api/agents/{id}` | **admin**：删除节点（下发卸载任务） |
 | GET | `/api/settings` | 全局配置（**admin**） |
 | PATCH | `/api/settings` | 更新全局配置（**admin**） |
 | POST | `/api/artifacts/{task_id}` | 上传产物 |
 | GET | `/api/artifacts/{task_id}` | 列出产物 |
 | GET | `/api/artifacts/{task_id}/{artifact_id}` | 下载产物 |
 | GET | `/api/bootstrap/install.sh` | 新节点安装脚本 |
+| GET | `/api/bootstrap/info` | **admin**：服务端版本 + 已发布探针版本（配置页展示） |
+| POST | `/api/bootstrap` | **admin**：上传/替换探针安装包（`.tar.gz`） |
 | GET | `/api/bootstrap/{filename}` | 安装包下载 |
 | GET | `/api/skills` | 技能摘要列表（**仅 name/description/version/enabled，不含内容**；边沿/用户 token 均可） |
 | GET | `/api/skills/{name}` | 单个技能摘要 |
@@ -416,7 +424,7 @@ agent-mesh/
 | POST | `/api/files/batch-delete` | 批量删除文件库文件 |
 | POST | `/api/files/batch-download` | 批量下载文件库文件为 ZIP |
 | DELETE | `/api/files/{file_id}` | 删除文件库文件（不校验引用） |
-| GET | `/api/skill-doc/agent-mesh` | 下载个性化 agent-mesh SKILL.md（自动填充公开地址与当前用户 token） |
+| GET | `/api/skill-pack/agent-mesh` | 下载个性化 agent-mesh 技能包 zip（SKILL.md + references + 生成的 `.env`，已填充公开地址；token 放在 `.env`，不写入 Markdown） |
 
 > 模板管理（`/api/templates*`、`/api/agents/{id}/template`）与团队管理（`/api/teams*`）**仅限 Web 管理平台**（需 `X-Agent-Mesh-UI` 头，外部调用一律 404），不在主 Agent/脚本可用接口内。
 
@@ -469,7 +477,7 @@ curl -s -X POST http://127.0.0.1:8000/api/tasks/dispatch \
 
 - 附件以原文件名写入工作目录；llm 模式提示词会提示"工作目录可能已放入附件"。
 - 文件库独立于任务，可在 Web 看板「文件」页管理（上传/下载/删除）；删除不校验引用，被删文件的任务执行时会因下载失败而标记失败。
-- 最新版 agent-mesh 使用指南可从看板「配置」页或 `GET /api/skill-doc/agent-mesh` 下载，会**自动填充配置的公开地址和你的用户 token**，示例可直接复制执行。
+- 最新版 agent-mesh 使用指南可从看板右上角用户菜单「个人中心」（或 `GET /api/skill-pack/agent-mesh`）下载为 `agent-mesh.zip`：含 SKILL.md 索引与 `references/`（示例中的公开地址已自动填充），以及写有你用户 token 的 `.env`。解压后放进主 Agent 的 skills 目录即可。
 
 ## 测试
 
@@ -480,8 +488,8 @@ uv run --no-sync python -m pytest tests/ -q
 ## 安全提示
 
 - 生产环境务必修改默认 `admin` 密码（`POST /api/auth/change-password`），并通过用户管理接口创建专用账号
-- 用户 API token 只在创建/轮换时返回一次，丢失后需 admin 轮换（`POST /api/auth/users/{username}/token`）
-- API token 以 SHA-256 哈希存库；登录返回的 session token 默认 24h 过期
+- 用户 API token 只在创建/轮换时返回一次，丢失后用户可在「个人中心」自助轮换（`POST /api/auth/token`），或由 admin 轮换（`POST /api/auth/users/{username}/token`）
+- API token 以 SHA-256 哈希存库；可选有效期 `token_expires_at`（`NULL`=永久，迁移 019），过期后鉴权拒绝；登录返回的 session token 默认 24h 过期
 - 使用 HTTPS 网关终止 TLS
 - 边沿 Agent 使用低权限账号运行
 - LLM API key 存于 orchestrator `settings`（DB，配置页写入）并经心跳下发到节点 `etc/edge.env`；安装脚本不内嵌任何凭据，`edge.env`/`orchestrator.env` 建议 600 权限
