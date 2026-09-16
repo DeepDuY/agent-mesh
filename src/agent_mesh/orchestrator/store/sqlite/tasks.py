@@ -32,6 +32,7 @@ class TaskMixin(SQLiteBase):
             status=TaskStatus(row["status"]),
             user_id=row["user_id"] if "user_id" in row.keys() else None,
             team_id=row["team_id"] if "team_id" in row.keys() else None,
+            dispatched_by=row["dispatched_by"] if "dispatched_by" in row.keys() else None,
             created_at=_iso_to_dt(row["created_at"]) or datetime.now(timezone.utc),
             assigned_at=_iso_to_dt(row["assigned_at"]),
             started_at=_iso_to_dt(row["started_at"]),
@@ -135,8 +136,8 @@ class TaskMixin(SQLiteBase):
             params.append(mode)
         if search:
             like = f"%{search}%"
-            where += " AND (instruction LIKE ? OR task_id LIKE ? OR agent_id LIKE ?)"
-            params.extend([like, like, like])
+            where += " AND (instruction LIKE ? OR task_id LIKE ? OR agent_id LIKE ? OR dispatched_by LIKE ?)"
+            params.extend([like, like, like, like])
         if started_after is not None:
             where += " AND started_at >= ?"
             params.append(_dt_to_iso(started_after))

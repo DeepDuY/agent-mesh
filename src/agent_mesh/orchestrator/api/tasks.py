@@ -192,11 +192,27 @@ def mount_task_routes(
                 body.get("agent_id", ""), body.get("instruction", "")
             )
             if denial:
-                # A denied dispatch never creates a task, so there is no task_id
-                # to attach an audit row to (orphan rows are unqueryable). Log it
-                # instead of writing a task_events row with an empty task_id.
+                # Record the rejected attempt as a terminal `denied` task so the
+                # user can see it in the task list, then still answer 403.
+                denied_id = await store.dispatch_denied(
+                    agent_id=body.get("agent_id", ""),
+                    instruction=body.get("instruction", ""),
+                    mode=mode,
+                    reason=denial,
+                    dispatched_by=user["username"],
+                    user_id=user.get("user_id"),
+                    team_id=await store.user_team(user),
+                )
+                await store.store.append_task_event(
+                    task_id=denied_id,
+                    event_type="permission_denied",
+                    agent_id=body.get("agent_id"),
+                    user_id=user.get("user_id"),
+                    details={"reason": denial},
+                )
                 logger.warning(
-                    "dispatch denied by permission policy agent=%s user=%s reason=%s instruction=%r",
+                    "dispatch denied by permission policy task=%s agent=%s user=%s reason=%s instruction=%r",
+                    denied_id,
                     body.get("agent_id"),
                     user.get("user_id"),
                     denial,

@@ -178,6 +178,21 @@ def test_command_dispatch_denied_under_readonly(client: TestClient):
     assert resp.status_code == 403
     assert "denied" in resp.json()["detail"]
 
+    # The rejected attempt is recorded as a terminal `denied` task (visible in
+    # the task list) rather than vanishing.
+    tasks = client.get("/api/tasks", headers=_admin_headers()).json()["tasks"]
+    denied = [t for t in tasks if t["status"] == "denied"]
+    assert len(denied) == 1
+    assert denied[0]["instruction"] == "rm -rf /"
+    detail = client.get(
+        f"/api/tasks/{denied[0]['task_id']}", headers=_admin_headers()
+    ).json()["task"]
+    assert "denied" in (detail["result"] or {}).get("summary", "")
+    events = client.get(
+        f"/api/tasks/{denied[0]['task_id']}/events", headers=_admin_headers()
+    ).json()["events"]
+    assert "permission_denied" in [e["event_type"] for e in events]
+
 
 @pytest.mark.asyncio
 async def test_task_events_roundtrip(tmp_path):

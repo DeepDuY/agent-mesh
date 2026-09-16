@@ -151,6 +151,55 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin):
         logger.info("dispatched task %s for agent=%s mode=%s", task.task_id, queue_key, mode)
         return task.task_id
 
+    async def dispatch_denied(
+        self,
+        agent_id: str,
+        instruction: str,
+        mode: str,
+        reason: str,
+        dispatched_by: str | None = None,
+        user_id: str | None = None,
+        team_id: str | None = None,
+    ) -> str:
+        """Record a dispatch that was rejected by policy as a visible task.
+
+        The command was never executed (no queue entry, no edge contact), but the
+        attempt is stored as a terminal ``denied`` task so it shows up in the task
+        list with the denial reason as its summary — otherwise a rejected dispatch
+        would leave no trace for the user.
+        """
+        target = await self._resolve_agent(agent_id)
+        queue_key = (target.device_id or target.agent_id) if target else agent_id
+        now = datetime.now(timezone.utc)
+        task = Task(
+            task_id=_new_task_id(),
+            agent_id=queue_key,
+            mode=mode,  # type: ignore[arg-type]
+            instruction=instruction,
+            constraints=Constraints(),
+            status=TaskStatus.DENIED,
+            user_id=user_id,
+            team_id=team_id,
+            finished_at=now,
+        )
+        await self.store.create_task(
+            task, dispatched_by=dispatched_by, user_id=user_id, team_id=team_id
+        )
+        await self.store.set_task_result(
+            task.task_id,
+            TaskResult(
+                status="denied",
+                mode=mode,  # type: ignore[arg-type]
+                exit_code=0,
+                stdout_tail="",
+                stderr_tail="",
+                duration_ms=0,
+                summary=reason,
+            ),
+        )
+        logger.info("recorded denied dispatch %s for agent=%s", task.task_id, queue_key)
+        return task.task_id
+
     async def _resolve_agent(self, agent_ref: str) -> AgentStatus | None:
         """Resolve an agent reference: numeric id, device_id (machine-id), or agent_id string."""
         # Try numeric id first.
@@ -342,6 +391,7 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin):
             TaskStatus.FAILED,
             TaskStatus.TIMED_OUT,
             TaskStatus.CANCELLED,
+            TaskStatus.DENIED,
         ):
             return False
         if task.status == TaskStatus.QUEUED:

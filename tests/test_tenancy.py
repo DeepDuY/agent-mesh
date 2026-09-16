@@ -102,6 +102,24 @@ def test_node_access_controls_listing_and_dispatch(client: TestClient):
     assert _dispatch(client, h_bob).status_code == 403
 
 
+def test_task_records_dispatching_user(client: TestClient):
+    _poll(client)
+    uid, h = _user(client, "dave")
+    client.patch(f"/api/agents/{DEVICE}/access", json={"users": [uid]}, headers=_admin())
+    tid = _dispatch(client, h).json()["task_id"]
+
+    # The task carries the dispatching username for its owner and for admins.
+    task = client.get(f"/api/tasks/{tid}", headers=h).json()["task"]
+    assert task["dispatched_by"] == "dave"
+    assert task["user_id"] == uid
+    admin_task = client.get(f"/api/tasks/{tid}", headers=_admin()).json()["task"]
+    assert admin_task["dispatched_by"] == "dave"
+
+    # The list exposes it and search matches the username.
+    results = client.get("/api/tasks?search=dave", headers=_admin()).json()["tasks"]
+    assert any(t["task_id"] == tid for t in results)
+
+
 def test_team_access_grants_all_members(client: TestClient):
     _poll(client)
     team = client.post("/api/teams", json={"name": "teamx"}, headers=_admin()).json()["team"]

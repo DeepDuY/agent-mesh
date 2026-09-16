@@ -44,6 +44,7 @@ class TaskMixin(PostgresBase):
             status=TaskStatus(row["status"]),
             user_id=row.get("user_id"),
             team_id=row.get("team_id"),
+            dispatched_by=row.get("dispatched_by"),
             created_at=_iso_to_dt(row.get("created_at")) or _utcnow(),
             assigned_at=_iso_to_dt(row.get("assigned_at")),
             started_at=_iso_to_dt(row.get("started_at")),
@@ -142,8 +143,8 @@ class TaskMixin(PostgresBase):
             params.append(mode)
         if search:
             like = f"%{search}%"
-            where += " AND (instruction ILIKE ? OR task_id ILIKE ? OR agent_id ILIKE ?)"
-            params.extend([like, like, like])
+            where += " AND (instruction ILIKE ? OR task_id ILIKE ? OR agent_id ILIKE ? OR dispatched_by ILIKE ?)"
+            params.extend([like, like, like, like])
         if started_after is not None:
             where += " AND started_at >= ?"
             params.append(started_after)
