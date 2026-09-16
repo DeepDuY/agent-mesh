@@ -79,6 +79,30 @@ def _extract_skill_zip(data: bytes) -> tuple[str, str]:
     return name, description
 
 
+_UNCONFIGURED_URL_NOTE = (
+    "> ⚠️ 本技能包尚未配置「公开地址」，`.env` 的 `AGENT_MESH_BASE_URL` 为空，"
+    "示例中的地址仍是占位符。请先向用户索取编排器地址，填入 `.env` 后再执行示例。\n\n"
+)
+
+_SKILL_TITLE = "# agent-mesh 编排器控制"
+
+
+def _personalize_text(text: str, public_url: str) -> str:
+    """Fill the configured public URL into every example placeholder."""
+    if not public_url:
+        return text
+    text = text.replace("http://<orchestrator-host>:8000", public_url)
+    text = text.replace("http://<host>:8000", public_url)
+    return text
+
+
+def _inject_unconfigured_note(text: str) -> str:
+    """Insert a warning right before the title when no public URL is set."""
+    if _SKILL_TITLE in text:
+        return text.replace(_SKILL_TITLE, f"{_UNCONFIGURED_URL_NOTE}{_SKILL_TITLE}", 1)
+    return f"{_UNCONFIGURED_URL_NOTE}{text}"
+
+
 def mount_skill_routes(
     router: APIRouter,
     store: TaskStore,
@@ -225,56 +249,51 @@ def mount_skill_routes(
             raise HTTPException(status_code=404, detail="skill file not found")
         return FileResponse(skill_file, filename=f"{name}.zip", media_type="application/zip")
 
-    @router.get("/skill-doc/agent-mesh")
-    async def download_agent_mesh_skill(
+    @router.get("/skill-pack/agent-mesh")
+    async def download_agent_mesh_skill_pack(
         request: Request,
         _user: dict[str, Any] = Depends(require_user_token),
     ) -> Response:
-        """Download a personalized agent-mesh SKILL.md for the main agent.
+        """Download the bundled agent-mesh skill as a zip, personalized for the caller.
 
-        Reads the bundled ``skills/agent-mesh/SKILL.md`` and personalizes it for
-        the caller: the configured public URL (``public_url`` setting, the one
-        shown on the 配置 page) is filled into every example, and the caller's
-        own user token is embedded so the examples are directly runnable. When
-        the public URL is not configured, a paragraph tells the agent to ask the
-        user for it instead of silently shipping placeholders.
+        The returned ``agent-mesh.zip`` contains the SKILL.md index, its
+        ``references/`` documents (with the configured public URL filled into
+        every example) and a generated ``agent-mesh/.env`` holding the caller's
+        own ``AGENT_MESH_BASE_URL`` / ``AGENT_MESH_TOKEN``. The token is never
+        written into the Markdown itself.
         """
-        path = Path(__file__).resolve().parents[4] / "skills" / "agent-mesh" / "SKILL.md"
-        if not path.exists():
-            raise HTTPException(status_code=404, detail="SKILL.md not found")
-        text = path.read_text(encoding="utf-8")
+        pack_dir = Path(__file__).resolve().parents[4] / "skills" / "agent-mesh"
+        skill_md = pack_dir / "SKILL.md"
+        if not skill_md.exists():
+            raise HTTPException(status_code=404, detail="skill pack not found")
 
         public_url = (await store.store.get_setting("public_url") or "").strip().rstrip("/")
         auth = request.headers.get("authorization", "")
         token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
 
-        if public_url:
-            text = text.replace("http://<orchestrator-host>:8000", public_url)
-            text = text.replace("http://<host>:8000", public_url)
-            base_line = f"`{public_url}/api`"
-        else:
-            base_line = "`<未配置 — 请向用户询问编排器地址>`"
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for path in sorted(pack_dir.rglob("*")):
+                if not path.is_file() or path.name.startswith("."):
+                    continue
+                rel = path.relative_to(pack_dir).as_posix()
+                if path.suffix.lower() == ".md":
+                    text = _personalize_text(path.read_text(encoding="utf-8"), public_url)
+                    if not public_url and rel == "SKILL.md":
+                        text = _inject_unconfigured_note(text)
+                    zf.writestr(f"agent-mesh/{rel}", text)
+                else:
+                    zf.writestr(f"agent-mesh/{rel}", path.read_bytes())
 
-        if token:
-            text = text.replace("<token>", token)
-
-        info = (
-            "## 连接信息（已自动填充）\n\n"
-            f"- **REST Base URL**: {base_line}\n"
-            f"- **用户 token**: `{token or '<未获取 — 请向用户索取>'}`\n"
-            "本页示例中的地址与 token 已填入真实值，可直接复制执行；"
-            "token 有效期有限（session token 默认 24h），**过期后请向用户重新索取账号密码登录**"
-            "（详见「认证」一节）。请注意保管，不要外泄/提交到仓库。\n\n"
-        )
-        # Inject right after the frontmatter, before the document title.
-        marker = "# agent-mesh 编排器控制"
-        if marker in text:
-            text = text.replace(marker, f"{info}{marker}", 1)
-        else:
-            text = f"{info}{text}"
+            env_lines = [
+                "# Auto-generated for your account by agent-mesh. Keep it secret.",
+                f"AGENT_MESH_BASE_URL={(public_url + '/api') if public_url else ''}",
+                f"AGENT_MESH_TOKEN={token}",
+            ]
+            zf.writestr("agent-mesh/.env", "\n".join(env_lines) + "\n")
 
         return Response(
-            content=text,
-            media_type="text/markdown; charset=utf-8",
-            headers={"Content-Disposition": 'attachment; filename="agent-mesh-SKILL.md"'},
+            content=buf.getvalue(),
+            media_type="application/zip",
+            headers={"Content-Disposition": 'attachment; filename="agent-mesh.zip"'},
         )

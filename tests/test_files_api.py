@@ -1,4 +1,6 @@
 import hashlib
+import io
+import zipfile
 
 import pytest
 from fastapi.testclient import TestClient
@@ -169,35 +171,47 @@ def test_dispatch_without_attachments_still_works(client: TestClient):
     assert task["attachments"] == []
 
 
-def test_skill_doc_download(client: TestClient):
+def test_skill_pack_download(client: TestClient):
     headers = _admin_headers()
-    # No public_url configured: paragraph tells the agent to ask the user.
-    resp = client.get("/api/skill-doc/agent-mesh", headers=headers)
+    resp = client.get("/api/skill-pack/agent-mesh", headers=headers)
     assert resp.status_code == 200
-    assert resp.headers.get("content-type", "").startswith("text/markdown")
-    assert b"agent-mesh" in resp.content
-    assert "未配置" in resp.text
-    # Caller's own user token is embedded.
-    assert "admin-api-token-123" in resp.text
+    assert resp.headers.get("content-type", "").startswith("application/zip")
 
-    # Configure public_url: examples are filled with the real URL.
+    zf = zipfile.ZipFile(io.BytesIO(resp.content))
+    names = zf.namelist()
+    assert "agent-mesh/SKILL.md" in names
+    assert "agent-mesh/.env" in names
+    assert any(n.startswith("agent-mesh/references/") for n in names)
+
+    # The token lives ONLY in .env, never in the Markdown.
+    env = zf.read("agent-mesh/.env").decode()
+    assert "AGENT_MESH_TOKEN=admin-api-token-123" in env
+    skill_md = zf.read("agent-mesh/SKILL.md").decode()
+    assert "admin-api-token-123" not in skill_md
+    # No public_url configured -> an explicit "ask the user" note is injected.
+    assert "未配置" in skill_md
+
+    # Configure public_url: placeholders are filled and .env carries the base URL.
     client.patch(
         "/api/settings",
         json={"public_url": "http://10.0.0.1:8000"},
         headers=headers,
     )
-    resp = client.get("/api/skill-doc/agent-mesh", headers=headers)
-    assert resp.status_code == 200
-    assert "http://10.0.0.1:8000/api" in resp.text
-    assert "未配置" not in resp.text
-    # Example <token> placeholders replaced with the real token.
-    assert "<token>" not in resp.text
-    assert "Bearer admin-api-token-123" in resp.text
+    resp = client.get("/api/skill-pack/agent-mesh", headers=headers)
+    zf = zipfile.ZipFile(io.BytesIO(resp.content))
+    skill_md = zf.read("agent-mesh/SKILL.md").decode()
+    assert "http://10.0.0.1:8000" in skill_md
+    assert "<orchestrator-host>" not in skill_md
+    env = zf.read("agent-mesh/.env").decode()
+    assert "AGENT_MESH_BASE_URL=http://10.0.0.1:8000/api" in env
+    # references are personalized too.
+    nodes = zf.read("agent-mesh/references/nodes.md").decode()
+    assert "<orchestrator-host>" not in nodes
 
 
-def test_skill_doc_requires_user_token(client: TestClient):
+def test_skill_pack_requires_user_token(client: TestClient):
     # The global token is not a user credential -> must be rejected.
-    resp = client.get("/api/skill-doc/agent-mesh", headers=_global_headers())
+    resp = client.get("/api/skill-pack/agent-mesh", headers=_global_headers())
     assert resp.status_code == 401
 
 
