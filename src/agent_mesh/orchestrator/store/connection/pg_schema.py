@@ -31,6 +31,7 @@ async def create_schema(conn: Any) -> None:
             created_by TEXT,
             last_login_at TIMESTAMP,
             token_created_at TIMESTAMP,
+            token_expires_at TIMESTAMP,
             created_at TIMESTAMP DEFAULT NOW()
         );
 

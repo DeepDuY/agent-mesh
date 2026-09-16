@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -17,6 +17,7 @@ from agent_mesh.orchestrator.auth import (
 )
 from agent_mesh.orchestrator.config import OrchestratorConfig
 from agent_mesh.orchestrator.task_store import TaskStore
+from agent_mesh.shared.constants import SERVER_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ def _user_public(
         "created_at": _iso(user.get("created_at")),
         "last_login_at": _iso(user.get("last_login_at")),
         "token_created_at": _iso(user.get("token_created_at")),
+        "token_expires_at": _iso(user.get("token_expires_at")),
     }
 
 
@@ -68,6 +70,17 @@ class _SetPasswordPayload(BaseModel):
 class _ChangePasswordPayload(BaseModel):
     old_password: str
     new_password: str = Field(min_length=6, max_length=128)
+
+
+class _RotateTokenPayload(BaseModel):
+    # Blank/null means the new token never expires.
+    expires_in_days: int | None = Field(default=None, ge=1, le=36500)
+
+
+def _expiry_from_days(days: int | None) -> datetime | None:
+    if days is None:
+        return None
+    return datetime.now(timezone.utc) + timedelta(days=days)
 
 
 def mount_auth_routes(
@@ -120,7 +133,7 @@ def mount_auth_routes(
 
     @router.get("/healthz")
     async def healthz() -> dict[str, str]:
-        return {"status": "ok"}
+        return {"status": "ok", "version": SERVER_VERSION}
 
     # ------------------------------------------------------------------
     # Admin-only user management
@@ -217,16 +230,19 @@ def mount_auth_routes(
     @router.post("/auth/users/{username}/token")
     async def rotate_user_token(
         username: str,
+        payload: _RotateTokenPayload | None = None,
         admin: dict[str, Any] = Depends(require_admin),
     ) -> dict[str, Any]:
         user = await store.store.get_user_by_username(username)
         if user is None:
             raise HTTPException(status_code=404, detail="user not found")
         token = generate_token()
+        expires_at = _expiry_from_days(payload.expires_in_days if payload else None)
         await store.store.set_user_token(
             user["user_id"],
             hash_token(token),
             datetime.now(timezone.utc),
+            expires_at,
         )
         logger.info("rotated token for user %s by %s", username, admin["username"])
         # New token is returned exactly once.
@@ -235,6 +251,7 @@ def mount_auth_routes(
             "username": username,
             "token": token,
             "token_type": "api",
+            "token_expires_at": _iso(expires_at),
         }
 
     @router.post("/auth/users/{username}/password")
@@ -262,3 +279,31 @@ def mount_auth_routes(
             raise HTTPException(status_code=401, detail="old password is incorrect")
         await store.store.set_user_password(user["user_id"], hash_password(payload.new_password))
         return {"ok": True}
+
+    @router.post("/auth/token")
+    async def rotate_own_token(
+        payload: _RotateTokenPayload | None = None,
+        user: dict[str, Any] = Depends(require_user_token),
+    ) -> dict[str, Any]:
+        """Rotate the caller's own API token (returned once).
+
+        ``expires_in_days`` sets an optional lifetime; omitted/null means the
+        token never expires. The previous API token stops working immediately;
+        any existing session token is unaffected.
+        """
+        token = generate_token()
+        expires_at = _expiry_from_days(payload.expires_in_days if payload else None)
+        await store.store.set_user_token(
+            user["user_id"],
+            hash_token(token),
+            datetime.now(timezone.utc),
+            expires_at,
+        )
+        logger.info("rotated own token for user %s", user["username"])
+        return {
+            "user_id": user["user_id"],
+            "username": user["username"],
+            "token": token,
+            "token_type": "api",
+            "token_expires_at": _iso(expires_at),
+        }

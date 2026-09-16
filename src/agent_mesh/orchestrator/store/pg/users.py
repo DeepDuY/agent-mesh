@@ -19,17 +19,18 @@ class UsersMixin(PostgresBase):
         disabled: bool = False,
         created_by: str | None = None,
         token_created_at: datetime | None = None,
+        token_expires_at: datetime | None = None,
     ) -> None:
         await self._db.execute(
-            "INSERT INTO users (user_id, username, password_hash, token_hash, role, disabled, created_by, token_created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO users (user_id, username, password_hash, token_hash, role, disabled, created_by, token_created_at, token_expires_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (user_id, username, password_hash, token_hash, role, disabled, created_by,
-             token_created_at),
+             token_created_at, token_expires_at),
         )
 
     async def get_user_by_username(self, username: str) -> dict[str, Any] | None:
         row = await self._db.fetchrow(
-            "SELECT user_id, username, password_hash, role, disabled, created_by, created_at, last_login_at, token_created_at, token_hash "
+            "SELECT user_id, username, password_hash, role, disabled, created_by, created_at, last_login_at, token_created_at, token_expires_at, token_hash "
             "FROM users WHERE username = ?",
             (username,),
         )
@@ -37,7 +38,7 @@ class UsersMixin(PostgresBase):
 
     async def get_user_by_token_hash(self, token_hash: str) -> dict[str, Any] | None:
         row = await self._db.fetchrow(
-            "SELECT user_id, username, password_hash, role, disabled, created_by, created_at, last_login_at, token_created_at, token_hash "
+            "SELECT user_id, username, password_hash, role, disabled, created_by, created_at, last_login_at, token_created_at, token_expires_at, token_hash "
             "FROM users WHERE token_hash = ?",
             (token_hash,),
         )
@@ -45,7 +46,7 @@ class UsersMixin(PostgresBase):
 
     async def list_users(self) -> list[dict[str, Any]]:
         rows = await self._db.execute(
-            "SELECT user_id, username, role, disabled, created_by, created_at, last_login_at, token_created_at "
+            "SELECT user_id, username, role, disabled, created_by, created_at, last_login_at, token_created_at, token_expires_at "
             "FROM users ORDER BY created_at ASC"
         )
         return [dict(row) for row in rows]
@@ -70,10 +71,11 @@ class UsersMixin(PostgresBase):
         user_id: str,
         token_hash: str,
         token_created_at: datetime | None = None,
+        token_expires_at: datetime | None = None,
     ) -> bool:
         return await self._db.execute_rowcount(
-            "UPDATE users SET token_hash = ?, token_created_at = ? WHERE user_id = ?",
-            (token_hash, token_created_at, user_id),
+            "UPDATE users SET token_hash = ?, token_created_at = ?, token_expires_at = ? WHERE user_id = ?",
+            (token_hash, token_created_at, token_expires_at, user_id),
         ) == 1
 
     async def set_user_last_login(

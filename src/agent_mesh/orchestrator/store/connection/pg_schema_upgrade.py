@@ -22,13 +22,14 @@ async def ensure_user_schema_upgrade(conn: Any) -> None:
     }
     if "token_hash" not in cols:
         await conn.execute("ALTER TABLE users ADD COLUMN token_hash TEXT")
-    for col in ("disabled", "created_by", "last_login_at", "token_created_at"):
+    for col in ("disabled", "created_by", "last_login_at", "token_created_at", "token_expires_at"):
         if col not in cols:
             sql = {
                 "disabled": "ALTER TABLE users ADD COLUMN disabled BOOLEAN NOT NULL DEFAULT FALSE",
                 "created_by": "ALTER TABLE users ADD COLUMN created_by TEXT",
                 "last_login_at": "ALTER TABLE users ADD COLUMN last_login_at TIMESTAMP",
                 "token_created_at": "ALTER TABLE users ADD COLUMN token_created_at TIMESTAMP",
+                "token_expires_at": "ALTER TABLE users ADD COLUMN token_expires_at TIMESTAMP",
             }[col]
             await conn.execute(sql)
     if "token" in cols:

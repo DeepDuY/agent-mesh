@@ -411,6 +411,7 @@ class AbstractStore(abc.ABC):
         disabled: bool = False,
         created_by: str | None = None,
         token_created_at: datetime | None = None,
+        token_expires_at: datetime | None = None,
     ) -> None: ...
 
     @abc.abstractmethod
@@ -438,6 +439,7 @@ class AbstractStore(abc.ABC):
         user_id: str,
         token_hash: str,
         token_created_at: datetime | None = None,
+        token_expires_at: datetime | None = None,
     ) -> bool: ...
 
     @abc.abstractmethod

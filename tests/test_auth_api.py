@@ -257,6 +257,90 @@ def test_change_own_password(client: TestClient):
 
 
 # ----------------------------------------------------------------------
+# Self-service token rotation + expiry
+# ----------------------------------------------------------------------
+def test_rotate_own_token_permanent(client: TestClient):
+    created = _create_user(client, "walter")
+    old_token = created.json()["token"]
+    headers = {"Authorization": f"Bearer {old_token}"}
+
+    resp = client.post("/api/auth/token", headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    new_token = data["token"]
+    assert data["token_type"] == "api"
+    assert data["token_expires_at"] is None  # blank = never expires
+    assert new_token and new_token != old_token
+
+    # Old token is dead, new token works, and it does not expire.
+    assert client.get("/api/tasks", headers=headers).status_code == 401
+    assert client.get(
+        "/api/tasks", headers={"Authorization": f"Bearer {new_token}"}
+    ).status_code == 200
+
+
+def test_rotate_own_token_with_expiry(client: TestClient):
+    created = _create_user(client, "xena")
+    headers = {"Authorization": f"Bearer {created.json()['token']}"}
+    resp = client.post("/api/auth/token", json={"expires_in_days": 30}, headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["token_expires_at"] is not None
+    new_token = data["token"]
+    assert client.get(
+        "/api/tasks", headers={"Authorization": f"Bearer {new_token}"}
+    ).status_code == 200
+
+
+def test_rotate_own_token_rejects_bad_days(client: TestClient):
+    created = _create_user(client, "yuri")
+    headers = {"Authorization": f"Bearer {created.json()['token']}"}
+    assert client.post("/api/auth/token", json={"expires_in_days": 0}, headers=headers).status_code == 422
+    assert client.post("/api/auth/token", json={"expires_in_days": -5}, headers=headers).status_code == 422
+
+
+def test_expired_token_is_rejected(client: TestClient):
+    created = _create_user(client, "zack")
+    token = created.json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    assert client.get("/api/tasks", headers=headers).status_code == 200
+
+    # Force the stored expiry into the past and confirm the token is refused.
+    db_path = client.app.state.store.store._db.db_path
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            "UPDATE users SET token_expires_at = ? WHERE username = 'zack'",
+            ("2000-01-01T00:00:00+00:00",),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    assert client.get("/api/tasks", headers=headers).status_code == 401
+
+
+def test_me_exposes_token_expiry(client: TestClient):
+    created = _create_user(client, "amy")
+    old_token = created.json()["token"]
+    me = client.get(
+        "/api/auth/me", headers={"Authorization": f"Bearer {old_token}"}
+    ).json()
+    assert "token_expires_at" in me
+    assert me["token_expires_at"] is None
+
+    rotated = client.post(
+        "/api/auth/token",
+        json={"expires_in_days": 7},
+        headers={"Authorization": f"Bearer {old_token}"},
+    )
+    new_token = rotated.json()["token"]
+    me = client.get(
+        "/api/auth/me", headers={"Authorization": f"Bearer {new_token}"}
+    ).json()
+    assert me["token_expires_at"] is not None
+
+
+# ----------------------------------------------------------------------
 # Task management
 # ----------------------------------------------------------------------
 def _register_and_dispatch(client, headers, instruction="echo hello"):

@@ -6,6 +6,7 @@ import hmac
 import json
 import secrets
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from passlib.context import CryptContext
@@ -89,8 +90,12 @@ async def resolve_token_user(store: Any, token: str) -> dict[str, Any] | None:
 
     Accepts either a long-lived API token (SHA-256 lookup) or a signed session
     token issued by :func:`make_session_token`. Disabled users resolve to None.
+    An API token whose ``token_expires_at`` is in the past also resolves to None
+    (a blank/NULL expiry means the token never expires).
     """
     user = await store.store.get_user_by_token_hash(hash_token(token))
+    if user is not None and token_is_expired(user.get("token_expires_at")):
+        user = None
     if user is None:
         secret = await store.store.get_setting("session_secret")
         if secret:
@@ -100,3 +105,22 @@ async def resolve_token_user(store: Any, token: str) -> dict[str, Any] | None:
     if user is None or user.get("disabled"):
         return None
     return user
+
+
+def token_is_expired(token_expires_at: Any, now: datetime | None = None) -> bool:
+    """Whether an API token's ``token_expires_at`` is in the past.
+
+    Accepts a ``datetime`` (PG) or an ISO-8601 string (SQLite) and treats a
+    missing value as "never expires".
+    """
+    if not token_expires_at:
+        return False
+    dt = token_expires_at
+    if not isinstance(dt, datetime):
+        try:
+            dt = datetime.fromisoformat(str(dt))
+        except ValueError:
+            return False
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt < (now or datetime.now(timezone.utc))

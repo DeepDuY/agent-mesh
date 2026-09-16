@@ -7,7 +7,7 @@ from agent_mesh.orchestrator.store.sqlite.connection import _dt_to_iso, SQLiteBa
 
 _USER_COLUMNS = (
     "user_id, username, password_hash, role, disabled, created_by, "
-    "created_at, last_login_at, token_created_at, token_hash"
+    "created_at, last_login_at, token_created_at, token_expires_at, token_hash"
 )
 
 
@@ -26,11 +26,12 @@ class UsersMixin(SQLiteBase):
         disabled: bool = False,
         created_by: str | None = None,
         token_created_at: datetime | None = None,
+        token_expires_at: datetime | None = None,
     ) -> None:
         await self._execute(
             """
-            INSERT INTO users (user_id, username, password_hash, token_hash, role, disabled, created_by, token_created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO users (user_id, username, password_hash, token_hash, role, disabled, created_by, token_created_at, token_expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 user_id,
@@ -41,6 +42,7 @@ class UsersMixin(SQLiteBase):
                 1 if disabled else 0,
                 created_by,
                 _dt_to_iso(token_created_at),
+                _dt_to_iso(token_expires_at),
             ),
         )
 
@@ -84,10 +86,16 @@ class UsersMixin(SQLiteBase):
         user_id: str,
         token_hash: str,
         token_created_at: datetime | None = None,
+        token_expires_at: datetime | None = None,
     ) -> bool:
         count = await self._execute_rowcount(
-            "UPDATE users SET token_hash = ?, token_created_at = ? WHERE user_id = ?",
-            (token_hash, _dt_to_iso(token_created_at), user_id),
+            "UPDATE users SET token_hash = ?, token_created_at = ?, token_expires_at = ? WHERE user_id = ?",
+            (
+                token_hash,
+                _dt_to_iso(token_created_at),
+                _dt_to_iso(token_expires_at),
+                user_id,
+            ),
         )
         return count > 0
 

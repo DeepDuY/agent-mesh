@@ -1,6 +1,7 @@
 import enum
 
-VERSION = "1.6.3"
+VERSION = "1.6.3"          # edge probe / bootstrap package version
+SERVER_VERSION = "1.7.0"   # orchestrator (server) version
 
 # Initial gateway model ids seeded into `settings.llm_models` on a fresh
 # database. This is only a default value, not a hardcoded allow-list: the edge
@@ -26,3 +27,4 @@ class TaskStatus(str, enum.Enum):
     FAILED = "failed"
     TIMED_OUT = "timed_out"
     CANCELLED = "cancelled"
+    DENIED = "denied"
