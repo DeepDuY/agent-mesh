@@ -31,9 +31,16 @@
         <span class="brand-sub">多 Agent 远程协同</span>
       </div>
       <div class="user-info">
-        <span id="user-label"></span>
-        <button class="btn btn-secondary" onclick="openPasswordModal()">修改密码</button>
-        <button class="btn btn-secondary" onclick="logout()">退出</button>
+        <div class="user-menu">
+          <button class="user-menu-trigger" onclick="toggleUserMenu(event)">
+            <span id="user-label"></span><span class="caret">▾</span>
+          </button>
+          <div id="user-menu-dropdown" class="user-menu-dropdown hidden">
+            <button onclick="openProfileModal()">个人中心</button>
+            <button onclick="openPasswordModal()">修改密码</button>
+            <button onclick="logout()">退出</button>
+          </div>
+        </div>
       </div>
     </header>
     <div class="tabs">
@@ -105,6 +112,7 @@
               <option value="failed">失败</option>
               <option value="timed_out">超时</option>
               <option value="cancelled">已终止</option>
+              <option value="denied">已拦截</option>
             </select>
             <select id="task-mode-filter" class="filter-select" onchange="applyTaskFilters()">
               <option value="">全部模式</option>
@@ -130,9 +138,9 @@
             <table>
               <thead><tr>
                 <th class="col-select"><input type="checkbox" id="tasks-select-all" onclick="toggleSelectAllPage()" title="全选当前页"></th>
-                <th>ID</th><th>节点</th><th>指令</th><th>模式</th><th>状态</th><th>开始时间</th><th>耗时</th><th>操作</th>
+                <th>ID</th><th>节点</th><th>用户</th><th>指令</th><th>模式</th><th>状态</th><th>开始时间</th><th>耗时</th><th>操作</th>
               </tr></thead>
-              <tbody id="tasks-body"><tr><td colspan="9" class="empty">加载中...</td></tr></tbody>
+              <tbody id="tasks-body"><tr><td colspan="10" class="empty">加载中...</td></tr></tbody>
             </table>
           </div>
           <div class="pagination">
@@ -180,7 +188,6 @@
               <button class="btn btn-success" onclick="document.getElementById('skill-upload-input').click()">上传技能 ZIP</button>
             </div>
           </div>
-          <p class="refresh-hint">上传的 zip 会被提取 SKILL.md 元数据（name/description）；边沿 agent 通过摘要接口浏览、按需下载使用。</p>
           <table>
             <thead><tr><th>名称</th><th class="col-desc">描述</th><th>版本</th><th>状态</th><th>操作</th></tr></thead>
             <tbody id="skills-body"><tr><td colspan="5" class="empty">加载中...</td></tr></tbody>
@@ -195,7 +202,6 @@
             <h2>团队 / 组</h2>
             <button class="btn btn-success" onclick="openTeamModal()">+ 新建团队</button>
           </div>
-          <p class="refresh-hint" style="text-align:left">团队用于权限归属：节点访问权限、模板归属、任务可见性都可按团队。一个用户至多属于一个团队。</p>
           <table>
             <thead><tr><th>名称</th><th>说明</th><th>成员</th><th>节点</th><th>操作</th></tr></thead>
             <tbody id="teams-body"><tr><td colspan="5" class="empty">加载中...</td></tr></tbody>
@@ -210,7 +216,6 @@
             <h2>节点模板</h2>
             <button class="btn btn-success" onclick="openTemplateModal()">+ 新建模板</button>
           </div>
-          <p class="refresh-hint" style="text-align:left">模板是节点的可复用配置（提示词 / 默认模型 / 权限 / 节点描述）。节点绑定模板后自动继承；节点自身的同名配置优先/叠加。改模板会影响所有绑定节点。内置 build/plan/readonly 三个权限模板。</p>
           <table>
             <thead><tr><th>名称</th><th>说明</th><th class="col-desc">节点描述</th><th>默认模型</th><th class="col-desc">System Prompt</th><th>绑定节点</th><th>操作</th></tr></thead>
             <tbody id="templates-body"><tr><td colspan="7" class="empty">加载中...</td></tr></tbody>
@@ -247,7 +252,6 @@
             <thead><tr><th>用户名</th><th>角色</th><th>团队</th><th>状态</th><th>创建时间</th><th>最近登录</th><th>Token 更新时间</th><th>操作</th></tr></thead>
             <tbody id="users-body"><tr><td colspan="8" class="empty">加载中...</td></tr></tbody>
           </table>
-          <p class="refresh-hint">用户 API token 用于 REST 接口；丢失后可由管理员轮换（只显示一次）。新用户必须归属一个团队。</p>
         </div>
       </section>
 
@@ -257,7 +261,7 @@
 
           <div class="settings">
             <div class="setting">
-              <div class="setting-label">公开地址 <span class="help" data-tip="Agent 安装脚本和边缘节点用来访问此编排器的地址。">?</span></div>
+              <div class="setting-label">公开地址 <span class="help" data-tip="此控制台的对外访问地址。">?</span></div>
               <div class="setting-control">
                 <input id="public-url" type="text" value="" placeholder="http://10.0.0.1:8000" onfocus="pauseRefresh()" onblur="resumeRefresh()">
                 <button class="btn" onclick="savePublicUrl()">保存</button>
@@ -266,7 +270,7 @@
             </div>
 
             <div class="setting setting-lg">
-              <div class="setting-label">默认 LLM 配置 <span class="help" data-tip="节点默认使用的模型与网关凭据（未配置时 llm 任务会被拒绝）。保存后通过心跳同步给在线节点，节点级配置优先。">?</span></div>
+              <div class="setting-label">默认 LLM 配置 <span class="help" data-tip="节点默认使用的模型与网关凭据（未配置时 llm 任务会被拒绝）；节点级配置优先。">?</span></div>
               <div class="setting-control">
                 <div class="sub-field">
                   <label>模型（必填，网关真实完整 id）</label>
@@ -288,7 +292,7 @@
             </div>
 
             <div class="setting setting-lg">
-              <div class="setting-label">可用模型列表 <span class="help" data-tip="每行一个完整网关模型 id（如 anthropic/deepseek-v4-flash）。节点据此生成 opencode 模型表，派发时也会据此校验 model 参数。留空 = 不限制。">?</span></div>
+              <div class="setting-label">可用模型列表 <span class="help" data-tip="每行一个完整网关模型 id（如 anthropic/deepseek-v4-flash）；派发 llm 任务时会校验 model 参数。留空 = 不限制。">?</span></div>
               <div class="setting-control">
                 <div class="sub-field">
                   <textarea id="llm-models" rows="4" placeholder="anthropic/deepseek-v4-flash&#10;anthropic/deepseek-v4-pro&#10;anthropic/vip/kimi-k2.7-code"></textarea>
@@ -301,7 +305,7 @@
             </div>
 
             <div class="setting setting-lg">
-              <div class="setting-label">默认权限 <span class="help" data-tip="未绑定模板的节点使用的权限（llm 与 command 共用，OpenCode permission 规格）。默认 readonly。绑定模板的节点以模板为准。">?</span></div>
+              <div class="setting-label">默认权限 <span class="help" data-tip="未绑定模板的节点使用的权限（llm 与 command 共用）。默认 readonly；绑定模板的节点以模板为准。">?</span></div>
               <div class="setting-control">
                 <div class="sub-field">
                   <select id="default-permission-preset" onchange="applyDefaultPermissionPreset(this.value)">
@@ -330,11 +334,30 @@
             </div>
 
             <div class="setting">
-              <div class="setting-label">节点并发 <span class="help" data-tip="每个节点最多同时执行的任务数（心跳下发给所有在线节点，默认 2）。">?</span></div>
+              <div class="setting-label">节点并发 <span class="help" data-tip="每个节点最多同时执行的任务数（默认 2）。">?</span></div>
               <div class="setting-control">
                 <input id="max-concurrent" type="number" min="1" max="32" value="2" placeholder="2">
                 <button class="btn" onclick="saveMaxConcurrent()">保存</button>
                 <span id="max-concurrent-status" class="status-msg"></span>
+              </div>
+            </div>
+
+            <div class="setting setting-lg">
+              <div class="setting-label">探针安装包 <span class="help" data-tip="上传新的探针安装包（.tar.gz）后，新节点安装与节点升级都会使用该版本。">?</span></div>
+              <div class="setting-control">
+                <div class="sub-field">
+                  <label>服务端版本</label>
+                  <span id="server-version" class="mono">-</span>
+                </div>
+                <div class="sub-field">
+                  <label>探针当前版本</label>
+                  <span id="probe-version" class="mono">-</span>
+                </div>
+                <div class="sub-actions">
+                  <input type="file" id="probe-upload-input" accept=".tar.gz,.tgz" style="display:none" onchange="uploadProbe(this)">
+                  <button class="btn" onclick="document.getElementById('probe-upload-input').click()">上传探针包</button>
+                  <span id="probe-upload-status" class="status-msg"></span>
+                </div>
               </div>
             </div>
 
@@ -344,14 +367,6 @@
                 <input id="task-log-poll" type="number" min="1" max="60" value="5" placeholder="5">
                 <button class="btn" onclick="saveTaskLogPoll()">保存</button>
                 <span id="task-log-poll-status" class="status-msg"></span>
-              </div>
-            </div>
-
-            <div class="setting">
-              <div class="setting-label">Agent-Mesh Skill <span class="help" data-tip="下载最新版 agent-mesh 使用指南（SKILL.md），放入主 Agent 的 skills 目录即可使用。">?</span></div>
-              <div class="setting-control">
-                <button class="btn" onclick="downloadAgentMeshSkill()">下载 SKILL.md</button>
-                <span id="skill-doc-status" class="status-msg"></span>
               </div>
             </div>
           </div>
@@ -461,6 +476,43 @@
     </div>
   </div>
 
+  <div id="profile-modal" class="modal hidden" onclick="onProfileBackdrop(event)">
+    <div class="modal-content" style="max-width:640px" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h2>个人中心</h2>
+        <span class="close" onclick="closeProfileModal()">&times;</span>
+      </div>
+
+      <div class="card">
+        <h3>账号信息</h3>
+        <div id="profile-info" class="profile-info">加载中...</div>
+      </div>
+
+      <div class="card">
+        <h3>API Token <span class="help" data-tip="重新生成后旧 token 立即失效（已登录的网页会话不受影响）；有效期留空表示永久。">?</span></h3>
+        <div id="profile-token-info" class="profile-info">加载中...</div>
+        <div class="form-row">
+          <input id="profile-token-days" type="number" min="1" max="36500" placeholder="有效期（天），留空=永久">
+          <button class="btn" onclick="rotateOwnToken()">生成新 token</button>
+        </div>
+        <div id="profile-token-status" class="status-msg"></div>
+        <div id="profile-token-box" class="hidden">
+          <p class="refresh-hint" style="text-align:left">新 token 只显示这一次，请立即保存：</p>
+          <pre id="profile-token-value" class="mono"></pre>
+          <button class="btn" onclick="copyText(document.getElementById('profile-token-value').textContent)">复制 token</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>agent-mesh 技能包 <span class="help" data-tip="下载 agent-mesh.zip（SKILL.md + references + 自动生成的 .env）；token 放在 .env 中，不写入文档。解压后把 agent-mesh/ 放进主 Agent 的 skills 目录即可。">?</span></h3>
+        <div class="sub-actions">
+          <button class="btn btn-success" onclick="downloadSkillPack()">下载技能包 zip</button>
+          <span id="profile-skill-status" class="status-msg"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="agent-modal" class="modal hidden" onclick="onModalBackdrop(event)">
     <div class="modal-content" onclick="event.stopPropagation()">
       <div class="modal-header">
@@ -481,5 +533,6 @@
   <script src="/static/js/templates.js"></script>
   <script src="/static/js/teams.js"></script>
   <script src="/static/js/config.js"></script>
+  <script src="/static/js/profile.js"></script>
 </body>
 </html>

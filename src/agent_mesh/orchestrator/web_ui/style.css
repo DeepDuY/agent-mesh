@@ -206,6 +206,7 @@ tbody tr:last-child td { border-bottom: none; }
 .status-completed { background: rgba(52, 211, 153, .15); color: #6ee7b7; }
 .status-failed, .status-timed_out { background: rgba(239, 68, 68, .16); color: #fca5a5; }
 .status-cancelled { background: rgba(120, 113, 108, .25); color: #d6d3d1; }
+.status-denied { background: rgba(244, 114, 182, .16); color: #f9a8d4; }
 
 .online { color: var(--ok); font-weight: 600; }
 .offline { color: var(--err); font-weight: 600; }
@@ -270,6 +271,27 @@ pre {
   width: 8px; height: 8px; border-radius: 50%;
   background: var(--ok); box-shadow: 0 0 8px rgba(52, 211, 153, .6);
 }
+.user-menu { position: relative; }
+.user-menu-trigger {
+  display: flex; align-items: center; gap: .4rem;
+  background: transparent; border: 0; color: var(--muted);
+  font: inherit; cursor: pointer; padding: .35rem .5rem; border-radius: var(--radius-sm);
+  transition: background var(--transition), color var(--transition);
+}
+.user-menu-trigger:hover { color: var(--text); background: rgba(59, 130, 246, .12); }
+.user-menu-trigger .caret { font-size: .7rem; opacity: .8; }
+.user-menu-dropdown {
+  position: absolute; right: 0; top: calc(100% + .4rem); min-width: 150px;
+  display: flex; flex-direction: column; padding: .25rem;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); box-shadow: var(--shadow); z-index: 30;
+}
+.user-menu-dropdown button {
+  text-align: left; background: transparent; border: 0; color: var(--text);
+  font: inherit; cursor: pointer; padding: .5rem .7rem; border-radius: var(--radius-sm);
+  transition: background var(--transition);
+}
+.user-menu-dropdown button:hover { background: rgba(59, 130, 246, .18); }
 
 .modal {
   position: fixed;
@@ -535,6 +557,7 @@ pre {
 .detail-item { background: var(--surface); border: 1px solid var(--border); padding: .65rem .85rem; border-radius: var(--radius-sm); }
 .detail-item label { display: block; color: var(--muted); font-size: .72rem; margin-bottom: .2rem; text-transform: uppercase; letter-spacing: .3px; }
 .detail-item span { font-size: .9rem; word-break: break-all; }
+.profile-info { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .5rem; }
 
 .refresh-hint { color: var(--muted); font-size: .75rem; text-align: right; margin-top: .6rem; }
 .status-msg { color: var(--ok); font-size: .85rem; margin-left: .5rem; }

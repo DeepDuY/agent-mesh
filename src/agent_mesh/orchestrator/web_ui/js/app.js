@@ -144,7 +144,7 @@ function switchTab(name) {
 }
 
 function badge(status) {
-  const labels = { queued: '排队', assigned: '已分配', working: '执行中', completed: '完成', failed: '失败', timed_out: '超时', cancelled: '已终止' };
+  const labels = { queued: '排队', assigned: '已分配', working: '执行中', completed: '完成', failed: '失败', timed_out: '超时', cancelled: '已终止', denied: '已拦截' };
   return `<span class="badge status-${status}">${labels[status] || status}</span>`;
 }
 
@@ -154,7 +154,7 @@ function agentDisplayName(key) {
 }
 
 async function loadAll() {
-  await Promise.all([loadAgents(), loadTasks(), loadFiles(), loadSkills(), loadTemplates(), loadConfig()]);
+  await Promise.all([loadAgents(), loadTasks(), loadFiles(), loadSkills(), loadTemplates(), loadConfig(), loadProfile()]);
   if (isAdmin()) { await loadUsers(); await loadTeams(); }
 }
 
@@ -173,6 +173,27 @@ function closeAgentModal() {
 
 function onModalBackdrop(e) {
   if (e.target.id === 'agent-modal') closeAgentModal();
+}
+
+// User menu (header): open "个人中心" / change password / logout.
+function toggleUserMenu(e) {
+  if (e) e.stopPropagation();
+  const dd = document.getElementById('user-menu-dropdown');
+  if (dd) dd.classList.toggle('hidden');
+}
+
+function closeUserMenu() {
+  const dd = document.getElementById('user-menu-dropdown');
+  if (dd) dd.classList.add('hidden');
+}
+
+document.addEventListener('click', (e) => {
+  const menu = document.querySelector('.user-menu');
+  if (menu && !menu.contains(e.target)) closeUserMenu();
+});
+{
+  const dd = document.getElementById('user-menu-dropdown');
+  if (dd) dd.addEventListener('click', () => closeUserMenu());
 }
 
 function copyText(text) {

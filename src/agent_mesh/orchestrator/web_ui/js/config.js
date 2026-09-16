@@ -41,8 +41,50 @@ async function loadConfig() {
     if (document.activeElement !== pollInput) pollInput.value = settings.task_log_poll_interval || '5';
 
     window.TASK_LOG_POLL_S = parseInt(settings.task_log_poll_interval, 10) || 5;
+    loadVersionInfo();
   } catch (e) {
     console.error('load config failed', e);
+  }
+}
+
+async function loadVersionInfo() {
+  try {
+    const res = await fetch('/api/bootstrap/info', { headers });
+    if (!res.ok) return;
+    const data = await res.json();
+    const serverEl = document.getElementById('server-version');
+    const probeEl = document.getElementById('probe-version');
+    if (serverEl) serverEl.textContent = data.server_version || '-';
+    if (probeEl) probeEl.textContent = data.probe_version || '(未发布)';
+  } catch (e) {
+    /* ignore transient errors */
+  }
+}
+
+async function uploadProbe(input) {
+  const statusEl = document.getElementById('probe-upload-status');
+  const file = input.files && input.files[0];
+  if (!file) return;
+  if (!confirm(`确认上传并发布探针包 ${file.name}？\n新节点安装与节点升级将使用该版本。`)) {
+    input.value = '';
+    return;
+  }
+  statusEl.textContent = '上传中…（大文件请稍候）';
+  statusEl.style.color = '';
+  const form = new FormData();
+  form.append('file', file);
+  try {
+    const res = await fetch('/api/bootstrap', { method: 'POST', headers, body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    statusEl.textContent = `已发布 ${data.filename}（版本 ${data.probe_version}）`;
+    statusEl.style.color = 'var(--ok)';
+    loadVersionInfo();
+  } catch (e) {
+    statusEl.textContent = '上传失败：' + e.message;
+    statusEl.style.color = 'var(--danger)';
+  } finally {
+    input.value = '';
   }
 }
 
@@ -81,7 +123,7 @@ async function saveLlmModels() {
   const statusEl = document.getElementById('llm-models-status');
   try {
     await patchSettings({ llm_models: document.getElementById('llm-models').value.trim() });
-    statusEl.textContent = '已保存，将随心跳同步到节点';
+    statusEl.textContent = '已保存';
     statusEl.style.color = '';
   } catch (e) {
     statusEl.textContent = '保存失败：' + e.message;
@@ -127,7 +169,7 @@ async function saveMaxConcurrent() {
   try {
     await patchSettings({ max_concurrent: String(n) });
     document.getElementById('max-concurrent').value = String(n);
-    el.textContent = '已保存，将随下一次心跳同步到节点';
+    el.textContent = '已保存';
     el.style.color = '';
   } catch (e) {
     el.textContent = '保存失败：' + e.message;
@@ -176,34 +218,11 @@ async function saveDefaultPermission() {
   }
   try {
     await patchSettings({ default_permission: raw });
-    el.textContent = '已保存，将随心跳同步到节点';
+    el.textContent = '已保存';
     el.style.color = '';
   } catch (e) {
     el.textContent = '保存失败：' + e.message;
     el.style.color = 'var(--danger)';
   }
   setTimeout(() => el.textContent = '', 3000);
-}
-
-async function downloadAgentMeshSkill() {
-  const statusEl = document.getElementById('skill-doc-status');
-  try {
-    const res = await fetch('/api/skill-doc/agent-mesh', { headers });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'agent-mesh-SKILL.md';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-    statusEl.textContent = '已开始下载 SKILL.md';
-    statusEl.style.color = '';
-  } catch (e) {
-    statusEl.textContent = '下载失败：' + e.message;
-    statusEl.style.color = 'var(--danger)';
-  }
-  setTimeout(() => statusEl.textContent = '', 3000);
 }

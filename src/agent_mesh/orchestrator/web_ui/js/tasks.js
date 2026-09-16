@@ -131,6 +131,7 @@ async function loadTasks() {
       </td>
       <td class="mono">${t.task_id}</td>
       <td>${agentDisplayName(t.agent_id)}</td>
+      <td>${escHtml(t.dispatched_by || '-')}</td>
       <td title="${t.instruction.replace(/"/g, '&quot;')}">${t.instruction.slice(0, 60)}${t.instruction.length > 60 ? '...' : ''}</td>
       <td>${modeBadge(t.mode)}</td>
       <td>${badge(t.status)}</td>
@@ -138,7 +139,7 @@ async function loadTasks() {
       <td>${t.result ? fmtDuration(t.result.duration_ms) : '-'}</td>
       <td>${cancellable ? `<span class="actions"><button class="btn btn-danger" onclick="event.stopPropagation();cancelTask('${t.task_id}')">终止</button></span>` : ''}</td>
     </tr>
-  `}).join('') || '<tr><td colspan="9" class="empty">暂无任务</td></tr>';
+  `}).join('') || '<tr><td colspan="10" class="empty">暂无任务</td></tr>';
 
   document.getElementById('task-page-info').textContent = `第 ${taskPage + 1} / ${totalPages} 页（共 ${taskTotal} 条）`;
   updateTaskSelectionUI();
@@ -276,6 +277,7 @@ async function showTaskDetail(taskId) {
     <div class="detail-grid">
       <div class="detail-item"><label>任务 ID</label><span class="mono">${t.task_id}</span></div>
       <div class="detail-item"><label>节点</label><span>${agentDisplayName(t.agent_id)}</span></div>
+      <div class="detail-item"><label>来源用户</label><span>${escHtml(t.dispatched_by || '-')}</span></div>
       <div class="detail-item"><label>模式</label><span>${modeBadge(t.mode)}</span></div>
       <div class="detail-item"><label>状态</label>${badge(t.status)}</div>
       <div class="detail-item"><label>创建</label><span>${formatTime(t.created_at)}</span></div>

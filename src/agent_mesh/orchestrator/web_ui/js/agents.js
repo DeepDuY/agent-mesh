@@ -2,6 +2,10 @@ function fmtPct(x) {
   return x == null ? '-' : Number(x).toFixed(2) + '%';
 }
 
+function fmtMB(x) {
+  return x == null ? '-' : Number(x).toFixed(0);
+}
+
 // ---- Node list state (client-side pagination + multi-select) --------------
 let agentPage = 0;
 let agentPageSize = 20;
@@ -58,8 +62,8 @@ function renderAgents() {
       <td>
         <span class="actions">
           <button class="btn" onclick="showAgentDetail(${a.id})">详情</button>
-          <button class="btn" onclick="requestUpgrade(${a.id})">升级</button>
-          <button class="btn btn-danger" onclick="deleteAgent(${a.id})">删除</button>
+          ${isAdmin() ? `<button class="btn" onclick="requestUpgrade(${a.id})">升级</button>
+          <button class="btn btn-danger" onclick="deleteAgent(${a.id})">删除</button>` : ''}
         </span>
       </td>
     </tr>
@@ -251,18 +255,18 @@ async function showAgentDetail(agentId) {
   const tasks = a.tasks || [];
   const memPct = a.mem_percent != null ? a.mem_percent : null;
   const memInfo = (a.mem_used_mb != null && a.mem_total_mb != null)
-    ? `${a.mem_used_mb} / ${a.mem_total_mb} MB` : '-';
+    ? `${fmtMB(a.mem_used_mb)} / ${fmtMB(a.mem_total_mb)} MB` : '-';
   document.getElementById('modal-title').textContent = '节点详情';
   // System prompt / template binding are admin-only (control-plane) — hide for
   // non-admins; the backend also enforces admin role (403).
   const adminBlock = isAdmin() ? `
-    <h3>节点 System Prompt <span class="help" data-tip="拼接在该节点每个 llm 任务提示词中（模板提示词之前）；留空则只用模板/内置提示词。保存后随心跳同步到节点。">?</span></h3>
+    <h3>节点 System Prompt <span class="help" data-tip="拼接在该节点每个 llm 任务提示词中（模板提示词之前）；留空则只用模板/内置提示词。">?</span></h3>
     <form onsubmit="setAgentSystemPrompt(event, ${a.id})">
       <textarea name="system_prompt" class="modal-textarea" placeholder="例如：你是运维专员，只允许操作 /opt 下的目录，禁止改动系统文件。" onfocus="pauseRefresh()" onblur="resumeRefresh()">${escHtml(a.system_prompt || '')}</textarea>
       <div class="sub-actions"><button class="btn" type="submit">保存 System Prompt</button></div>
     </form>
 
-    <h3>应用模板 <span class="help" data-tip="绑定模板后继承模板的提示词/默认模型/权限；节点自身配置优先/叠加。改模板会自动同步到绑定节点。">?</span></h3>
+    <h3>应用模板 <span class="help" data-tip="绑定模板后继承模板的提示词/默认模型/权限；节点自身配置优先/叠加。">?</span></h3>
     <form class="form-row" onsubmit="applyTemplate(event, ${a.id})">
       <select name="template_id">
         <option value="">（不绑定模板）</option>
@@ -295,7 +299,7 @@ async function showAgentDetail(agentId) {
       <div class="detail-item"><label>模板</label><span>${escHtml(a.template_name || (currentTemplates || []).find(t => t.id === a.template_id)?.name || '-')}</span></div>
       <div class="detail-item"><label>主机名</label><span>${a.hostname || '-'}</span></div>
       <div class="detail-item"><label>IP 地址</label><span class="mono">${a.ip_address || '-'}</span></div>
-      <div class="detail-item"><label>探针版本</label><span class="mono">${a.version || '-'}</span></div>
+      <div class="detail-item"><label>版本</label><span class="mono">${a.version || '-'}</span></div>
       <div class="detail-item"><label>系统</label><span>${a.distro || a.os || '-'} ${a.arch || ''}</span></div>
       <div class="detail-item"><label>运行时</label><span>${a.runtime || '-'}</span></div>
       <div class="detail-item"><label>状态</label><span class="${a.online ? 'online' : 'offline'}">${a.online ? '在线' : '离线'}</span></div>
@@ -318,7 +322,7 @@ async function showAgentDetail(agentId) {
       <button type="submit">保存</button>
     </form>
 
-    <h3>节点描述（本节点） <span class="help" data-tip="该节点是做什么的，主 Agent 通过 list_agents 的 effective_description 看到。本节点填写优先；留空则用其绑定模板的「节点描述」。仅元数据，不影响执行。">?</span></h3>
+    <h3>节点描述（本节点） <span class="help" data-tip="该节点是做什么的，供选择节点时参考。本节点填写优先；留空则用其绑定模板的「节点描述」。">?</span></h3>
     <form onsubmit="setAgentDescription(event, ${a.id})">
       <textarea name="description" class="modal-textarea" placeholder="留空则使用绑定模板的节点描述；例如：生产 Web 服务器，只跑部署类命令" onfocus="pauseRefresh()" onblur="resumeRefresh()">${escHtml(a.description || '')}</textarea>
       <div class="sub-actions"><button class="btn" type="submit">保存描述</button></div>
