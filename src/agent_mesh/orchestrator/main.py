@@ -12,6 +12,7 @@ from agent_mesh.orchestrator.api import create_query_router
 from agent_mesh.orchestrator.artifact_store import ArtifactStore
 from agent_mesh.orchestrator.config import OrchestratorConfig
 from agent_mesh.orchestrator.task_store import TaskStore
+from agent_mesh.shared.constants import SERVER_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ def create_app(
 
     app = FastAPI(
         title="agent-mesh-orchestrator",
-        version="1.0.0",
+        version=SERVER_VERSION,
         redirect_slashes=False,
         lifespan=lifespan,
     )

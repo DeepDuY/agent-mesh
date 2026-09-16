@@ -1,13 +1,24 @@
 from __future__ import annotations
 
+import logging
+import os
+import re
+import tarfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 
-from agent_mesh.orchestrator.config import OrchestratorConfig
+from agent_mesh.orchestrator.config import OrchestratorConfig, bootstrap_version
 from agent_mesh.orchestrator.task_store import TaskStore
+from agent_mesh.shared.constants import SERVER_VERSION
+
+logger = logging.getLogger(__name__)
+
+_PKG_NAME_RE = re.compile(r"^agent-mesh-agent-(linux|darwin)-(x64|arm64)$")
+_MAX_PACKAGE_BYTES = 500 * 1024 * 1024
 
 
 def mount_bootstrap_routes(
@@ -124,6 +135,129 @@ def mount_bootstrap_routes(
             'bash "$PKG_DIR/install.sh"\n'
         )
         return PlainTextResponse(script, media_type="text/x-shellscript")
+
+    @router.get("/bootstrap/info")
+    async def bootstrap_info(
+        _admin: dict[str, Any] = Depends(require_admin),
+    ) -> dict[str, Any]:
+        """Server version + published probe package info (shown on the config page)."""
+        bootstrap_dir = Path(config.db_path).parent / "bootstrap"
+        packages: list[dict[str, Any]] = []
+        if bootstrap_dir.is_dir():
+            for p in sorted(bootstrap_dir.glob("agent-mesh-agent-*.tar.gz")):
+                st = p.stat()
+                packages.append(
+                    {
+                        "filename": p.name,
+                        "size": st.st_size,
+                        "updated_at": datetime.fromtimestamp(
+                            st.st_mtime, timezone.utc
+                        ).isoformat(),
+                    }
+                )
+        return {
+            "server_version": SERVER_VERSION,
+            "probe_version": bootstrap_version(config.db_path),
+            "packages": packages,
+        }
+
+    @router.post("/bootstrap")
+    async def upload_bootstrap(
+        file: UploadFile = File(...),
+        admin: dict[str, Any] = Depends(require_admin),
+    ) -> dict[str, Any]:
+        """Publish/replace a probe package (.tar.gz) uploaded from the Web console.
+
+        The archive is validated, its embedded ``VERSION`` is read, and it is
+        placed under ``<db_dir>/bootstrap/`` so both new installs and node
+        self-upgrades pick it up (see auth-security.md §8).
+        """
+        bootstrap_dir = Path(config.db_path).parent / "bootstrap"
+        bootstrap_dir.mkdir(parents=True, exist_ok=True)
+
+        tmp = bootstrap_dir / f".upload-{os.getpid()}.tar.gz"
+        size = 0
+        try:
+            with open(tmp, "wb") as out:
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > _MAX_PACKAGE_BYTES:
+                        raise HTTPException(
+                            status_code=413, detail="probe package too large (max 500MB)"
+                        )
+                    out.write(chunk)
+            if size == 0:
+                raise HTTPException(status_code=400, detail="empty upload")
+
+            try:
+                tf = tarfile.open(tmp, "r:gz")
+            except tarfile.TarError:
+                raise HTTPException(
+                    status_code=400, detail="not a valid .tar.gz probe package"
+                )
+            with tf:
+                roots = {
+                    m.name.split("/", 1)[0] for m in tf.getmembers() if m.name
+                }
+                roots.discard("")
+                if len(roots) != 1:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="unexpected package layout (expected one top-level directory)",
+                    )
+                root = roots.pop()
+                if not _PKG_NAME_RE.match(root):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"unexpected package name '{root}' "
+                            "(expected agent-mesh-agent-<os>-<arch>)"
+                        ),
+                    )
+                version = None
+                install_sh = None
+                for m in tf.getmembers():
+                    if not m.isfile():
+                        continue
+                    if m.name == f"{root}/VERSION":
+                        version = (
+                            (tf.extractfile(m).read() or b"")
+                            .decode("utf-8", "replace")
+                            .strip()
+                        )
+                    elif m.name == f"{root}/install.sh":
+                        install_sh = tf.extractfile(m).read()
+                if not version:
+                    raise HTTPException(
+                        status_code=400, detail="probe package is missing VERSION"
+                    )
+
+            target = bootstrap_dir / f"{root}.tar.gz"
+            os.replace(tmp, target)
+            tmp = None  # type: ignore[assignment]  # moved; nothing to clean up
+            (bootstrap_dir / "VERSION").write_text(version + "\n", encoding="utf-8")
+            if install_sh:
+                (bootstrap_dir / "install.sh").write_bytes(install_sh)
+        finally:
+            if tmp is not None:
+                Path(tmp).unlink(missing_ok=True)
+
+        logger.info(
+            "published probe package %s (version %s, %d bytes) by %s",
+            target.name,
+            version,
+            size,
+            admin["username"],
+        )
+        return {
+            "uploaded": True,
+            "filename": target.name,
+            "probe_version": version,
+            "size": size,
+        }
 
     @router.get("/bootstrap/{filename}")
     async def bootstrap_download(

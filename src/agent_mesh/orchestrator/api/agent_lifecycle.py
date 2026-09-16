@@ -21,7 +21,13 @@ def mount_agent_lifecycle_routes(
     store: TaskStore,
     config: OrchestratorConfig | None,
     require_user_token,
+    require_admin=None,
 ) -> None:
+    # Upgrading and deleting a node are administrative operations: normal users
+    # may view/operate nodes they have access to, but must not upgrade or remove
+    # them. Fall back to the user guard if no admin dependency was supplied.
+    require_admin = require_admin or require_user_token
+
     @router.post("/agents/{agent_id}/token")
     async def rotate_agent_token(
         agent_id: str,
@@ -43,7 +49,7 @@ def mount_agent_lifecycle_routes(
     @router.post("/agents/{agent_id}/upgrade")
     async def request_agent_upgrade(
         agent_id: str,
-        user: dict[str, Any] = Depends(require_user_token),
+        user: dict[str, Any] = Depends(require_admin),
     ) -> dict[str, Any]:
         agent = await require_agent(store, agent_id, user)
         version = bootstrap_version(config.db_path)
@@ -63,7 +69,7 @@ def mount_agent_lifecycle_routes(
     @router.delete("/agents/{agent_id}")
     async def delete_agent(
         agent_id: str,
-        user: dict[str, Any] = Depends(require_user_token),
+        user: dict[str, Any] = Depends(require_admin),
     ) -> dict[str, Any]:
         agent = await require_agent(store, agent_id, user)
 

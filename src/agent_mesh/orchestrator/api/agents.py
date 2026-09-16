@@ -115,4 +115,4 @@ def mount_agent_routes(
 
     mount_agent_config_routes(router, store, require_admin, require_ui_user)
     mount_agent_access_routes(router, store, require_admin)
-    mount_agent_lifecycle_routes(router, store, config, require_user_token)
+    mount_agent_lifecycle_routes(router, store, config, require_user_token, require_admin)

@@ -1,4 +1,5 @@
 import asyncio
+import io
 import subprocess
 import tarfile
 
@@ -417,3 +418,122 @@ def test_wrapper_first_boot_runs_new_then_crash_rolls_back(tmp_path):
     assert not (install / "etc" / "upgrade-started").exists()
     assert not (install / "bin" / "agent-mesh-edge.bin.old").exists()
     assert not (install / "etc" / "agent_version.bak").exists()
+
+
+# ----------------------------------------------------------------------
+# Node lifecycle is admin-only
+# ----------------------------------------------------------------------
+def _non_admin_token(client: TestClient, username: str) -> str:
+    team = client.post(
+        "/api/teams", json={"name": f"team-{username}"}, headers=_admin_headers()
+    ).json()["team"]["team_id"]
+    return client.post(
+        "/api/auth/users",
+        json={
+            "username": username,
+            "password": "secret123",
+            "role": "user",
+            "team_id": team,
+        },
+        headers=_admin_headers(),
+    ).json()["token"]
+
+
+def test_upgrade_and_delete_require_admin(client: TestClient):
+    _poll(client, version="1.0.0")
+    user_h = {"Authorization": f"Bearer {_non_admin_token(client, 'bob')}"}
+
+    # A normal user cannot upgrade or delete a node.
+    assert (
+        client.post(
+            "/api/agents/00:aa:bb:cc:dd:01/upgrade", headers=user_h
+        ).status_code
+        == 403
+    )
+    assert (
+        client.delete("/api/agents/00:aa:bb:cc:dd:01", headers=user_h).status_code
+        == 403
+    )
+
+    # Admin can (the fixture published a bootstrap package).
+    assert (
+        client.post(
+            "/api/agents/00:aa:bb:cc:dd:01/upgrade", headers=_admin_headers()
+        ).status_code
+        == 200
+    )
+    assert (
+        client.delete("/api/agents/00:aa:bb:cc:dd:01", headers=_admin_headers()).status_code
+        == 200
+    )
+
+
+# ----------------------------------------------------------------------
+# Probe package version + upload
+# ----------------------------------------------------------------------
+def _make_pkg(version: str, root: str = "agent-mesh-agent-linux-arm64") -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name, content in (
+            (f"{root}/VERSION", version),
+            (f"{root}/install.sh", "#!/bin/sh\necho hi\n"),
+            (f"{root}/bin/agent-mesh-edge", "BIN"),
+        ):
+            data = content.encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+def test_bootstrap_info_reports_versions(client: TestClient):
+    from agent_mesh.shared.constants import SERVER_VERSION, VERSION
+
+    data = client.get("/api/bootstrap/info", headers=_admin_headers()).json()
+    assert data["server_version"] == SERVER_VERSION
+    assert data["probe_version"] == VERSION
+
+    # Non-admin cannot read the probe/version info.
+    user_h = {"Authorization": f"Bearer {_non_admin_token(client, 'carol')}"}
+    assert client.get("/api/bootstrap/info", headers=user_h).status_code == 403
+
+
+def test_bootstrap_upload_publishes_package(client: TestClient):
+    pkg = _make_pkg("9.9.9")
+    resp = client.post(
+        "/api/bootstrap",
+        files={"file": ("agent-mesh-agent-linux-arm64.tar.gz", pkg, "application/gzip")},
+        headers=_admin_headers(),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["probe_version"] == "9.9.9"
+    assert body["filename"] == "agent-mesh-agent-linux-arm64.tar.gz"
+
+    info = client.get("/api/bootstrap/info", headers=_admin_headers()).json()
+    assert info["probe_version"] == "9.9.9"
+    assert any(
+        p["filename"] == "agent-mesh-agent-linux-arm64.tar.gz"
+        for p in info["packages"]
+    )
+
+    # Non-admin cannot publish a package.
+    user_h = {"Authorization": f"Bearer {_non_admin_token(client, 'dave')}"}
+    assert (
+        client.post(
+            "/api/bootstrap",
+            files={"file": ("agent-mesh-agent-linux-arm64.tar.gz", pkg, "application/gzip")},
+            headers=user_h,
+        ).status_code
+        == 403
+    )
+
+    # Garbage is rejected.
+    assert (
+        client.post(
+            "/api/bootstrap",
+            files={"file": ("bad.tar.gz", b"not a tarball", "application/gzip")},
+            headers=_admin_headers(),
+        ).status_code
+        == 400
+    )
