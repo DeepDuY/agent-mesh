@@ -504,6 +504,18 @@ pre {
 .setting-control > input:focus,
 .sub-field input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(59, 130, 246, .18); }
 
+/* Checkboxes inside a sub-field must not inherit the full-width text-input box. */
+.sub-field input[type="checkbox"] {
+  width: auto;
+  max-width: none;
+  height: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+}
+.sub-field label.toggle-line { display: inline-flex; font-size: .88rem; }
+
 .btn, .form-row button {
   display: inline-flex;
   align-items: center;

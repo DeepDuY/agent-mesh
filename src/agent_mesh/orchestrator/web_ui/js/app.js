@@ -117,7 +117,10 @@ function showApp() {
 function startRefresh() {
   stopRefresh();
   refreshTimer = setInterval(() => {
-    if (!refreshPaused) loadAll();
+    // Never auto-refresh while the config tab is visible: it would overwrite
+    // half-finished edits. loadConfig() is called once on tab switch instead.
+    const configVisible = !document.getElementById('tab-config').classList.contains('hidden');
+    if (!refreshPaused && !configVisible) loadAll();
   }, 5000);
 }
 
@@ -141,6 +144,8 @@ function switchTab(name) {
   ['agents', 'tasks', 'files', 'skills', 'templates', 'users', 'teams', 'config'].forEach(n => {
     document.getElementById(`tab-${n}`).classList.toggle('hidden', n !== name);
   });
+  // Load the config once on entry (the periodic refresh is paused here).
+  if (name === 'config') loadConfig();
 }
 
 function badge(status) {
