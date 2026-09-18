@@ -184,7 +184,15 @@ def mount_edge_routes(
                 os_name = agent.os or "linux"
                 arch_name = agent.arch or "x64"
                 filename = f"agent-mesh-agent-{os_name}-{arch_name}.tar.gz"
-                if _bootstrap_package_exists(config, filename):
+                if os_name == "win32":
+                    # The Windows probe has no self-upgrade path yet; sending a
+                    # directive would only make it retry and give up. Windows
+                    # nodes are upgraded by reinstalling.
+                    logger.info(
+                        "skipping auto-upgrade for Windows agent %s (unsupported)",
+                        key,
+                    )
+                elif _bootstrap_package_exists(config, filename):
                     resp["upgrade"] = {
                         "version": target_ver,
                         "filename": filename,

@@ -405,15 +405,40 @@ async function showInstallCommand() {
       if (st.agent_mesh_token) installToken = st.agent_mesh_token;
     }
   } catch (e) { /* keep placeholder */ }
-  const cmd = `TOKEN='${installToken}' bash <(curl -fsSL -H "Authorization: Bearer ${TOKEN}" ${publicUrl}/api/bootstrap/install.sh)`;
+  const bashCmd = `TOKEN='${installToken}' bash <(curl -fsSL -H "Authorization: Bearer ${TOKEN}" ${publicUrl}/api/bootstrap/install.sh)`;
+  const winCmd = `$env:TOKEN='${installToken}'; irm -Headers @{Authorization="Bearer ${TOKEN}"} ${publicUrl}/api/bootstrap/install.ps1 | iex`;
+  window.__installCmds = { linux: bashCmd, win32: winCmd };
   document.getElementById('modal-title').textContent = '安装新节点';
   document.getElementById('agent-detail').innerHTML = `
     <p>在目标机器上执行以下命令安装节点：</p>
     <p style="color:var(--danger)">注意：安装 token 必须长期有效（全局 token / 用户 API token），不要使用登录 session token（24h 过期）。</p>
-    <pre style="white-space:pre-wrap;">${cmd}</pre>
-    <button class="btn" onclick="copyText(this.parentElement.querySelector('pre').textContent)">复制命令</button>
+    <div style="display:flex;gap:8px;margin:10px 0;">
+      <button class="btn install-os-btn" data-os="linux" onclick="selectInstallOs('linux')">Linux / macOS</button>
+      <button class="btn btn-secondary install-os-btn" data-os="win32" onclick="selectInstallOs('win32')">Windows</button>
+    </div>
+    <p id="install-os-hint" style="margin:4px 0;color:var(--muted);"></p>
+    <pre id="install-cmd" style="white-space:pre-wrap;"></pre>
+    <button class="btn" onclick="copyText(document.getElementById('install-cmd').textContent)">复制命令</button>
   `;
+  selectInstallOs('linux');
   openModal();
+}
+
+function selectInstallOs(os) {
+  const cmds = window.__installCmds || {};
+  const pre = document.getElementById('install-cmd');
+  if (!pre) return;
+  pre.textContent = cmds[os] || '';
+  const hint = document.getElementById('install-os-hint');
+  if (hint) {
+    hint.textContent = os === 'win32'
+      ? 'Windows：管理员 PowerShell 运行（Windows 10 1803+，依赖系统自带 tar.exe）；安装到 C:\\ProgramData\\agent-mesh-agent 并由计划任务开机自启。'
+      : 'Linux / macOS：以 bash 运行；自动识别 x64/arm64，Linux 走 systemd、macOS 走 LaunchDaemon。';
+  }
+  document.querySelectorAll('.install-os-btn').forEach((btn) => {
+    const active = btn.dataset.os === os;
+    btn.classList.toggle('btn-secondary', !active);
+  });
 }
 
 async function setAlias(e, agentId) {

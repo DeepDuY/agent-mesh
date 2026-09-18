@@ -18,8 +18,42 @@ from agent_mesh.shared.constants import SERVER_VERSION
 
 logger = logging.getLogger(__name__)
 
-_PKG_NAME_RE = re.compile(r"^agent-mesh-agent-(linux|darwin)-(x64|arm64)$")
+_PKG_NAME_RE = re.compile(r"^agent-mesh-agent-(linux|darwin|win32)-(x64|arm64)$")
 _MAX_PACKAGE_BYTES = 500 * 1024 * 1024
+
+# Windows bootstrap installer: the PowerShell counterpart of install.sh. It
+# detects the architecture, downloads the win32 package with the bearer token,
+# extracts it (tar.exe, present on Windows 10 1803+) and runs the packaged
+# installer. Served by /bootstrap/install.ps1 for `irm ... | iex`.
+_PS_INSTALL_TEMPLATE = r"""
+$ErrorActionPreference = 'Stop'
+$BaseUrl = "__BASE_URL__"
+$Token = $env:TOKEN
+if (-not $Token) {
+    Write-Error 'TOKEN environment variable is required. Usage: $env:TOKEN="<token>"; irm <server>/api/bootstrap/install.ps1 | iex'
+    exit 1
+}
+$arch = switch ($env:PROCESSOR_ARCHITECTURE) { 'ARM64' { 'arm64' } 'AMD64' { 'x64' } default { 'x64' } }
+$pkg = "agent-mesh-agent-win32-$arch.tar.gz"
+$url = "$BaseUrl/api/bootstrap/$pkg"
+$tmp = Join-Path $env:TEMP ("agent-mesh-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+try {
+    Write-Host "==> Downloading $pkg from $url"
+    $headers = @{ Authorization = "Bearer $Token" }
+    Invoke-WebRequest -UseBasicParsing -Headers $headers -Uri $url -OutFile (Join-Path $tmp 'agent.tar.gz')
+    Write-Host '==> Extracting'
+    tar.exe -xzf (Join-Path $tmp 'agent.tar.gz') -C $tmp
+    $pkgDir = Join-Path $tmp "agent-mesh-agent-win32-$arch"
+    if (-not (Test-Path (Join-Path $pkgDir 'install.ps1'))) {
+        Write-Error "unexpected package layout (no install.ps1 in $pkgDir)"
+        exit 1
+    }
+    & (Join-Path $pkgDir 'install.ps1') -OrchestratorUrl $BaseUrl -Token $Token -AgentId $env:EDGE_ALIAS
+} finally {
+    Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+}
+""".strip()
 
 
 def mount_bootstrap_routes(
@@ -142,6 +176,24 @@ def mount_bootstrap_routes(
             'bash "$PKG_DIR/install.sh"\n'
         )
         return PlainTextResponse(script, media_type="text/x-shellscript")
+
+    @router.get("/bootstrap/install.ps1")
+    async def bootstrap_install_ps1(
+        request: Request,
+        user: dict[str, Any] = Depends(require_user_token),
+    ) -> PlainTextResponse:
+        """PowerShell bootstrap installer (Windows counterpart of install.sh).
+
+        OS is fixed to win32 and the arch is detected on the target; the same
+        URL therefore works for x64/arm64. Run it as::
+
+            $env:TOKEN='<token>'; irm <server>/api/bootstrap/install.ps1 | iex
+        """
+        host = request.headers.get("x-forwarded-host") or request.headers.get("host", "127.0.0.1:8000")
+        scheme = request.headers.get("x-forwarded-proto") or "http"
+        base_url = config.public_url or f"{scheme}://{host}"
+        script = _PS_INSTALL_TEMPLATE.replace("__BASE_URL__", base_url)
+        return PlainTextResponse(script, media_type="text/plain")
 
     @router.get("/bootstrap/info")
     async def bootstrap_info(

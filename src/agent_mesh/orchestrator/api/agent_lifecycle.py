@@ -74,22 +74,34 @@ def mount_agent_lifecycle_routes(
         agent = await require_agent(store, agent_id, user)
 
         key = agent.device_id or agent.agent_id
-        instruction = (
-            "set +e\n"
-            "systemctl disable agent-mesh-edge 2>/dev/null\n"
-            "rm -f /etc/systemd/system/agent-mesh-edge.service\n"
-            "systemctl daemon-reload 2>/dev/null\n"
-            'rm -rf "${EDGE_INSTALL_DIR:-/opt/agent-mesh-agent}"\n'
-            "echo 'agent-mesh uninstalled'\n"
-            "systemctl stop agent-mesh-edge 2>/dev/null\n"
-            "true"
-        )
+        if (agent.os or "").lower() == "win32":
+            # Remove the Scheduled Task + its launcher. The install directory is
+            # left in place: the running agent image is locked on Windows and
+            # cannot delete itself mid-command (an admin removes it after).
+            instruction = (
+                "schtasks /End /TN agent-mesh-edge & "
+                "schtasks /Delete /TN agent-mesh-edge /F & "
+                "echo agent-mesh uninstalled"
+            )
+            workdir = "."
+        else:
+            instruction = (
+                "set +e\n"
+                "systemctl disable agent-mesh-edge 2>/dev/null\n"
+                "rm -f /etc/systemd/system/agent-mesh-edge.service\n"
+                "systemctl daemon-reload 2>/dev/null\n"
+                'rm -rf "${EDGE_INSTALL_DIR:-/opt/agent-mesh-agent}"\n'
+                "echo 'agent-mesh uninstalled'\n"
+                "systemctl stop agent-mesh-edge 2>/dev/null\n"
+                "true"
+            )
+            workdir = "/tmp"
         try:
             await store.dispatch(
                 agent_id=key,
                 instruction=instruction,
                 mode="command",
-                constraints=Constraints(timeout_s=30, workdir="/tmp"),
+                constraints=Constraints(timeout_s=30, workdir=workdir),
                 max_retries=0,
                 dispatched_by=user["username"] if user else None,
             )

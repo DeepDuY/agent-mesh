@@ -15,9 +15,11 @@ uv run --no-sync python scripts/build-agent-bootstrap.py
 > ⚠️ **改了探针代码（`src/agent_mesh/edge/**`）必须重建**：先升 `shared/constants.py:VERSION` 再跑本命令，否则在线节点不会拿到新代码（见 [docs/README.md 变更规范 §B](./README.md#b-修改探针edge-下的代码)）。
 
 产物（写到 `data/bootstrap/`）：
-- `agent-mesh-agent-{linux|darwin}-{x64|arm64}.tar.gz`：PyInstaller 构建的 `agent-mesh-edge` 单二进制 + `opencode` 二进制 + 包内 `install.sh` + `VERSION` + `MANIFEST.json`（version + 各文件 size/sha256，升级时据此跳过未变化成员）。
-- `install.sh`：包内安装脚本的副本，供直接 curl。
+- `agent-mesh-agent-{linux|darwin|win32}-{x64|arm64}.tar.gz`：PyInstaller 构建的 `agent-mesh-edge`（Windows 为 `.exe`）单二进制 + `opencode`（Windows 为 `opencode.exe`）二进制 + 包内 `install.sh`（Windows 为 `install.ps1`） + `VERSION` + `MANIFEST.json`（version + 各文件 size/sha256，升级时据此跳过未变化成员）。
+- `install.sh` / `install.ps1`：包内安装脚本的副本，供直接 curl / irm。
 - `VERSION`：版本清单（= `shared/constants.py:VERSION`），升级比对用。
+
+> ⚠️ **Windows 包必须在 Windows 机器上构建**：PyInstaller 不能交叉编译，`win32` 产物只能由 Windows 主机运行同一脚本生成。
 
 > 服务端（orchestrator）版本独立于探针版本，见 `shared/constants.py:SERVER_VERSION`，通过 `GET /api/healthz` 与 `GET /api/bootstrap/info` 暴露。探针包除用本脚本构建外，也可由 admin 在 Web「配置」页上传替换（`POST /api/bootstrap`）。
 
@@ -48,6 +50,20 @@ TOKEN='<token>' bash <(curl -fsSL -H "Authorization: Bearer <token>" <public_url
 ```
 
 > **不再提示填写别名**（v1.4.1 起 UI 已移除）：`EDGE_ALIAS` 只覆盖节点 `agent_id`（安装脚本 `AGENT_ID`），**并非** `agents.alias` 字段，改 DB 别名请用节点详情弹窗的「修改别名」。
+
+### 1.3 Windows 节点安装
+
+`GET /api/bootstrap/install.ps1`（需用户 token）是 `install.sh` 的 PowerShell 对应版本：检测架构 → 用 Bearer token 下载 `agent-mesh-agent-win32-<arch>.tar.gz` → `tar.exe` 解压 → 执行包内 `install.ps1`。
+
+```powershell
+$env:TOKEN='<token>'; irm -Headers @{Authorization="Bearer <token>"} <public_url>/api/bootstrap/install.ps1 | iex
+```
+
+包内 `install.ps1`：
+1. 默认安装到 `C:\ProgramData\agent-mesh-agent`（可用 `-InstallDir` / `$env:INSTALL_DIR` 覆盖），需管理员权限。
+2. 写 `etc\edge.env`（UTF-8 无 BOM）并用 `icacls` 收窄为 SYSTEM + Administrators。
+3. 注册开机自启的**计划任务** `agent-mesh-edge`（SYSTEM、最高权限），运行 `bin\agent-mesh-edge.cmd` 保活循环；无需 NSSM/WinSW。
+4. 依赖系统自带 `tar.exe`（Windows 10 1803+）。当前 Windows **不支持探针自升级**（Windows 节点升级需手动重装）。
 
 节点启动后即自动以 device_id（machine-id）注册上线。
 
