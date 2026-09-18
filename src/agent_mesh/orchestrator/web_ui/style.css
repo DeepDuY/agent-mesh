@@ -483,6 +483,12 @@ pre {
   transition: border-color var(--transition), box-shadow var(--transition);
 }
 .modal-textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(59, 130, 246, .18); }
+.skill-editor {
+  min-height: 380px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: .82rem;
+  white-space: pre;
+}
 .sub-actions { width: 100%; display: flex; align-items: center; gap: .5rem; margin-top: .25rem; }
 .toggle-line { display: inline-flex; align-items: center; gap: .4rem; font-size: .88rem; cursor: pointer; }
 

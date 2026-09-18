@@ -13,8 +13,9 @@
 - **上传**：`POST /api/skills`（multipart zip，用户 token）→ 内存解析 zip 提取 `SKILL.md` → 校验 frontmatter（`name` 匹配 `^[a-z0-9]+(-[a-z0-9]+)*$`、`description` 非空）→ 落盘 + upsert 元数据（重复上传 `version+1`，边沿可感知变更）。
 - **摘要接口只暴露元数据**：`GET /api/skills` / `/api/skills/{name}`（`require_any_token`）仅返回 name/description/version/enabled，**永不包含 SKILL.md 正文**。
 - **按需下载**：`GET /api/skills/{name}/download`（`require_any_token`，边沿用自己的独立 token 拉取完整 zip）。
+- **页面新建/编辑**：`PUT /api/skills/{name}`（用户 token，JSON `{"content": "<SKILL.md 原文>"}`）**新建或更新**技能——新建只需 name + frontmatter（`name` 须等于技能名、`description` 非空）；编辑仅替换归档内的 `SKILL.md`（其余文件如 `references/` 原样保留）并 `version+1`、保留原启用状态。`GET /api/skills/{name}/content`（用户 token）返回原文供编辑器加载。Web「技能」页「新建技能」用模板生成 frontmatter，行内「编辑」打开编辑器。
 - **提示词注入**：`_wrap_llm_instruction(instruction, system_prompt="")` 在提示词顶部注入「## 角色与上下文」块，内容为**节点 `system_prompt` + 绑定模板 `system_prompt` 的拼接**（节点在前；无全局默认）；随后追加技能库使用指引，引用 `$EDGE_TOKEN` / `$ORCHESTRATOR_URL`（边沿在 opencode 子进程 env 注入，token 不明文进提示词）；由 agent 自主决定浏览摘要 → 下载 zip → `unzip -d .opencode/skills/<name>/` → `cat SKILL.md` 按说明执行。技能库经提示词中的 `curl` 指引访问，**不依赖 opencode 的 `skill` 工具**（`build_opencode_config` 只写入解析后的 `permission`，不额外注入 `skill` 规则）。
-- **管理端**：Web 看板「技能」页（上传/启停/下载/删除）；`GET /api/skills`（`require_any_token`）供主 Agent 浏览后决定是否在指令中提示使用。
+- **管理端**：Web 看板「技能」页（新建/编辑 SKILL.md、上传 ZIP、启停/下载/删除）；`GET /api/skills`（`require_any_token`）供主 Agent 浏览后决定是否在指令中提示使用。
 
 ## 3. 资源指标心跳上报
 

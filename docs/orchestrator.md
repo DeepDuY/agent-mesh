@@ -77,7 +77,7 @@ REST 端点按领域拆分到 `orchestrator/api/` 包，`__init__.py` 的 `creat
 - `api/files.py`：文件库上传/列表/下载/删除（见 [features.md §5](./features.md#5-文件库任务附件)）。
 - `api/teams.py` / `api/templates.py`：团队 CRUD 与成员；模板 CRUD（`require_ui_user`）。
 - `api/bootstrap.py`：`GET/PATCH /settings`、`/bootstrap/install.sh`、`/bootstrap/info`（服务端/探针版本）、`POST /bootstrap`（上传探针包，admin）、`/bootstrap/{filename}`。
-- `api/skills.py`：技能摘要/上传/启停/删除/下载，以及 `GET /api/skill-pack/agent-mesh`（打包 SKILL.md + references + 生成的 `.env`）。
+- `api/skills.py`：技能摘要/上传/页面新建编辑（`PUT /api/skills/{name}` + `GET /api/skills/{name}/content`）/启停/删除/下载，以及 `GET /api/skill-pack/agent-mesh`（打包 SKILL.md + references + 生成的 `.env`）。
 
 关键行为：
 - 认证：`require_user_token`（用户 token：API token 按 SHA-256 查表，session token 按 HMAC 解析，禁用用户拒绝）；`require_admin`（admin 角色限定）；`require_any_token`（全局 `config.token` / 用户 token / **agent 独立 token** 任一，返回调用者身份 `{auth:...}`）。Edge 端点、产物上传、bootstrap 下载用后者。详见 [auth-security.md](./auth-security.md)。

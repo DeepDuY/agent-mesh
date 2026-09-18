@@ -79,6 +79,81 @@ def _extract_skill_zip(data: bytes) -> tuple[str, str]:
     return name, description
 
 
+def _find_skill_md(zf: zipfile.ZipFile) -> str | None:
+    """The SKILL.md member inside a skill zip (shortest path wins)."""
+    candidates = [n for n in zf.namelist() if n.endswith("SKILL.md")]
+    if not candidates:
+        return None
+    candidates.sort(key=len)
+    return candidates[0]
+
+
+def _read_skill_md(skill_file: Path) -> str | None:
+    try:
+        with zipfile.ZipFile(skill_file) as zf:
+            member = _find_skill_md(zf)
+            return zf.read(member).decode("utf-8", errors="replace") if member else None
+    except (OSError, zipfile.BadZipFile):
+        return None
+
+
+def _write_skill_zip(skill_file: Path, content: str) -> None:
+    """Create or update a skill zip's SKILL.md, preserving other members.
+
+    Editing a skill only replaces its SKILL.md; any other files (e.g.
+    ``references/``) in the uploaded archive are kept as-is.
+    """
+    payload = content.encode("utf-8")
+    skill_file.parent.mkdir(parents=True, exist_ok=True)
+    items: list[tuple[zipfile.ZipInfo, bytes]] = []
+    if skill_file.exists():
+        try:
+            with zipfile.ZipFile(skill_file) as zf:
+                items = [(info, zf.read(info.filename)) for info in zf.infolist()]
+        except (OSError, zipfile.BadZipFile):
+            items = []
+
+    target_member = None
+    for info, _ in items:
+        if info.filename.endswith("SKILL.md"):
+            target_member = info.filename
+            break
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as out:
+        replaced = False
+        for info, data in items:
+            if info.filename == target_member:
+                out.writestr(info, payload)
+                replaced = True
+            else:
+                out.writestr(info, data)
+        if not replaced:
+            out.writestr("SKILL.md", payload)
+    skill_file.write_bytes(buf.getvalue())
+
+
+def _validate_skill_content(name: str, content: str) -> str:
+    """Validate raw SKILL.md text; returns the description."""
+    front = _parse_frontmatter(content)
+    fm_name = (front.get("name") or "").strip()
+    description = (front.get("description") or "").strip()
+    if not fm_name:
+        raise HTTPException(
+            status_code=400, detail="SKILL.md frontmatter is missing 'name'"
+        )
+    if fm_name != name:
+        raise HTTPException(
+            status_code=400,
+            detail=f"SKILL.md frontmatter name '{fm_name}' must match the skill name '{name}'",
+        )
+    if not description:
+        raise HTTPException(
+            status_code=400, detail="SKILL.md frontmatter is missing 'description'"
+        )
+    return description
+
+
 _UNCONFIGURED_URL_NOTE = (
     "> ⚠️ 本技能包尚未配置「公开地址」，`.env` 的 `AGENT_MESH_BASE_URL` 为空，"
     "示例中的地址仍是占位符。请先向用户索取编排器地址，填入 `.env` 后再执行示例。\n\n"
@@ -144,6 +219,29 @@ def mount_skill_routes(
                 "version": skill["version"],
                 "enabled": skill["enabled"],
             }
+        }
+
+    @router.get("/skills/{name}/content")
+    async def get_skill_content(
+        name: str,
+        _user: dict[str, Any] = Depends(require_user_token),
+    ) -> dict[str, Any]:
+        """Raw SKILL.md text for the page editor (user token only)."""
+        skill = await store.store.get_skill(name)
+        if skill is None:
+            raise HTTPException(status_code=404, detail="skill not found")
+        skill_file = _skills_dir(config) / name / f"{name}.zip"
+        content = _read_skill_md(skill_file) if skill_file.exists() else None
+        if content is None:
+            raise HTTPException(status_code=404, detail="SKILL.md not found in skill archive")
+        return {
+            "skill": {
+                "name": skill["name"],
+                "description": skill["description"],
+                "version": skill["version"],
+                "enabled": skill["enabled"],
+            },
+            "content": content,
         }
 
     @router.post("/skills")
@@ -212,6 +310,55 @@ def mount_skill_routes(
                 "description": skill["description"],
                 "version": skill["version"],
                 "enabled": bool(skill["enabled"]),
+            }
+        }
+
+    @router.put("/skills/{name}")
+    async def put_skill(
+        name: str,
+        request: Request,
+        user: dict[str, Any] = Depends(require_user_token),
+    ) -> dict[str, Any]:
+        """Create or update a skill from raw SKILL.md text (page editor).
+
+        Creating a new skill needs only a name + a SKILL.md with ``name`` (must
+        equal the skill name) and ``description`` frontmatter. Editing an
+        existing skill replaces its SKILL.md and bumps its version; other files
+        in the archive are preserved.
+        """
+        if not _SKILL_NAME_RE.match(name):
+            raise HTTPException(
+                status_code=400,
+                detail="skill name must match ^[a-z0-9]+(-[a-z0-9]+)*$",
+            )
+        body = await request.json()
+        content = body.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise HTTPException(status_code=400, detail="content is required")
+        description = _validate_skill_content(name, content)
+
+        skill_file = _skills_dir(config) / name / f"{name}.zip"
+        existing = await store.store.get_skill(name)
+        enabled = bool(existing["enabled"]) if existing else True
+        version = (existing["version"] if existing else 0) + 1
+        _write_skill_zip(skill_file, content)
+        await store.store.upsert_skill(
+            name=name,
+            description=description,
+            version=version,
+            enabled=enabled,
+            filename=skill_file.name,
+        )
+        logger.info(
+            "%s skill %s v%d by %s",
+            "updated" if existing else "created", name, version, user["username"],
+        )
+        return {
+            "skill": {
+                "name": name,
+                "description": description,
+                "version": version,
+                "enabled": enabled,
             }
         }
 
