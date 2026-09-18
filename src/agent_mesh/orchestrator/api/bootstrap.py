@@ -28,6 +28,7 @@ _MAX_PACKAGE_BYTES = 500 * 1024 * 1024
 _PS_INSTALL_TEMPLATE = r"""
 $ErrorActionPreference = 'Stop'
 $BaseUrl = "__BASE_URL__"
+$BootstrapBase = "__BOOTSTRAP_BASE__"
 $Token = $env:TOKEN
 if (-not $Token) {
     Write-Error 'TOKEN environment variable is required. Usage: $env:TOKEN="<token>"; irm <server>/api/bootstrap/install.ps1 | iex'
@@ -35,12 +36,17 @@ if (-not $Token) {
 }
 $arch = switch ($env:PROCESSOR_ARCHITECTURE) { 'ARM64' { 'arm64' } 'AMD64' { 'x64' } default { 'x64' } }
 $pkg = "agent-mesh-agent-win32-$arch.tar.gz"
-$url = "$BaseUrl/api/bootstrap/$pkg"
+if ($BootstrapBase) {
+    $url = "$($BootstrapBase.TrimEnd('/'))/$pkg"
+    $headers = @{}
+} else {
+    $url = "$BaseUrl/api/bootstrap/$pkg"
+    $headers = @{ Authorization = "Bearer $Token" }
+}
 $tmp = Join-Path $env:TEMP ("agent-mesh-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 try {
     Write-Host "==> Downloading $pkg from $url"
-    $headers = @{ Authorization = "Bearer $Token" }
     Invoke-WebRequest -UseBasicParsing -Headers $headers -Uri $url -OutFile (Join-Path $tmp 'agent.tar.gz')
     Write-Host '==> Extracting'
     tar.exe -xzf (Join-Path $tmp 'agent.tar.gz') -C $tmp
@@ -119,6 +125,7 @@ def mount_bootstrap_routes(
         host = request.headers.get("x-forwarded-host") or request.headers.get("host", "127.0.0.1:8000")
         scheme = request.headers.get("x-forwarded-proto") or "http"
         base_url = config.public_url or f"{scheme}://{host}"
+        bootstrap_base = (await store.store.get_setting("bootstrap_download_base")) or ""
         token_check = "${TOKEN:-}"
         install_dir = "${INSTALL_DIR:-/opt/agent-mesh-agent}"
 
@@ -129,10 +136,15 @@ def mount_bootstrap_routes(
         #
         # OS/arch are detected on the TARGET machine (not baked in server-side),
         # so the same command works on linux/macOS and x64/arm64.
+        #
+        # `bootstrap_download_base` (optional) points package downloads at an
+        # external mirror (e.g. a GitHub Release). Empty -> serve locally with
+        # the bearer token; set -> anonymous download from the mirror.
         script = (
             "#!/usr/bin/env bash\n"
             "set -e\n"
             f'BASE_URL="{base_url}"\n'
+            f'BOOTSTRAP_BASE="{bootstrap_base}"\n'
             "\n"
             "OS=$(uname -s | tr '[:upper:]' '[:lower:]')\n"
             'case "$OS" in\n'
@@ -145,7 +157,6 @@ def mount_bootstrap_routes(
             "    aarch64|arm64) ARCH=arm64 ;;\n"
             "esac\n"
             'PKG="agent-mesh-agent-${OS}-${ARCH}.tar.gz"\n'
-            'INSTALL_URL="${BASE_URL}/api/bootstrap/${PKG}"\n'
             "\n"
             "for c in curl tar; do\n"
             '    command -v "$c" >/dev/null 2>&1 || { echo "ERROR: $c is required but not installed." >&2; exit 1; }\n'
@@ -158,10 +169,17 @@ def mount_bootstrap_routes(
             "\n"
             "TMPDIR=$(mktemp -d)\n"
             'trap "rm -rf $TMPDIR" EXIT\n'
+            'CURL_ARGS=(-fsSL)\n'
+            'if [ -n "$BOOTSTRAP_BASE" ]; then\n'
+            '    INSTALL_URL="${BOOTSTRAP_BASE%/}/${PKG}"\n'
+            "else\n"
+            '    INSTALL_URL="${BASE_URL}/api/bootstrap/${PKG}"\n'
+            '    CURL_ARGS+=(-H "Authorization: Bearer $TOKEN")\n'
+            "fi\n"
             'echo "==> Downloading ${PKG} from ${INSTALL_URL}"\n'
-            'if ! curl -fsSL -H "Authorization: Bearer $TOKEN" "$INSTALL_URL" -o "$TMPDIR/agent.tar.gz"; then\n'
+            'if ! curl "${CURL_ARGS[@]}" "$INSTALL_URL" -o "$TMPDIR/agent.tar.gz"; then\n'
             '    echo "ERROR: failed to download the probe package (${PKG})." >&2\n'
-            '    echo "  - check TOKEN is valid and the server is reachable" >&2\n'
+            '    echo "  - check TOKEN is valid and the server/mirror is reachable" >&2\n'
             '    echo "  - make sure a probe package for ${OS}/${ARCH} was built and published" >&2\n'
             "    exit 1\n"
             "fi\n"
@@ -192,8 +210,40 @@ def mount_bootstrap_routes(
         host = request.headers.get("x-forwarded-host") or request.headers.get("host", "127.0.0.1:8000")
         scheme = request.headers.get("x-forwarded-proto") or "http"
         base_url = config.public_url or f"{scheme}://{host}"
-        script = _PS_INSTALL_TEMPLATE.replace("__BASE_URL__", base_url)
+        bootstrap_base = (await store.store.get_setting("bootstrap_download_base")) or ""
+        script = (
+            _PS_INSTALL_TEMPLATE.replace("__BASE_URL__", base_url)
+            .replace("__BOOTSTRAP_BASE__", bootstrap_base)
+        )
         return PlainTextResponse(script, media_type="text/plain")
+
+    @router.post("/bootstrap/sync")
+    async def bootstrap_sync(
+        admin: dict[str, Any] = Depends(require_admin),
+    ) -> dict[str, Any]:
+        """Pull the latest prebuilt probe packages from the configured GitHub Release.
+
+        Uses ``probe_release_repo`` (``<owner>/<repo>``) and optional
+        ``probe_release_token``. Assets are written to ``<db_dir>/bootstrap/`` so
+        installs and upgrades are served locally right after.
+        """
+        from agent_mesh.orchestrator.probe_release import sync_release
+        import httpx
+
+        repo = (await store.store.get_setting("probe_release_repo")) or ""
+        if not repo:
+            raise HTTPException(status_code=400, detail="probe_release_repo is not configured")
+        token = (await store.store.get_setting("probe_release_token")) or ""
+        bootstrap_dir = Path(config.db_path).parent / "bootstrap"
+        try:
+            result = await sync_release(repo, token, bootstrap_dir)
+        except httpx.HTTPError as e:
+            raise HTTPException(status_code=502, detail=f"failed to sync from GitHub: {e}")
+        logger.info(
+            "synced probe release %s (%s): %s",
+            repo, result.get("tag"), [s["filename"] for s in result.get("synced", [])],
+        )
+        return result
 
     @router.get("/bootstrap/info")
     async def bootstrap_info(

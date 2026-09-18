@@ -56,6 +56,13 @@ async function loadConfig() {
     if (artTimeout && document.activeElement !== artTimeout) artTimeout.value = settings.artifact_timeout_s || '300';
     window.ARTIFACT_TIMEOUT_S = parseInt(settings.artifact_timeout_s, 10) || 300;
 
+    const bdb = document.getElementById('bootstrap-download-base');
+    if (bdb && document.activeElement !== bdb) bdb.value = settings.bootstrap_download_base || '';
+    const prr = document.getElementById('probe-release-repo');
+    if (prr && document.activeElement !== prr) prr.value = settings.probe_release_repo || '';
+    const prt = document.getElementById('probe-release-token');
+    if (prt && document.activeElement !== prt) prt.value = settings.probe_release_token || '';
+
     loadVersionInfo();
   } catch (e) {
     console.error('load config failed', e);
@@ -267,4 +274,40 @@ async function saveUploadLimits() {
     el.style.color = 'var(--danger)';
   }
   setTimeout(() => el.textContent = '', 3000);
+}
+
+async function saveProbeDistribution() {
+  const el = document.getElementById('probe-dist-status');
+  try {
+    await patchSettings({
+      bootstrap_download_base: document.getElementById('bootstrap-download-base').value.trim(),
+      probe_release_repo: document.getElementById('probe-release-repo').value.trim(),
+      probe_release_token: document.getElementById('probe-release-token').value.trim(),
+    });
+    el.textContent = '已保存';
+    el.style.color = '';
+  } catch (e) {
+    el.textContent = '保存失败：' + e.message;
+    el.style.color = 'var(--danger)';
+  }
+  setTimeout(() => el.textContent = '', 3000);
+}
+
+async function syncProbeRelease() {
+  const el = document.getElementById('probe-dist-status');
+  if (!confirm('从配置的 GitHub Release 拉取最新成品探针包到本服务器？\n大文件下载可能需要一些时间。')) return;
+  el.textContent = '同步中…（下载中请稍候）';
+  el.style.color = '';
+  try {
+    const res = await fetch('/api/bootstrap/sync', { method: 'POST', headers });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    const names = (data.synced || []).map((s) => s.filename).join(', ') || '无匹配包';
+    el.textContent = `已同步 ${data.tag || ''}（版本 ${data.version || '?'}）：${names}`;
+    el.style.color = 'var(--ok)';
+    loadVersionInfo();
+  } catch (e) {
+    el.textContent = '同步失败：' + e.message;
+    el.style.color = 'var(--danger)';
+  }
 }

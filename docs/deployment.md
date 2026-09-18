@@ -67,6 +67,17 @@ $env:TOKEN='<token>'; irm -Headers @{Authorization="Bearer <token>"} <public_url
 
 节点启动后即自动以 device_id（machine-id）注册上线。
 
+### 1.4 从 GitHub Release 分发探针（CI 构建）
+
+探针包**不会在安装时编译**：安装脚本只下载成品包（服务器本地或外部镜像）。推荐用 edge 仓库的 GitHub Actions 构建并发布（`.github/workflows/build-probe.yml`）：
+
+1. push 到 edge `main`（或手动 `workflow_dispatch`）→ 在 ubuntu/windows/macOS runner 上分别构建 `linux-x64`/`win32-x64`/`darwin-arm64`，汇总发布到 Release `probe-v<VERSION>`（`VERSION` 取自仓库 `VERSION` 文件）。同版本重跑会覆盖该 Release 的资产。
+2. 服务端两种消费方式（Web「配置」页 → 探针分发）：
+   - **本地缓存**：`probe_release_repo`（`owner/repo`，默认 `DeepDuY/agent-mesh-edge`）→ 点「从 GitHub 同步到服务器」或跑 `python scripts/sync_probe_release.py`，把最新 Release 成品拉到 `data/bootstrap/`；安装/升级仍从本服务器下载（目标机只需能访问 orchestrator，适合内网）。私有仓库可填 `probe_release_token`。
+   - **外部直链**：`bootstrap_download_base` 填镜像根（如 `https://github.com/<owner>/<repo>/releases/latest/download`）→ 生成的安装脚本直接从该镜像匿名下载 `agent-mesh-agent-<os>-<arch>.tar.gz`（目标机需能访问该镜像）。留空则从本服务器下载。
+
+> `POST /api/bootstrap/sync`（admin）与 CLI 都经由 `api.github.com` 拉取，即使部署机访问不了 `github.com` 也可用。手动上传探针包（§1.1）仍可用，作为无外网时的兜底。
+
 ## 2. 配置项
 
 ### 2.1 orchestrator（`AGENT_MESH_` 前缀，OrchestratorConfig）

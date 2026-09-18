@@ -184,6 +184,10 @@ async def ensure_settings(conn: Any) -> None:
         ("artifact_total_mb", "200"),
         ("artifact_evict_oldest", "1"),
         ("artifact_timeout_s", "300"),
+        # Probe package distribution (see migration 021).
+        ("bootstrap_download_base", ""),
+        ("probe_release_repo", "DeepDuY/agent-mesh-edge"),
+        ("probe_release_token", ""),
     ):
         await conn.execute(
             "INSERT INTO settings (key, value) VALUES ($1, $2) "

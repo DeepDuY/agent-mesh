@@ -361,6 +361,29 @@
               </div>
             </div>
 
+            <div class="setting setting-lg">
+              <div class="setting-label">探针分发 <span class="help" data-tip="安装脚本从哪下载成品探针包：外部下载源留空则从本服务器 data/bootstrap 下载；填写则从外部镜像（如 GitHub Release）下载。也可把配置的 GitHub Release 里的成品一键同步到本服务器缓存。">?</span></div>
+              <div class="setting-control">
+                <div class="sub-field">
+                  <label>外部下载源（留空 = 本服务器）</label>
+                  <input id="bootstrap-download-base" type="text" placeholder="https://github.com/&lt;owner&gt;/&lt;repo&gt;/releases/latest/download">
+                </div>
+                <div class="sub-field">
+                  <label>GitHub Release 仓库 (owner/repo)</label>
+                  <input id="probe-release-repo" type="text" placeholder="DeepDuY/agent-mesh-edge">
+                </div>
+                <div class="sub-field">
+                  <label>GitHub Token（私有仓库用，可留空）</label>
+                  <input id="probe-release-token" type="password" placeholder="(可选)">
+                </div>
+                <div class="sub-actions">
+                  <button class="btn" onclick="saveProbeDistribution()">保存分发设置</button>
+                  <button class="btn btn-secondary" onclick="syncProbeRelease()">从 GitHub 同步到服务器</button>
+                  <span id="probe-dist-status" class="status-msg"></span>
+                </div>
+              </div>
+            </div>
+
             <div class="setting">
               <div class="setting-label">实时输出刷新间隔 <span class="help" data-tip="任务详情页「实时输出」区域的轮询间隔（秒，默认 5）。">?</span></div>
               <div class="setting-control">
