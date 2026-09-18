@@ -130,9 +130,9 @@ async function loadTasks() {
         <input type="checkbox" class="task-checkbox" ${checked ? 'checked' : ''} onclick="toggleTaskSelect('${t.task_id}')">
       </td>
       <td class="mono">${t.task_id}</td>
-      <td>${agentDisplayName(t.agent_id)}</td>
+      <td>${escHtml(agentDisplayName(t.agent_id))}</td>
       <td>${escHtml(t.dispatched_by || '-')}</td>
-      <td title="${t.instruction.replace(/"/g, '&quot;')}">${t.instruction.slice(0, 60)}${t.instruction.length > 60 ? '...' : ''}</td>
+      <td title="${escHtml(t.instruction)}">${escHtml(t.instruction.slice(0, 60))}${t.instruction.length > 60 ? '...' : ''}</td>
       <td>${modeBadge(t.mode)}</td>
       <td>${badge(t.status)}</td>
       <td>${formatTime(t.started_at)}</td>
@@ -266,17 +266,21 @@ async function showTaskDetail(taskId) {
   const r = t.result || {};
   let artifacts = '';
   if (r.artifacts && r.artifacts.length) {
-    artifacts = '<p><strong>产物：</strong></p><ul>' + r.artifacts.map(a =>
-      `<li><a href="#" style="color:var(--primary)" onclick="event.preventDefault();downloadArtifact('${t.task_id}','${a.artifact_id}','${a.filename}')">${a.filename}</a> (${a.size} 字节)</li>`
-    ).join('') + '</ul>';
+    artifacts = '<p><strong>产物：</strong></p><ul>' + r.artifacts.map(a => {
+      const name = String(a.filename ?? '');
+      // The filename is user-controlled: escape it for display and for the
+      // inline-JS string argument.
+      const jsName = name.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      return `<li><a href="#" style="color:var(--primary)" onclick="event.preventDefault();downloadArtifact('${t.task_id}','${a.artifact_id}','${jsName}')">${escHtml(name)}</a> (${Number(a.size) || 0} 字节)</li>`;
+    }).join('') + '</ul>';
   }
   const cancellable = ['queued', 'assigned', 'working'].includes(t.status);
   const isLive = t.status === 'working' || t.status === 'assigned';
   document.getElementById('modal-title').textContent = '任务详情';
   document.getElementById('agent-detail').innerHTML = `
     <div class="detail-grid">
-      <div class="detail-item"><label>任务 ID</label><span class="mono">${t.task_id}</span></div>
-      <div class="detail-item"><label>节点</label><span>${agentDisplayName(t.agent_id)}</span></div>
+      <div class="detail-item"><label>任务 ID</label><span class="mono">${escHtml(t.task_id)}</span></div>
+      <div class="detail-item"><label>节点</label><span>${escHtml(agentDisplayName(t.agent_id))}</span></div>
       <div class="detail-item"><label>来源用户</label><span>${escHtml(t.dispatched_by || '-')}</span></div>
       <div class="detail-item"><label>模式</label><span>${modeBadge(t.mode)}</span></div>
       <div class="detail-item"><label>状态</label>${badge(t.status)}</div>
@@ -285,17 +289,17 @@ async function showTaskDetail(taskId) {
       <div class="detail-item"><label>结束</label><span>${formatTime(t.finished_at)}</span></div>
       <div class="detail-item"><label>重试</label><span>${t.retry_count || 0} / ${t.max_retries || 0}</span></div>
       <div class="detail-item"><label>耗时</label><span>${fmtDuration(r.duration_ms)}</span></div>
-      ${t.constraints && t.constraints.session_id ? `<div class="detail-item"><label>复用会话</label><span class="mono">${t.constraints.session_id}</span></div>` : ''}
-      ${r.session_id ? `<div class="detail-item"><label>会话 ID</label><span class="mono">${r.session_id}</span></div>` : ''}
+      ${t.constraints && t.constraints.session_id ? `<div class="detail-item"><label>复用会话</label><span class="mono">${escHtml(t.constraints.session_id)}</span></div>` : ''}
+      ${r.session_id ? `<div class="detail-item"><label>会话 ID</label><span class="mono">${escHtml(r.session_id)}</span></div>` : ''}
     </div>
     ${cancellable ? `<p style="margin:.5rem 0"><button class="btn btn-danger" onclick="cancelTask('${t.task_id}')">终止此任务</button></p>` : ''}
-    <p><strong>指令：</strong></p><pre>${t.instruction}</pre>
-    <p><strong>摘要：</strong> ${r.summary || '-'}</p>
+    <p><strong>指令：</strong></p><pre>${escHtml(t.instruction)}</pre>
+    <p><strong>摘要：</strong> ${escHtml(r.summary || '-')}</p>
     ${artifacts}
     <p><strong>审计事件：</strong></p><div id="task-events" class="muted">加载中...</div>
     ${isLive ? `<p><strong>实时输出：</strong></p><div id="task-live-log" class="task-live-log"><p class="muted">等待输出...</p></div>` : ''}
-    <p><strong>标准输出：</strong></p><pre>${r.stdout_tail || '(空)'}</pre>
-    <p><strong>标准错误：</strong></p><pre>${r.stderr_tail || '(空)'}</pre>
+    <p><strong>标准输出：</strong></p><pre>${escHtml(r.stdout_tail || '(空)')}</pre>
+    <p><strong>标准错误：</strong></p><pre>${escHtml(r.stderr_tail || '(空)')}</pre>
   `;
   openModal();
   loadTaskEvents(taskId);
