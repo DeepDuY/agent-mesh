@@ -174,6 +174,9 @@ function closeAgentModal() {
   const modal = document.getElementById('agent-modal');
   modal.classList.add('hidden');
   modal.style.display = 'none';
+  // Drop any per-view sizing (e.g. the wide skill editor) for the next modal.
+  const content = modal.querySelector('.modal-content');
+  if (content) content.classList.remove('modal-wide');
 }
 
 function onModalBackdrop(e) {

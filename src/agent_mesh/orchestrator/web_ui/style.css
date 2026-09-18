@@ -483,10 +483,20 @@ pre {
   transition: border-color var(--transition), box-shadow var(--transition);
 }
 .modal-textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(59, 130, 246, .18); }
-.skill-editor {
-  min-height: 380px;
+/* Wider modal for content editors (skill SKILL.md). */
+.modal-content.modal-wide {
+  max-width: min(1200px, 96vw);
+  width: 96%;
+}
+/* The skill editor must override `.sub-field textarea { max-width: 480px }`. */
+.sub-field textarea.skill-editor {
+  max-width: 100%;
+  min-height: min(64vh, 720px);
+  padding: .75rem .9rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-  font-size: .82rem;
+  font-size: .92rem;
+  line-height: 1.6;
+  tab-size: 2;
   white-space: pre;
 }
 .sub-actions { width: 100%; display: flex; align-items: center; gap: .5rem; margin-top: .25rem; }

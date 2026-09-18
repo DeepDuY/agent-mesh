@@ -115,12 +115,27 @@ function _skillEditorHtml(name, content, isNew) {
   `;
 }
 
+function _openSkillModal(title, name, content, isNew) {
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('agent-detail').innerHTML = _skillEditorHtml(name, content, isNew);
+  const bodyEl = document.getElementById('skill-edit-content');
+  // Tab inserts two spaces instead of leaving the editor.
+  bodyEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      bodyEl.setRangeText('  ', bodyEl.selectionStart, bodyEl.selectionEnd, 'end');
+    }
+  });
+  const modalContent = document.querySelector('#agent-modal .modal-content');
+  if (modalContent) modalContent.classList.add('modal-wide');
+  openModal();
+  return bodyEl;
+}
+
 function openNewSkill() {
   const name = 'my-skill';
-  document.getElementById('modal-title').textContent = '新建技能';
-  document.getElementById('agent-detail').innerHTML = _skillEditorHtml(name, _skillTemplate(name), true);
+  const bodyEl = _openSkillModal('新建技能', name, _skillTemplate(name), true);
   const nameEl = document.getElementById('skill-edit-name');
-  const bodyEl = document.getElementById('skill-edit-content');
   // Keep the frontmatter/title in sync with the name field until the user
   // starts editing the body themselves.
   window.__skillBodyTouched = false;
@@ -129,7 +144,6 @@ function openNewSkill() {
     if (window.__skillBodyTouched) return;
     bodyEl.value = _skillTemplate(nameEl.value.trim());
   });
-  openModal();
   nameEl.focus();
   nameEl.select();
 }
@@ -141,9 +155,7 @@ async function openSkillEditor(name) {
     alert('加载失败：' + (data.detail || res.status));
     return;
   }
-  document.getElementById('modal-title').textContent = `编辑技能：${name}`;
-  document.getElementById('agent-detail').innerHTML = _skillEditorHtml(name, data.content || '', false);
-  openModal();
+  _openSkillModal(`编辑技能：${name}`, name, data.content || '', false);
 }
 
 async function saveSkillEditor() {
