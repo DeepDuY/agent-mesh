@@ -132,6 +132,9 @@ function showApp() {
   refreshMe();
   loadAll();
   startRefresh();
+  // SSE gives instant updates; startRefresh() remains as a fallback and covers
+  // the views not pushed over the stream.
+  if (typeof startRealtime === 'function') startRealtime();
 }
 
 function startRefresh() {

@@ -8,35 +8,28 @@
 ### 架构 / 存储
 
 1. **多进程未真正生效**：`AGENT_MESH_WORKERS>1` 不起作用——`main.py` 用 `uvicorn.Config(workers=N)` 配合 `uvicorn.Server(config).serve()`，该版本 uvicorn 的 `Server.serve()` 忽略 `workers`，实际只跑 1 个 server 进程；`workers` 默认值 `os.cpu_count()` 与"单进程运行"也不一致（建议默认 `1`）。真正多 worker 需改用 import-string + `uvicorn.run`（或 supervisor），并解决 lifespan 可 pickle、sweeper 归属。
+   - **连带约束**：实时推送（`/api/realtime` SSE）目前是**进程内**广播（`orchestrator/realtime.py`），只在单 worker 下正确；一旦启用多 worker，必须改成共享总线（Postgres `LISTEN/NOTIFY`）。
 2. **heartbeat 容量检查非原子**：单进程可加锁；PG 多 worker 下"统计活跃数 → dequeue 补足 capacity"需放到 DB 级事务里，否则并发心跳会超额派发。
 3. **agent 键解析不统一**：队列键（`device_id or agent_id`）与 `agents` 行定位（数字 id → device_id → 显示名）语义分散，`alias`/`hostname` 显示名并未真正参与解析（见 §1 协议 `agent_id` 三级解析的文档口径）。
 4. **SQLite→PG 迁移脚本不完整**：`scripts/migrate_sqlite_to_pg.py` 未覆盖 `teams`/`team_members`/`templates`/`task_events` 与 `tasks.user_id/team_id`；迁移 015 后仍读取已删除的 `templates.allowed_tools` 列会报错。
-5. **超时重试状态翻转语义**：`_sweep_timeouts` 的回退重试与状态机语义需与容量检查原子性（§1）一并设计。
-
-### 安全
-
-6. **`GET /api/settings` 暴露敏感字段**：该端点（`require_admin`）返回 `store.list_settings()` 的**全量**键值，包含 `session_secret`（session token 签名密钥）。应对返回字段做白名单（`public_url`/`llm_*`/`llm_models`/`default_permission`/`auto_upgrade` 等），并单独决定是否给 admin 暴露 `agent_mesh_token`。
-7. **节点详情泄漏节点级 LLM 凭据**：`GET /api/agents/{id}` / `detail` 对可访问该节点的**非 admin** 用户返回 `llm_api_key`/`llm_base_url`/`llm_model`（`_dump_agent` 仅剥离 `access`）。应对非 admin 脱敏。
-8. **`GET /api/files/{file_id}` 任何 agent token 可下载任意文件**：仅按身份放行，未按任务归属校验（`api/files.py` 对 `auth != "user"` 跳过归属检查），与"agent 仅能访问自身任务产物"的隔离目标不一致。
+5. **超时重试状态翻转语义**：`_sweep_timeouts` 的回退重试与状态机语义需与容量检查原子性（§2）一并设计。
 
 ### 功能 / 运维
 
-9. **`depends_on` 仅校验存在**：依赖任务未完成时派发不会等待（既不持久化、也不阻塞执行）。
-10. **`GET /api/bootstrap/install.sh` 的 `host` 注入未校验格式**；`/api/bootstrap/{filename}` 与 `os/arch` 查询参数也未校验（仅影响下载文件名）。
-11. **生产 orchestrator 日志文件缺失**：systemd 配置 `StandardOutput=journal`，`log/orchestrator.log` 从不生成，但文档与 `deploy/status.sh` 仍按该文件 tail。需二选一：重定向写入该文件，或改文档 + 脚本。
-12. **SQLite 仍残留全局 `settings.system_prompt`**：迁移 013 会 seed，PG 启动时会删除；代码已不再读取该行，属死数据，应在 SQLite 侧清理。
-13. **Web 看板为静态轮询（默认 5s）**，可升级 WebSocket。
+6. **生产 orchestrator 日志文件缺失**：systemd 配置 `StandardOutput=journal`，`log/orchestrator.log` 从不生成，但文档与 `deploy/status.sh` 仍按该文件 tail。需二选一：重定向写入该文件，或改文档 + 脚本。
+7. **SQLite 仍残留全局 `settings.system_prompt`**：迁移 013 会 seed，PG 启动时会删除；代码已不再读取该行，属死数据，应在 SQLite 侧清理。
+8. **SSE 推送覆盖面有限**：目前只推任务状态（`tasks_changed`）、任务日志（`task_log`）、节点上下线（`agents_changed`）；文件/技能/模板/配置仍靠 5s 轮询。
 
 ### 平台
 
-14. **macOS Intel（darwin-x64）无探针包**：CI 只构建 `darwin-arm64`；`install.sh` 会按 `uname` 找 `darwin-x64` 但发布里没有。
-15. **Windows 节点不支持自升级**：服务端对 `win32` 跳过自动升级指令（安装/重装正常）；需实现计划任务下的下载替换 + 重启。
-16. **探针 Release 自动同步缺失**：目前只有配置页手动按钮（`POST /api/bootstrap/sync`），无启动/定时/发布回调触发。
+9. **macOS Intel（darwin-x64）无探针包**：CI 只构建 `darwin-arm64`；`install.sh` 会按 `uname` 找 `darwin-x64` 但发布里没有。
+10. **Windows 节点不支持自升级**：服务端对 `win32` 跳过自动升级指令（安装/重装正常）；需实现计划任务下的下载替换 + 重启。
+11. **探针 Release 自动同步缺失**：目前只有配置页手动按钮（`POST /api/bootstrap/sync`），无启动/定时/发布回调触发。
 
 ### 执行隔离后续
 
-17. **`Constraints.skills` 未落地**：schema 已有字段，edge executor 未读取；任务级技能提示未生效。
-18. **缺强隔离沙箱 / 结构化 argv**：command 权限匹配器（OpenCode permission 规格）**只防误操作、不是安全边界**，shell 间接调用可绕过；生产建议低权限账号/容器。
+12. **`Constraints.skills` 未落地**：schema 已有字段，edge executor 未读取；任务级技能提示未生效。
+13. **缺强隔离沙箱 / 结构化 argv**：command 权限匹配器（OpenCode permission 规格）**只防误操作、不是安全边界**，shell 间接调用可绕过；生产建议低权限账号/容器。
 
 ---
 
@@ -44,12 +37,11 @@
 
 ### 方向一：edge-agent 执行权限管控（第一期已完成）
 
-统一权限模板（`templates.permission`，OpenCode `permission` 规格，llm 与 command 共用）、command 白名单、`task_events` 审计均已落地。**未做**：强隔离沙箱 / 结构化 argv（§18）、`Constraints.skills` 任务级技能提示落地（§17）。
+统一权限模板（`templates.permission`，OpenCode `permission` 规格，llm 与 command 共用）、command 白名单、`task_events` 审计均已落地。**未做**：强隔离沙箱 / 结构化 argv（§13）、`Constraints.skills` 任务级技能提示落地（§12）。
 
 ### 补充建议（按价值排序）
 
-1. **`depends_on` 落地**：持久化 + 阻塞/触发执行（§9）。
-2. **WebSocket 实时推送**：替代看板静态轮询（§13）。
-3. **`GET /api/bootstrap/install.sh` 的 `host` 注入校验**（§10）。
-4. **安全收口**：`GET /api/settings` 字段白名单（§6）、节点详情 LLM 凭据脱敏（§7）、文件下载按任务归属校验（§8）。
-5. **多进程与心跳原子性**（§1/§2）。
+1. **安全收口第二期**：`GET /api/settings` 已限 Web UI + 白名单；节点详情已对非 admin 脱敏；文件下载已按任务归属限制 agent token。后续可评估全局 token 的下载范围、以及 LLM 密钥的写入/回显策略。
+2. **`depends_on` 已落地**：依赖全部 `completed` 才派发；依赖失败/终止会级联取消依赖者；派发时校验环。后续可加"等待依赖"的显式状态/UI 提示。
+3. **多进程与心跳原子性**（§1/§2），并随之把实时推送换成 `LISTEN/NOTIFY` 总线。
+4. **平台补齐**：macOS Intel 包、Windows 自升级、探针 Release 自动同步（§9/§10/§11）。

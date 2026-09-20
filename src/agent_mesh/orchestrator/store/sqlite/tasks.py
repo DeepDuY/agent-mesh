@@ -41,6 +41,7 @@ class TaskMixin(SQLiteBase):
             result=None,
             max_retries=row["max_retries"],
             attachments=attachments,
+            depends_on=_load_json(row["depends_on"]) if "depends_on" in row.keys() else [],
         )
 
     async def _load_result(self, task_id: str) -> TaskResult | None:
@@ -91,7 +92,7 @@ class TaskMixin(SQLiteBase):
                 _dt_to_iso(task.assigned_at),
                 _dt_to_iso(task.started_at),
                 _dt_to_iso(task.finished_at),
-                _dump_json(None),
+                _dump_json(task.depends_on),
                 dispatched_by,
                 user_id,
                 team_id,
@@ -238,6 +239,18 @@ class TaskMixin(SQLiteBase):
         )
         return affected
 
+    async def is_file_attached_to_agent(self, file_id: str, agent_key: str) -> bool:
+        rows = await self._execute(
+            """
+            SELECT 1 FROM tasks t, json_each(t.attachments) AS a
+            WHERE t.agent_id = ? AND t.attachments IS NOT NULL
+              AND json_extract(a.value, '$.file_id') = ?
+            LIMIT 1
+            """,
+            (agent_key, file_id),
+        )
+        return bool(rows)
+
     async def update_task_status(
         self,
         task_id: str,
@@ -349,6 +362,19 @@ class QueueMixin(SQLiteBase):
 
     async def dequeue(self, agent_id: str) -> str | None:
         return await self._db.dequeue(agent_id)
+
+    async def peek_queue(self, agent_id: str, limit: int = 100) -> list[str]:
+        rows = await self._execute(
+            "SELECT task_id FROM task_queue WHERE agent_id = ? "
+            "ORDER BY enqueued_at ASC LIMIT ?",
+            (agent_id, limit),
+        )
+        return [r["task_id"] for r in rows]
+
+    async def dequeue_task(self, task_id: str) -> bool:
+        return await self._execute_rowcount(
+            "DELETE FROM task_queue WHERE task_id = ?", (task_id,)
+        ) == 1
 
     async def remove_from_queue(self, task_id: str) -> None:
         await self._execute("DELETE FROM task_queue WHERE task_id = ?", (task_id,))

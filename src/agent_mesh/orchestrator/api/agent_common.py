@@ -78,7 +78,10 @@ async def require_agent(
 def dump_agent(store: TaskStore, agent: AgentStatus, user: dict[str, Any]) -> dict[str, Any]:
     data = agent.model_dump_json_safe()
     if not store.is_admin(user):
-        data.pop("access", None)  # don't expose the ACL to non-admins
+        # Neither the ACL nor per-node LLM credentials belong to non-admins
+        # (nodes receive their LLM config over the heartbeat config-sync).
+        for key in ("access", "llm_api_key", "llm_base_url", "llm_model"):
+            data.pop(key, None)
     return data
 
 

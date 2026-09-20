@@ -6,7 +6,7 @@ ADMIN_API_TOKEN = "admin-api-token-123"
 
 
 def _admin() -> dict:
-    return {"Authorization": f"Bearer {ADMIN_API_TOKEN}"}
+    return {"Authorization": f"Bearer {ADMIN_API_TOKEN}", "X-Agent-Mesh-UI": "1"}
 
 
 def test_install_scripts_default_to_server(client):

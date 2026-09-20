@@ -170,6 +170,16 @@ def mount_file_routes(
             owner_ids = {auth.get("user_id"), auth.get("username")}
             if row.get("created_by") not in owner_ids:
                 raise HTTPException(status_code=404, detail="file not found")
+        elif auth.get("auth") == "agent":
+            # A node's own token may only fetch files handed to it as task
+            # attachments, never arbitrary library files.
+            agent_key = auth.get("device_id") or (
+                str(auth["agent_id"]) if auth.get("agent_id") is not None else ""
+            )
+            if not agent_key or not await store.store.is_file_attached_to_agent(
+                file_id, agent_key
+            ):
+                raise HTTPException(status_code=404, detail="file not found")
         path = _files_dir(config) / f"{file_id}_{row['filename']}"
         if not path.exists():
             raise HTTPException(status_code=404, detail="file not found")

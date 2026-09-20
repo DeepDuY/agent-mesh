@@ -295,6 +295,7 @@ async function showTaskDetail(taskId) {
       <div class="detail-item"><label>耗时</label><span>${fmtDuration(r.duration_ms)}</span></div>
       ${t.constraints && t.constraints.session_id ? `<div class="detail-item"><label>复用会话</label><span class="mono">${escHtml(t.constraints.session_id)}</span></div>` : ''}
       ${r.session_id ? `<div class="detail-item"><label>会话 ID</label><span class="mono">${escHtml(r.session_id)}</span></div>` : ''}
+      ${t.depends_on && t.depends_on.length ? `<div class="detail-item"><label>依赖任务</label><span class="mono">${t.depends_on.map(escHtml).join(', ')}</span></div>` : ''}
     </div>
     ${cancellable ? `<p style="margin:.5rem 0"><button class="btn btn-danger" onclick="cancelTask('${t.task_id}')">终止此任务</button></p>` : ''}
     <p><strong>指令：</strong></p><pre>${escHtml(t.instruction)}</pre>

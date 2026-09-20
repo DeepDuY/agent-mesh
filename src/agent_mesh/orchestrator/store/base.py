@@ -277,6 +277,14 @@ class AbstractStore(abc.ABC):
     async def delete_tasks(self, task_ids: list[str]) -> int: ...
 
     @abc.abstractmethod
+    async def is_file_attached_to_agent(self, file_id: str, agent_key: str) -> bool:
+        """Whether ``file_id`` is attached to a task assigned to ``agent_key``.
+
+        Used to keep an edge node's own token from downloading arbitrary library
+        files it was never handed.
+        """
+
+    @abc.abstractmethod
     async def update_task_status(
         self,
         task_id: str,
@@ -316,6 +324,14 @@ class AbstractStore(abc.ABC):
 
     @abc.abstractmethod
     async def dequeue(self, agent_id: str) -> str | None: ...
+
+    @abc.abstractmethod
+    async def peek_queue(self, agent_id: str, limit: int = 100) -> list[str]:
+        """Queued task ids for ``agent_id`` in FIFO order, without removing them."""
+
+    @abc.abstractmethod
+    async def dequeue_task(self, task_id: str) -> bool:
+        """Remove one specific task from the queue; False if it was already taken."""
 
     @abc.abstractmethod
     async def remove_from_queue(self, task_id: str) -> None: ...

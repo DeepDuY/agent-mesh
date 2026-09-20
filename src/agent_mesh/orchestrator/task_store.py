@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from agent_mesh.orchestrator.permissions import PermissionMixin
+from agent_mesh.orchestrator.realtime import publish
 from agent_mesh.orchestrator.store.base import AbstractStore, _new_task_id
 from agent_mesh.orchestrator.sweeper import SweeperMixin
 from agent_mesh.orchestrator.tenancy import TenancyMixin
@@ -104,6 +105,78 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin):
         return await self._resolve_agent(agent_ref)
 
     # ------------------------------------------------------------------
+    # Dependencies
+    # ------------------------------------------------------------------
+    # A task is eligible once every dependency reached COMPLETED. Any terminal
+    # non-success state blocks it permanently (the dependent is cancelled).
+    _DEP_FAILED = frozenset(
+        {
+            TaskStatus.FAILED,
+            TaskStatus.TIMED_OUT,
+            TaskStatus.CANCELLED,
+            TaskStatus.DENIED,
+        }
+    )
+
+    async def _validate_dependencies(self, depends_on: list[str]) -> list[str]:
+        deps: list[str] = []
+        for dep_id in depends_on:
+            if dep_id in deps:
+                continue
+            if await self.get_task(dep_id) is None:
+                raise ValueError(f"dependency task not found: {dep_id}")
+            deps.append(dep_id)
+        # Defensive cycle check. The API cannot normally create a cycle (a task
+        # may only depend on tasks that already exist), but a hand-edited DB could.
+        done: set[str] = set()
+        for dep_id in deps:
+            await self._check_dependency_cycle(dep_id, set(), done)
+        return deps
+
+    async def _check_dependency_cycle(
+        self, node: str, path: set[str], done: set[str]
+    ) -> None:
+        if node in done:
+            return
+        if node in path:
+            raise ValueError(f"dependency cycle detected at {node}")
+        path.add(node)
+        task = await self.get_task(node)
+        for dep in (task.depends_on if task else []):
+            await self._check_dependency_cycle(dep, path, done)
+        path.discard(node)
+        done.add(node)
+
+    async def _dependency_state(self, task: Task) -> tuple[str, list[str]]:
+        """Return ("ready"|"pending"|"failed", failed_dependency_ids)."""
+        if not task.depends_on:
+            return "ready", []
+        failed: list[str] = []
+        for dep_id in task.depends_on:
+            dep = await self.get_task(dep_id)
+            if dep is None or dep.status in self._DEP_FAILED:
+                failed.append(dep_id)
+            elif dep.status != TaskStatus.COMPLETED:
+                return "pending", []
+        return ("failed", failed) if failed else ("ready", [])
+
+    async def _cancel_for_dependencies(self, task_id: str, failed_deps: list[str]) -> None:
+        now = datetime.now(timezone.utc)
+        await self.store.update_task_status(
+            task_id=task_id,
+            status=TaskStatus.CANCELLED.value,
+            finished_at=now,
+        )
+        await self.store.append_task_event(
+            task_id=task_id,
+            event_type="dependency_failed",
+            details={"dependencies": failed_deps},
+        )
+        logger.info(
+            "cancelled task %s: dependency not satisfied (%s)", task_id, failed_deps
+        )
+
+    # ------------------------------------------------------------------
     # Dispatch
     # ------------------------------------------------------------------
     async def dispatch(
@@ -121,10 +194,7 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin):
     ) -> str:
         if mode not in ("command", "llm"):
             raise ValueError(f"invalid task mode: {mode}")
-        if depends_on:
-            for dep_id in depends_on:
-                if await self.get_task(dep_id) is None:
-                    raise ValueError(f"dependency task not found: {dep_id}")
+        deps = await self._validate_dependencies(depends_on or [])
 
         # Resolve the target agent. agent_id may be numeric id, device_id, or legacy string.
         target = await self._resolve_agent(agent_id)
@@ -141,6 +211,7 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin):
             status=TaskStatus.QUEUED,
             max_retries=max_retries,
             attachments=attachments or [],
+            depends_on=deps,
             user_id=user_id,
             team_id=team_id,
         )
@@ -149,6 +220,7 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin):
         )
         await self.store.enqueue(task.task_id, queue_key)
         logger.info("dispatched task %s for agent=%s mode=%s", task.task_id, queue_key, mode)
+        publish("tasks_changed")
         return task.task_id
 
     async def dispatch_denied(
@@ -309,35 +381,51 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin):
             telemetry=telemetry,
             ip_address=ip_address,
         )
+        if agent is None or not agent.online:
+            publish("agents_changed")
 
         active = await self.list_active_tasks(key)
         running = set(running_tasks or [])
         resume = [t for t in active if t.task_id not in running]
 
-        # Claim new tasks up to the concurrency cap.
+        # Claim new tasks up to the concurrency cap. Iterate the queue in FIFO
+        # order but skip (leave queued) tasks whose dependencies are not done,
+        # so a blocked task does not head-of-line-block ready ones behind it.
         max_concurrent = await self.max_concurrent()
         capacity = max(0, max_concurrent - len(active))
         new_tasks: list[Task] = []
-        while capacity > 0:
-            task_id = await self.store.dequeue(key)
-            if not task_id:
-                break
-            task = await self.store.get_task(task_id)
-            if not task or task.status != TaskStatus.QUEUED:
-                continue
-            await self.store.update_task_status(
-                task_id=task_id,
-                status=TaskStatus.ASSIGNED.value,
-                assigned_at=now,
-            )
-            capacity -= 1
-            new_tasks.append(task)
-            logger.info("claimed task %s by agent=%s", task_id, key)
+        if capacity > 0:
+            for task_id in await self.store.peek_queue(key, limit=200):
+                if capacity <= 0:
+                    break
+                task = await self.store.get_task(task_id)
+                if not task or task.status != TaskStatus.QUEUED:
+                    await self.store.remove_from_queue(task_id)
+                    continue
+                state, failed_deps = await self._dependency_state(task)
+                if state == "pending":
+                    continue
+                if state == "failed":
+                    await self.store.remove_from_queue(task_id)
+                    await self._cancel_for_dependencies(task_id, failed_deps)
+                    continue
+                if not await self.store.dequeue_task(task_id):
+                    continue  # another poller claimed it first
+                await self.store.update_task_status(
+                    task_id=task_id,
+                    status=TaskStatus.ASSIGNED.value,
+                    assigned_at=now,
+                )
+                capacity -= 1
+                new_tasks.append(task)
+                logger.info("claimed task %s by agent=%s", task_id, key)
 
         # Keep current_task_id pointing at a live task (multi-task aware): with
         # several concurrent tasks the single legacy column must not flip to the
         # last-claimed task nor go blank while siblings still run.
         await self._refresh_current_task(key)
+        if new_tasks:
+            publish("tasks_changed")
 
         return resume + new_tasks, key
 
@@ -358,6 +446,7 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin):
             status=TaskStatus.WORKING.value,
             started_at=now,
         )
+        publish("tasks_changed")
         return True
 
     async def submit_result(self, task_id: str, result: TaskResult) -> bool:
@@ -378,6 +467,7 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin):
         # (multi-task aware: a finishing sibling must not blank the running one).
         key = await self._agent_stable_key(task.agent_id)
         await self._refresh_current_task(key)
+        publish("tasks_changed")
         return True
 
     async def cancel_task(self, task_id: str) -> bool:
@@ -406,4 +496,5 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin):
         key = await self._agent_stable_key(task.agent_id)
         await self._refresh_current_task(key)
         logger.info("cancelled task %s (was %s)", task_id, task.status.value)
+        publish("tasks_changed")
         return True

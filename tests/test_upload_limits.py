@@ -19,7 +19,7 @@ def _bearer(token: str) -> dict:
 
 
 def _admin() -> dict:
-    return _bearer(ADMIN_API_TOKEN)
+    return {**_bearer(ADMIN_API_TOKEN), "X-Agent-Mesh-UI": "1"}
 
 
 def _global() -> dict:

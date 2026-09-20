@@ -53,6 +53,7 @@ class TaskMixin(PostgresBase):
             result=None,
             max_retries=row.get("max_retries", 0),
             attachments=attachments,
+            depends_on=_load_json(row.get("depends_on")) or [],
         )
 
     async def _load_result(self, task_id: str) -> TaskResult | None:
@@ -100,7 +101,7 @@ class TaskMixin(PostgresBase):
                 task.assigned_at,
                 task.started_at,
                 task.finished_at,
-                _dump_json(None),
+                _dump_json(task.depends_on),
                 dispatched_by,
                 user_id,
                 team_id,
@@ -227,6 +228,17 @@ class TaskMixin(PostgresBase):
             (task_ids,),
         )
 
+    async def is_file_attached_to_agent(self, file_id: str, agent_key: str) -> bool:
+        row = await self._db.fetchrow(
+            """
+            SELECT 1 FROM tasks t, jsonb_array_elements(t.attachments) AS a
+            WHERE t.agent_id = ? AND a->>'file_id' = ?
+            LIMIT 1
+            """,
+            (agent_key, file_id),
+        )
+        return row is not None
+
     async def update_task_status(
         self,
         task_id: str,
@@ -336,6 +348,19 @@ class QueueMixin(PostgresBase):
 
     async def dequeue(self, agent_id: str) -> str | None:
         return await self._db.dequeue(agent_id)
+
+    async def peek_queue(self, agent_id: str, limit: int = 100) -> list[str]:
+        rows = await self._db.execute(
+            "SELECT task_id FROM task_queue WHERE agent_id = ? "
+            "ORDER BY enqueued_at ASC LIMIT ?",
+            (agent_id, limit),
+        )
+        return [r["task_id"] for r in rows]
+
+    async def dequeue_task(self, task_id: str) -> bool:
+        return await self._db.execute_rowcount(
+            "DELETE FROM task_queue WHERE task_id = ?", (task_id,)
+        ) == 1
 
     async def remove_from_queue(self, task_id: str) -> None:
         await self._db.execute("DELETE FROM task_queue WHERE task_id = ?", (task_id,))

@@ -234,18 +234,21 @@ def mount_task_routes(
             store, body.get("attachments") or [], user
         )
         team_id = await store.user_team(user)
-        task_id = await store.dispatch(
-            agent_id=body.get("agent_id", ""),
-            instruction=body.get("instruction", ""),
-            mode=mode,
-            constraints=constraints,
-            max_retries=body.get("max_retries", 0),
-            depends_on=body.get("depends_on"),
-            dispatched_by=user["username"],
-            attachments=attachments,
-            user_id=user.get("user_id"),
-            team_id=team_id,
-        )
+        try:
+            task_id = await store.dispatch(
+                agent_id=body.get("agent_id", ""),
+                instruction=body.get("instruction", ""),
+                mode=mode,
+                constraints=constraints,
+                max_retries=body.get("max_retries", 0),
+                depends_on=body.get("depends_on"),
+                dispatched_by=user["username"],
+                attachments=attachments,
+                user_id=user.get("user_id"),
+                team_id=team_id,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         logger.info("REST dispatched task %s by %s", task_id, user["username"])
         await store.store.append_task_event(
             task_id=task_id,

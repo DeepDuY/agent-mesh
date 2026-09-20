@@ -23,7 +23,7 @@ async def client(tmp_path):
 
 
 def _admin_headers() -> dict:
-    return {"Authorization": f"Bearer {ADMIN_API_TOKEN}"}
+    return {"Authorization": f"Bearer {ADMIN_API_TOKEN}", "X-Agent-Mesh-UI": "1"}
 
 
 def _edge_headers() -> dict:

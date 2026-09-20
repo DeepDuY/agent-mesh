@@ -88,7 +88,8 @@ def mount_agent_routes(
         )
         data = detail.model_dump_json_safe()
         if not store.is_admin(user):
-            data.pop("access", None)
+            for key in ("access", "llm_api_key", "llm_base_url", "llm_model"):
+                data.pop(key, None)
         return {"agent": data}
 
     @router.patch("/agents/{agent_id}/alias")

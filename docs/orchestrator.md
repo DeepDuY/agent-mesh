@@ -24,9 +24,10 @@
 
 - `dispatch()`：
   1. 校验 `mode ∈ {command, llm}`；
-  2. 校验 `depends_on` 中的 task_id 都存在（仅校验，不持久化、不阻塞，见 [known-issues.md §9](./known-issues.md)）；
+  2. 校验 `depends_on` 中的 task_id 都存在、去重、并做环检测（见下）；
   3. `_resolve_agent(agent_ref)` 解析目标 → `queue_key = device_id or agent_id`；
   4. 创建 `Task(status=queued, agent_id=queue_key)`，`create_task` + `enqueue(task_id, queue_key)`。
+- `depends_on` 门禁：`heartbeat()` 领任务时按 FIFO 遍历队列，依赖未全部 `completed` 的任务**留在队列**（不占并发额度、不阻塞其后就绪任务）；任一依赖处于 `failed/timed_out/cancelled/denied` 时把该任务置 `cancelled` 并记 `dependency_failed` 事件。
 - `_resolve_agent(agent_ref)`：`int(agent_ref)` → `get_agent_by_id`；否则 `get_agent(agent_ref)`（按 device_id）；再回退 `list_agents` 里 `agent_id == agent_ref` 的最新一条。
 - `heartbeat()`：见 [protocol.md §1.5](./protocol.md#15-心跳领取与断线重连)。上报字段（system/metrics）以 `telemetry: dict` 传入，键经注册表白名单校验，store 层据此持久化（见 [standards/edge-reporting.md](./standards/edge-reporting.md)）。
 - `mark_started()`：仅 `assigned` → `working`，写 `started_at`。

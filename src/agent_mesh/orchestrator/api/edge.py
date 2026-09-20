@@ -306,6 +306,9 @@ def mount_edge_routes(
         if not clean:
             return {"accepted": False, "error": "no valid entries"}
         await store.store.append_task_logs(task_id, clean)
+        from agent_mesh.orchestrator.realtime import publish
+
+        publish("task_log", task_id=task_id)
         return {"accepted": True, "count": len(clean)}
 
     @router.post("/edge/mark_started")

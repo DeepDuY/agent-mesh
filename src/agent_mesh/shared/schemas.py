@@ -107,6 +107,7 @@ class Task(BaseModel):
     result: TaskResult | None = None
     max_retries: int = 0
     attachments: list[FileRef] = Field(default_factory=list)
+    depends_on: list[str] = Field(default_factory=list)
 
     def model_dump_json_safe(self) -> dict[str, Any]:
         return {
@@ -127,6 +128,7 @@ class Task(BaseModel):
             "result": self.result.model_dump() if self.result else None,
             "max_retries": self.max_retries,
             "attachments": [a.model_dump() for a in self.attachments],
+            "depends_on": list(self.depends_on),
         }
 
 

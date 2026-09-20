@@ -6,6 +6,7 @@ AGENT_ID="${EDGE_ALIAS:-$(hostname -s 2>/dev/null || echo agent)}"
 ORCHESTRATOR_URL="${ORCHESTRATOR_URL:-}"
 TOKEN="${TOKEN:-}"
 WORK_DIR="${WORK_DIR:-${INSTALL_DIR}/work}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 if [ -z "$ORCHESTRATOR_URL" ]; then
     echo "ERROR: ORCHESTRATOR_URL is required" >&2
@@ -35,6 +36,23 @@ if [ "${SKIP_PREFLIGHT:-0}" != "1" ]; then
         exit 1
     fi
 
+    # PyInstaller freezes the build host's libpython, so a package built on a new
+    # distro fails to load on older ones (e.g. "libpython3.12.so.1.0: GLIBC_2.38
+    # not found"). MANIFEST.json records the required floor; fail early and
+    # actionably instead of leaving a boot-looping service.
+    if [ "$(uname -s)" = "Linux" ] && [ -f "$SCRIPT_DIR/MANIFEST.json" ]; then
+        REQUIRED_GLIBC="$(sed -n 's/.*"glibc_min"[[:space:]]*:[[:space:]]*"\([0-9][0-9.]*\)".*/\1/p' "$SCRIPT_DIR/MANIFEST.json" | head -n1)"
+        HOST_GLIBC="$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}')"
+        if [ -n "$REQUIRED_GLIBC" ] && [ -n "$HOST_GLIBC" ]; then
+            if [ "$(printf '%s\n%s\n' "$REQUIRED_GLIBC" "$HOST_GLIBC" | sort -V | head -n1)" != "$REQUIRED_GLIBC" ]; then
+                echo "ERROR: this probe package requires glibc >= ${REQUIRED_GLIBC}, but this host has ${HOST_GLIBC}." >&2
+                echo "       Rebuild/download a probe built on an older-glibc base" >&2
+                echo "       (CentOS 7 / manylinux2014, glibc 2.17)." >&2
+                exit 1
+            fi
+        fi
+    fi
+
     if [ -f "${INSTALL_DIR}/bin/agent-mesh-edge" ] || [ -f "${INSTALL_DIR}/bin/agent-mesh-edge.bin" ]; then
         echo "WARNING: agent-mesh-edge already exists at ${INSTALL_DIR}" >&2
         if [ -z "${FORCE_REINSTALL:-}" ]; then
@@ -49,8 +67,6 @@ if [ "${SKIP_PREFLIGHT:-0}" != "1" ]; then
 fi
 
 # ========== Install ==========
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "==> Installing agent-mesh agent to ${INSTALL_DIR}"
 mkdir -p "${INSTALL_DIR}/bin"
