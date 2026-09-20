@@ -134,7 +134,7 @@ def create_query_router(
     from agent_mesh.orchestrator.api.templates import mount_template_routes
 
     mount_auth_routes(router, store, require_user_token, require_admin, config)
-    mount_task_routes(router, store, require_user_token)
+    mount_task_routes(router, store, require_user_token, artifact_store)
     mount_agent_routes(router, store, require_user_token, config, require_admin, require_ui_user)
     mount_edge_routes(router, store, config, require_any_token)
     mount_artifact_routes(router, artifact_store, store, config, require_user_token, require_any_token, _store_artifact_ref)

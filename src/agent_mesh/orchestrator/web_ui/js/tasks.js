@@ -110,7 +110,7 @@ async function loadTasks() {
   const params = taskQueryParams();
 
   const res = await fetch(`/api/tasks?${params}`, { headers });
-  if (!res.ok) return;
+  if (!res.ok) { reportApiError('加载任务失败', res); return; }
   const data = await res.json();
   const tasks = data.tasks || [];
   taskTotal = data.total || 0;
@@ -261,7 +261,11 @@ async function pollTaskLogs() {
 async function showTaskDetail(taskId) {
   stopTaskLogPolling();
   const res = await fetch(`/api/tasks/${taskId}`, { headers });
-  if (!res.ok) return;
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    alert(`加载失败：${err.detail || res.status}`);
+    return;
+  }
   const t = (await res.json()).task;
   const r = t.result || {};
   let artifacts = '';

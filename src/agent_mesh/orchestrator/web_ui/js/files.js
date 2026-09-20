@@ -7,13 +7,13 @@ async function loadFiles() {
   if (filesSearch) params.append('search', filesSearch);
   const qs = params.toString();
   const res = await fetch(`/api/files${qs ? '?' + qs : ''}`, { headers });
-  if (!res.ok) return;
+  if (!res.ok) { reportApiError('加载文件失败', res); return; }
   currentFiles = (await res.json()).files || [];
   document.getElementById('files-body').innerHTML = currentFiles.map(f => `
     <tr>
       <td class="col-select"><input type="checkbox" class="file-checkbox" ${selectedFiles.has(f.file_id) ? 'checked' : ''} onclick="toggleFileSelect('${f.file_id}', this)"></td>
       <td class="mono">${f.file_id}</td>
-      <td>${f.filename}</td>
+      <td>${escHtml(f.filename)}</td>
       <td>${formatBytes(f.size)}</td>
       <td class="mono">${f.md5 || '-'}</td>
       <td class="mono">${(f.created_at || '').replace('T', ' ').slice(0, 19)}</td>

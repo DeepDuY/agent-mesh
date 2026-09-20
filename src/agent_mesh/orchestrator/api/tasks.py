@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
+from agent_mesh.orchestrator.artifact_store import ArtifactStore
 from agent_mesh.orchestrator.task_store import TaskStore
 from agent_mesh.shared.constants import TaskStatus
 from agent_mesh.shared.schemas import Constraints, FileRef
@@ -85,6 +86,7 @@ def mount_task_routes(
     router: APIRouter,
     store: TaskStore,
     require_user_token,
+    artifact_store: ArtifactStore | None = None,
 ) -> None:
 
     async def _owner_filter(user: dict[str, Any]):
@@ -313,6 +315,8 @@ def mount_task_routes(
         deleted = await store.store.delete_task(task_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="task not found")
+        if artifact_store is not None:
+            artifact_store.delete_task(task_id)
         logger.info("REST deleted task %s by %s", task_id, user["username"])
         return {"deleted": True, "task_id": task_id}
 
@@ -359,6 +363,8 @@ def mount_task_routes(
         if not task_ids:
             return {"deleted": 0}
         deleted = await store.store.delete_tasks(task_ids)
+        if artifact_store is not None:
+            artifact_store.delete_tasks(task_ids)
         logger.info(
             "REST batch-deleted %d tasks (requested %d) by %s",
             deleted, len(task_ids), user["username"],

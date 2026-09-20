@@ -86,6 +86,26 @@ function escHtml(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// List loaders run on a 5s refresh, so a failed request must not pop an alert
+// every tick. Surface it in a transient banner (and the console) instead; the
+// banner stays lit while the failure persists and clears once it recovers.
+let _apiErrorTimer = null;
+function reportApiError(context, res) {
+  const status = res && res.status ? `HTTP ${res.status}` : '网络错误';
+  console.error(`${context}: ${status}`);
+  let el = document.getElementById('api-error-banner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'api-error-banner';
+    el.className = 'api-error-banner';
+    document.body.appendChild(el);
+  }
+  el.textContent = `${context}（${status}）`;
+  el.classList.add('visible');
+  clearTimeout(_apiErrorTimer);
+  _apiErrorTimer = setTimeout(() => el.classList.remove('visible'), 6000);
+}
+
 function fmtDuration(ms) {
   if (ms == null) return '-';
   const s = ms / 1000;

@@ -16,7 +16,7 @@ let selectAllAgentPages = false;
 
 async function loadAgents() {
   const res = await fetch('/api/agents', { headers });
-  if (!res.ok) return;
+  if (!res.ok) { reportApiError('加载节点失败', res); return; }
   currentAgents = (await res.json()).agents;
   renderAgents();
 }
@@ -249,7 +249,11 @@ async function submitBatchAccess(mode) {
 
 async function showAgentDetail(agentId) {
   const res = await fetch(`/api/agents/${agentId}/detail`, { headers });
-  if (!res.ok) return;
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    alert(`加载失败：${err.detail || res.status}`);
+    return;
+  }
   const a = (await res.json()).agent;
   const lastSeen = a.last_seen ? new Date(a.last_seen).toLocaleString() : '-';
   const tasks = a.tasks || [];
@@ -444,11 +448,16 @@ function selectInstallOs(os) {
 async function setAlias(e, agentId) {
   e.preventDefault();
   const alias = e.target.alias.value;
-  await fetch(`/api/agents/${agentId}/alias`, {
+  const res = await fetch(`/api/agents/${agentId}/alias`, {
     method: 'PATCH',
     headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({ alias: alias || null })
   });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    alert(`保存失败：${err.detail || res.status}`);
+    return;
+  }
   closeAgentModal();
   loadAll();
 }

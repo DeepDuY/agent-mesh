@@ -707,3 +707,27 @@ input[type="checkbox"] {
   accent-color: var(--primary);
   cursor: pointer;
 }
+
+/* Transient API failure banner (list loaders poll every 5s, so errors are
+   surfaced here instead of alert() to avoid spamming). */
+.api-error-banner {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-8px);
+  z-index: 10000;
+  max-width: min(90vw, 640px);
+  padding: .5rem .9rem;
+  border-radius: 6px;
+  background: var(--danger);
+  color: #fff;
+  font-size: .85rem;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .25);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .2s ease, transform .2s ease;
+}
+.api-error-banner.visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}

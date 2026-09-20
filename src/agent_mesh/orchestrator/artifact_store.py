@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import mimetypes
 import re
+import shutil
 import threading
 import tempfile
 import uuid
@@ -98,6 +99,26 @@ class ArtifactStore:
             return True
         except OSError:
             return False
+
+    def delete_task(self, task_id: str) -> bool:
+        """Remove every artifact file stored for a task.
+
+        Returns True when a task directory existed (and was removed). Called
+        when the task itself is deleted so disk usage does not leak.
+        """
+        safe = _safe_task_id(task_id)
+        if safe is None:
+            return False
+        d = self.base_dir / safe
+        if not d.exists():
+            return False
+        with self._lock:
+            shutil.rmtree(d, ignore_errors=True)
+        return not d.exists()
+
+    def delete_tasks(self, task_ids: list[str]) -> int:
+        """Remove artifact files for several tasks; returns the number removed."""
+        return sum(1 for task_id in task_ids if self.delete_task(task_id))
 
     def save(
         self,

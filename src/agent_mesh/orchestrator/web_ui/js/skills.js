@@ -1,6 +1,6 @@
 async function loadSkills() {
   const res = await fetch('/api/skills', { headers });
-  if (!res.ok) return;
+  if (!res.ok) { reportApiError('加载技能失败', res); return; }
   const skills = (await res.json()).skills || [];
   document.getElementById('skills-body').innerHTML = skills.map(s => `
     <tr>
@@ -54,13 +54,23 @@ async function toggleSkill(name, enabled) {
     headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled })
   });
-  if (res.ok) loadSkills();
+  if (res.ok) {
+    loadSkills();
+  } else {
+    const err = await res.json().catch(() => ({}));
+    alert(`操作失败：${err.detail || res.status}`);
+  }
 }
 
 async function deleteSkill(name) {
   if (!confirm(`确认删除技能 ${name}？`)) return;
   const res = await fetch(`/api/skills/${name}`, { method: 'DELETE', headers });
-  if (res.ok) loadSkills();
+  if (res.ok) {
+    loadSkills();
+  } else {
+    const err = await res.json().catch(() => ({}));
+    alert(`删除失败：${err.detail || res.status}`);
+  }
 }
 
 async function downloadSkill(name) {

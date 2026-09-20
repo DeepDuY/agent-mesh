@@ -22,22 +22,21 @@
 ### 功能 / 运维
 
 9. **`depends_on` 仅校验存在**：依赖任务未完成时派发不会等待（既不持久化、也不阻塞执行）。
-10. **删除任务不清理磁盘产物**：`artifact_store` 只删 DB 记录，磁盘文件残留。
-11. **`GET /api/bootstrap/install.sh` 的 `host` 注入未校验格式**；`/api/bootstrap/{filename}` 与 `os/arch` 查询参数也未校验（仅影响下载文件名）。
-12. **command 模式实时日志只有 stdout**：`edge/execution/command.py` 未给 `proc.stderr` 挂回调，stderr 行不会作为 `raw` 上报（LLM 模式的 error 走 JSONL stdout，不受影响）。
-13. **生产 orchestrator 日志文件缺失**：systemd 配置 `StandardOutput=journal`，`log/orchestrator.log` 从不生成，但文档与 `deploy/status.sh` 仍按该文件 tail。需二选一：重定向写入该文件，或改文档 + 脚本。
-14. **SQLite 仍残留全局 `settings.system_prompt`**：迁移 013 会 seed，PG 启动时会删除；代码已不再读取该行，属死数据，应在 SQLite 侧清理。
-15. **Web 看板为静态轮询（默认 5s）**，可升级 WebSocket。
-16. **看板操作错误提示不全**：`agents.js`/`tasks.js`/`files.js`/`skills.js` 多处未校验响应状态（`config.js` 已修）。
+10. **`GET /api/bootstrap/install.sh` 的 `host` 注入未校验格式**；`/api/bootstrap/{filename}` 与 `os/arch` 查询参数也未校验（仅影响下载文件名）。
+11. **生产 orchestrator 日志文件缺失**：systemd 配置 `StandardOutput=journal`，`log/orchestrator.log` 从不生成，但文档与 `deploy/status.sh` 仍按该文件 tail。需二选一：重定向写入该文件，或改文档 + 脚本。
+12. **SQLite 仍残留全局 `settings.system_prompt`**：迁移 013 会 seed，PG 启动时会删除；代码已不再读取该行，属死数据，应在 SQLite 侧清理。
+13. **Web 看板为静态轮询（默认 5s）**，可升级 WebSocket。
 
 ### 平台
 
-17. **Windows 边沿探针未支持**：仅 Linux（主）/macOS（部分）；实现需覆盖构建、`install.ps1`、服务注册、`bash`/命令执行适配、自升级、`get_device_id`/`get_arch`/`get_distro` 与端到端验证。
+14. **macOS Intel（darwin-x64）无探针包**：CI 只构建 `darwin-arm64`；`install.sh` 会按 `uname` 找 `darwin-x64` 但发布里没有。
+15. **Windows 节点不支持自升级**：服务端对 `win32` 跳过自动升级指令（安装/重装正常）；需实现计划任务下的下载替换 + 重启。
+16. **探针 Release 自动同步缺失**：目前只有配置页手动按钮（`POST /api/bootstrap/sync`），无启动/定时/发布回调触发。
 
 ### 执行隔离后续
 
-18. **`Constraints.skills` 未落地**：schema 已有字段，edge executor 未读取；任务级技能提示未生效。
-19. **缺强隔离沙箱 / 结构化 argv**：command 权限匹配器（OpenCode permission 规格）**只防误操作、不是安全边界**，shell 间接调用可绕过；生产建议低权限账号/容器。
+17. **`Constraints.skills` 未落地**：schema 已有字段，edge executor 未读取；任务级技能提示未生效。
+18. **缺强隔离沙箱 / 结构化 argv**：command 权限匹配器（OpenCode permission 规格）**只防误操作、不是安全边界**，shell 间接调用可绕过；生产建议低权限账号/容器。
 
 ---
 
@@ -45,17 +44,12 @@
 
 ### 方向一：edge-agent 执行权限管控（第一期已完成）
 
-统一权限模板（`templates.permission`，OpenCode `permission` 规格，llm 与 command 共用）、command 白名单、`task_events` 审计均已落地。**未做**：强隔离沙箱 / 结构化 argv（§19）、`Constraints.skills` 任务级技能提示落地（§18）。
+统一权限模板（`templates.permission`，OpenCode `permission` 规格，llm 与 command 共用）、command 白名单、`task_events` 审计均已落地。**未做**：强隔离沙箱 / 结构化 argv（§18）、`Constraints.skills` 任务级技能提示落地（§17）。
 
 ### 补充建议（按价值排序）
 
-1. **删除任务时清理 `artifact_store` 磁盘产物**（§10）。
-2. **`depends_on` 落地**：持久化 + 阻塞/触发执行（§9）。
-3. **WebSocket 实时推送**：替代看板静态轮询（§15）。
-4. **`GET /api/bootstrap/install.sh` 的 `host` 注入校验**（§11）。
-5. **看板「任务详情/操作」错误提示补全**（§16）。
-6. **安全收口**：`GET /api/settings` 字段白名单（§6）、节点详情 LLM 凭据脱敏（§7）、文件下载按任务归属校验（§8）。
-
-### 远期规划（低优先级）
-
-- **Windows 边沿探针支持**（§17）。
+1. **`depends_on` 落地**：持久化 + 阻塞/触发执行（§9）。
+2. **WebSocket 实时推送**：替代看板静态轮询（§13）。
+3. **`GET /api/bootstrap/install.sh` 的 `host` 注入校验**（§10）。
+4. **安全收口**：`GET /api/settings` 字段白名单（§6）、节点详情 LLM 凭据脱敏（§7）、文件下载按任务归属校验（§8）。
+5. **多进程与心跳原子性**（§1/§2）。
