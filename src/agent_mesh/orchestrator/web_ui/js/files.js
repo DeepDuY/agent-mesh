@@ -9,7 +9,7 @@ async function loadFiles() {
   const res = await fetch(`/api/files${qs ? '?' + qs : ''}`, { headers });
   if (!res.ok) { reportApiError('加载文件失败', res); return; }
   currentFiles = (await res.json()).files || [];
-  document.getElementById('files-body').innerHTML = currentFiles.map(f => `
+  const rows = currentFiles.map(f => `
     <tr>
       <td class="col-select"><input type="checkbox" class="file-checkbox" ${selectedFiles.has(f.file_id) ? 'checked' : ''} onclick="toggleFileSelect('${f.file_id}', this)"></td>
       <td class="mono">${f.file_id}</td>
@@ -25,6 +25,7 @@ async function loadFiles() {
       </td>
     </tr>
   `).join('') || '<tr><td colspan="7" class="empty">暂无文件</td></tr>';
+  setHtmlIfChanged(document.getElementById('files-body'), rows);
   updateFileSelectionUI();
 }
 

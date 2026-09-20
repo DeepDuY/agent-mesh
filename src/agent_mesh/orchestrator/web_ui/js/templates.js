@@ -46,7 +46,7 @@ function templateUsage(templateId) {
 }
 
 function renderTemplates() {
-  document.getElementById('templates-body').innerHTML = currentTemplates.map(t => `
+  const rows = currentTemplates.map(t => `
     <tr>
       <td>${escHtml(t.name)}</td>
       <td>${t.description ? escHtml(t.description) : '-'}</td>
@@ -63,6 +63,7 @@ function renderTemplates() {
       </td>
     </tr>
   `).join('') || '<tr><td colspan="7" class="empty">暂无模板</td></tr>';
+  setHtmlIfChanged(document.getElementById('templates-body'), rows);
 }
 
 function openTemplateNodesModal(templateId) {

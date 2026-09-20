@@ -23,7 +23,7 @@ async function loadUsers() {
 }
 
 function renderUsers() {
-  document.getElementById('users-body').innerHTML = currentUsers.map(u => `
+  const rows = currentUsers.map(u => `
     <tr>
       <td>${escHtml(u.username)}</td>
       <td>${roleLabel(u.role)}</td>
@@ -41,6 +41,7 @@ function renderUsers() {
       </td>
     </tr>
   `).join('') || '<tr><td colspan="8" class="empty">暂无用户</td></tr>';
+  setHtmlIfChanged(document.getElementById('users-body'), rows);
 }
 
 function showUserToken(token, message) {

@@ -22,9 +22,10 @@ function renderUserTeamOptions() {
   const select = document.getElementById('new-user-team');
   if (!select) return;
   const current = select.value;
-  select.innerHTML = (currentTeams || []).map(t =>
+  const options = (currentTeams || []).map(t =>
     `<option value="${escHtml(t.team_id)}">${escHtml(t.name)}</option>`
   ).join('') || '<option value="">（请先创建团队）</option>';
+  setHtmlIfChanged(select, options);
   if (current) select.value = current;
 }
 
@@ -34,7 +35,7 @@ function teamNodeCount(teamId) {
 }
 
 function renderTeams() {
-  document.getElementById('teams-body').innerHTML = currentTeams.map(t => {
+  const rows = currentTeams.map(t => {
     const members = (t.members || [])
       .map(uid => { const u = (currentUsers || []).find(x => x.user_id === uid); return u ? u.username : uid; })
       .join('、');
@@ -53,6 +54,7 @@ function renderTeams() {
         </td>
       </tr>`;
   }).join('') || '<tr><td colspan="5" class="empty">暂无团队</td></tr>';
+  setHtmlIfChanged(document.getElementById('teams-body'), rows);
 }
 
 function openTeamNodesModal(teamId) {

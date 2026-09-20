@@ -42,13 +42,22 @@ function renderAgents() {
   const start = agentPage * agentPageSize;
   const pageItems = list.slice(start, start + agentPageSize);
 
-  document.getElementById('agents-body').innerHTML = pageItems.map(a => {
+  const tbody = document.getElementById('agents-body');
+  const hiddenSelection = selectAllAgentPages ? 'all' : Array.from(selectedAgents).join(',');
+  // Structural signature: everything except the per-heartbeat telemetry cells.
+  // When only telemetry changed we patch those cells in place instead of
+  // rebuilding the table (rebuilding restarts row transitions -> visible flash).
+  const skeleton = pageItems
+    .map(a => [a.id, a.alias || '', a.runtime || '', a.distro || a.os || '',
+               a.version || '', a.upgrade_requested ? a.upgrade_version : '', a.hostname || ''].join('~'))
+    .join('|') + `#${agentPage}#${isAdmin()}#${hiddenSelection}`;
+  const rows = pageItems.map(a => {
     const version = a.upgrade_requested
       ? `<span title="升级到 ${a.upgrade_version}" style="color:var(--warn)">${a.version || '-'} → ${a.upgrade_version}</span>`
       : (a.version || '-');
     const checked = selectAllAgentPages || selectedAgents.has(a.id);
     return `
-    <tr>
+    <tr data-agent-id="${a.id}">
       <td class="col-select"><input type="checkbox" class="agent-checkbox" ${checked ? 'checked' : ''} onclick="toggleAgentSelect(${a.id}, this.checked)"></td>
       <td class="mono">${a.id}</td>
       <td title="${escHtml(a.hostname || '')}">${hostLabel(a)}</td>
@@ -56,9 +65,9 @@ function renderAgents() {
       <td>${version}</td>
       <td>${a.runtime || '-'}</td>
       <td>${a.distro || a.os || '-'}</td>
-      <td>${a.cpu_percent != null ? `CPU ${fmtPct(a.cpu_percent)} · 内存 ${fmtPct(a.mem_percent)}` : '-'}</td>
-      <td class="${a.online ? 'online' : 'offline'}">${a.online ? '在线' : '离线'}</td>
-      <td class="mono">${a.current_task_id || '-'}</td>
+      <td class="agent-metrics">${a.cpu_percent != null ? `CPU ${fmtPct(a.cpu_percent)} · 内存 ${fmtPct(a.mem_percent)}` : '-'}</td>
+      <td class="agent-status ${a.online ? 'online' : 'offline'}">${a.online ? '在线' : '离线'}</td>
+      <td class="mono agent-current">${a.current_task_id || '-'}</td>
       <td>
         <span class="actions">
           <button class="btn" onclick="showAgentDetail(${a.id})">详情</button>
@@ -69,8 +78,31 @@ function renderAgents() {
     </tr>
   `}).join('') || '<tr><td colspan="11" class="empty">暂无节点</td></tr>';
 
-  document.getElementById('agent-page-info').textContent =
-    `第 ${agentPage + 1} / ${totalPages} 页（共 ${total} 条）`;
+  if (tbody.__skeleton === skeleton && tbody.querySelectorAll('tr[data-agent-id]').length === pageItems.length) {
+    const trs = tbody.querySelectorAll('tr[data-agent-id]');
+    pageItems.forEach((a, i) => {
+      const tr = trs[i];
+      const metrics = tr.querySelector('.agent-metrics');
+      if (metrics) {
+        metrics.textContent = a.cpu_percent != null
+          ? `CPU ${fmtPct(a.cpu_percent)} · 内存 ${fmtPct(a.mem_percent)}` : '-';
+      }
+      const status = tr.querySelector('.agent-status');
+      if (status) {
+        status.className = `agent-status ${a.online ? 'online' : 'offline'}`;
+        status.textContent = a.online ? '在线' : '离线';
+      }
+      const current = tr.querySelector('.agent-current');
+      if (current) current.textContent = a.current_task_id || '-';
+    });
+  } else {
+    tbody.__skeleton = skeleton;
+    tbody.innerHTML = rows;
+  }
+  setTextIfChanged(
+    document.getElementById('agent-page-info'),
+    `第 ${agentPage + 1} / ${totalPages} 页（共 ${total} 条）`
+  );
   updateAgentSelectionUI();
 }
 

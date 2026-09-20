@@ -106,6 +106,20 @@ function reportApiError(context, res) {
   _apiErrorTimer = setTimeout(() => el.classList.remove('visible'), 6000);
 }
 
+// Avoid destroying/recreating the same DOM on every poll: replacing innerHTML
+// with identical markup restarts row transitions and can make the page flash.
+function setHtmlIfChanged(el, html) {
+  if (!el || el.__lastHtml === html) return;
+  el.__lastHtml = html;
+  el.innerHTML = html;
+}
+
+function setTextIfChanged(el, text) {
+  if (!el || el.__lastText === text) return;
+  el.__lastText = text;
+  el.textContent = text;
+}
+
 function fmtDuration(ms) {
   if (ms == null) return '-';
   const s = ms / 1000;
@@ -140,8 +154,10 @@ function showApp() {
 function startRefresh() {
   stopRefresh();
   refreshTimer = setInterval(() => {
-    // Never auto-refresh while the config tab is visible: it would overwrite
-    // half-finished edits. loadConfig() is called once on tab switch instead.
+    // Skip while the tab is hidden (no point repainting) or the config tab is
+    // visible (it would overwrite half-finished edits; loadConfig() is called
+    // once on tab switch instead).
+    if (document.hidden) return;
     const configVisible = !document.getElementById('tab-config').classList.contains('hidden');
     if (!refreshPaused && !configVisible) loadAll();
   }, 5000);
@@ -181,9 +197,18 @@ function agentDisplayName(key) {
   return a ? hostLabel(a) : key;
 }
 
+let _loadAllInFlight = false;
+
 async function loadAll() {
-  await Promise.all([loadAgents(), loadTasks(), loadFiles(), loadSkills(), loadTemplates(), loadConfig(), loadProfile()]);
-  if (isAdmin()) { await loadUsers(); await loadTeams(); }
+  // Never let a slow round overlap the next tick (interleaved renders flicker).
+  if (_loadAllInFlight) return;
+  _loadAllInFlight = true;
+  try {
+    await Promise.all([loadAgents(), loadTasks(), loadFiles(), loadSkills(), loadTemplates(), loadConfig(), loadProfile()]);
+    if (isAdmin()) { await loadUsers(); await loadTeams(); }
+  } finally {
+    _loadAllInFlight = false;
+  }
 }
 
 function openModal() {

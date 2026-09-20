@@ -121,7 +121,7 @@ async function loadTasks() {
     taskPage = totalPages - 1;
     return loadTasks();
   }
-  document.getElementById('tasks-body').innerHTML = tasks.map(t => {
+  const rows = tasks.map(t => {
     const cancellable = ['queued', 'assigned', 'working'].includes(t.status);
     const checked = selectAllPages || selectedTasks.has(t.task_id);
     return `
@@ -141,7 +141,11 @@ async function loadTasks() {
     </tr>
   `}).join('') || '<tr><td colspan="10" class="empty">暂无任务</td></tr>';
 
-  document.getElementById('task-page-info').textContent = `第 ${taskPage + 1} / ${totalPages} 页（共 ${taskTotal} 条）`;
+  setHtmlIfChanged(document.getElementById('tasks-body'), rows);
+  setTextIfChanged(
+    document.getElementById('task-page-info'),
+    `第 ${taskPage + 1} / ${totalPages} 页（共 ${taskTotal} 条）`
+  );
   updateTaskSelectionUI();
 }
 

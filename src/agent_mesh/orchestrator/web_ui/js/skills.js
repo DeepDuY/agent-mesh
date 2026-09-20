@@ -2,7 +2,7 @@ async function loadSkills() {
   const res = await fetch('/api/skills', { headers });
   if (!res.ok) { reportApiError('加载技能失败', res); return; }
   const skills = (await res.json()).skills || [];
-  document.getElementById('skills-body').innerHTML = skills.map(s => `
+  const rows = skills.map(s => `
     <tr>
       <td class="mono nowrap">${s.name}</td>
       <td class="col-desc" title="${escHtml(s.description)}">${escHtml(s.description) || '-'}</td>
@@ -18,6 +18,7 @@ async function loadSkills() {
       </td>
     </tr>
   `).join('') || '<tr><td colspan="5" class="empty">暂无技能</td></tr>';
+  setHtmlIfChanged(document.getElementById('skills-body'), rows);
 }
 
 async function uploadSkill(input) {
