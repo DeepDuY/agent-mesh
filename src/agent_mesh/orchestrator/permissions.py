@@ -84,6 +84,20 @@ class PermissionMixin:
             return f"model not in allowed list: {explicit}"
         return None
 
+    async def validate_skills(self, names: list[str] | None) -> str | None:
+        """Return an error message when a requested skill is missing/disabled, else None.
+
+        Server-side pre-check so the caller (main agent / schedule) gets immediate
+        feedback; the edge refuses to run if it cannot fetch a requested skill.
+        """
+        for name in names or []:
+            skill = await self.store.get_skill(name)
+            if skill is None:
+                return f"skill not found: {name}"
+            if not skill.get("enabled", True):
+                return f"skill is disabled: {name}"
+        return None
+
     async def effective_permission(
         self, agent: AgentStatus | None, template: dict[str, Any] | None = None
     ) -> dict[str, Any]:

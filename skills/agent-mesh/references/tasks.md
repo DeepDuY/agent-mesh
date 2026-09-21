@@ -39,7 +39,7 @@ curl -s -X POST "$AGENT_MESH_BASE_URL/tasks/dispatch" \
 | `depends_on` | 依赖的任务 id 列表。依赖全部 `completed` 后才派发；任一依赖失败/终止会**级联取消**本任务（摘要与事件记录原因）；派发时校验依赖存在与环 |
 | `session_id` | 仅 llm：续用上一个 llm 任务的会话 |
 | `attachments` | 文件库 file_id 列表，见 [files.md](files.md) |
-| `skills` | 提示该任务可参考的技能名（预留） |
+| `skills` | 技能名列表；服务端校验存在且启用，边沿拉取并注入其内容（见 [skills.md](skills.md)） |
 | `output_limit` | 输出截断字节数，默认 200000 |
 
 **续用 LLM 会话**：先读上一任务 `result.session_id`，派发时带上 `session_id`；本次返回的 `result.session_id` 为实际会话 ID。

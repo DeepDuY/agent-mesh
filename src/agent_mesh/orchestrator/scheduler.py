@@ -152,6 +152,10 @@ class SchedulerMixin:
         team_id = schedule.get("team_id")
         dispatched_by = schedule.get("created_by") or f"schedule:{schedule['name']}"
 
+        skills_error = await self.validate_skills(constraints.skills)
+        if skills_error:
+            raise ValueError(skills_error)
+
         if mode == "command":
             denial = await self.check_command_permission(agent_ref, schedule["instruction"])
             if denial:

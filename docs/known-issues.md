@@ -26,8 +26,7 @@
 
 ### 执行隔离后续
 
-10. **`Constraints.skills` 未落地**：schema 已有字段，edge executor 未读取；任务级技能提示未生效。
-11. **缺强隔离沙箱 / 结构化 argv**：command 权限匹配器（OpenCode permission 规格）**只防误操作、不是安全边界**，shell 间接调用可绕过；生产建议低权限账号/容器。
+10. **缺强隔离沙箱 / 结构化 argv**：command 权限匹配器（OpenCode permission 规格）**只防误操作、不是安全边界**，shell 间接调用可绕过；生产建议低权限账号/容器。
 
 ---
 
@@ -35,7 +34,7 @@
 
 ### 方向一：edge-agent 执行权限管控（第一期已完成）
 
-统一权限模板（`templates.permission`，OpenCode `permission` 规格，llm 与 command 共用）、command 白名单、`task_events` 审计均已落地。**未做**：强隔离沙箱 / 结构化 argv（§11）、`Constraints.skills` 任务级技能提示落地（§10）。
+统一权限模板（`templates.permission`，OpenCode `permission` 规格，llm 与 command 共用）、command 白名单、`task_events` 审计均已落地。任务级技能提示（`Constraints.skills`）也已落地。**未做**：强隔离沙箱 / 结构化 argv（§10）。
 
 ### 补充建议（按价值排序）
 

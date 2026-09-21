@@ -187,6 +187,10 @@ def mount_task_routes(
         if model_error:
             raise HTTPException(status_code=400, detail=model_error)
 
+        skills_error = await store.validate_skills(body.get("skills"))
+        if skills_error:
+            raise HTTPException(status_code=400, detail=skills_error)
+
         # Server-side permission pre-check for command mode (immediate feedback;
         # the edge re-evaluates as the enforcement point).
         if mode == "command":

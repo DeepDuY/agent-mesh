@@ -31,11 +31,9 @@ uv sync
 
 # 启动 orchestrator（默认 http://0.0.0.0:8000）
 ./scripts/start-orchestrator.sh
-
-# 启动 edge agent（本机联调）
-EDGE_AGENT_ID=client EDGE_ORCHESTRATOR_URL=http://127.0.0.1:8000 \
-  uv run --no-sync python -m agent_mesh.edge.agent
 ```
+
+> 边沿 agent 的源码在独立仓库 `agent-mesh-edge`；本机联调请在该仓库内运行 `EDGE_AGENT_ID=client EDGE_ORCHESTRATOR_URL=http://127.0.0.1:8000 uv run python -m agent_mesh.edge.agent`。
 
 > 当前只支持**单进程**运行：`AGENT_MESH_WORKERS>1` 会被忽略并打警告，实际仍按 1 个 worker 运行（多 worker 待设计，见 [known-issues.md](./known-issues.md) §1）。
 > 使用 PostgreSQL：`AGENT_MESH_DB_TYPE=pg AGENT_MESH_PG_DSN='postgresql://user:pass@host/db'`（统一连接层 `store/connection/` 按进程惰性建 asyncpg 池）。
@@ -271,7 +269,7 @@ curl -s -H "Authorization: Bearer <agent-token>" \
   http://127.0.0.1:8000/api/skills/my-skill/download -o my-skill.zip
 ```
 
-边沿执行 llm 任务时，提示词中会注入技能库使用指引（引用 `$EDGE_TOKEN`/`$ORCHESTRATOR_URL` 环境变量，token 不会明文进入提示词），由 opencode agent **自主决定**是否浏览摘要、下载并解压 `SKILL.md` 使用。技能内容仅通过下载接口按需下发，摘要接口永不暴露正文。
+**在任务中使用技能**：`POST /api/tasks/dispatch` 传 `skills: ["<name>", ...]`。服务端会校验每个名字存在且 `enabled`，否则返回 `400`；边沿执行 `llm` 任务时会拉取这些技能并把 `SKILL.md` 注入任务提示（需节点为支持该特性的版本）。未指定 `skills` 时，提示词仍带通用技能库指引，由节点 LLM 自主决定是否取用。技能内容仅通过下载接口按需下发，摘要接口永不暴露正文。
 
 ## 文件库（任务附件）
 
@@ -322,7 +320,7 @@ curl -s -X POST http://127.0.0.1:8000/api/schedules \
 ### 自升级
 
 - **自动升级（默认开启）**：orchestrator 构建/更新了新版安装包后，版本低于最新包的节点会在空闲时自动升级，无需逐个操作。配置页可关闭（`auto_upgrade=0`）。
-- **手动升级**：在 orchestrator 上先构建/更新安装包并发布到 `/opt/agent-mesh/data/bootstrap/`（`BUILD_PROBE=1 ./deploy/redeploy.sh`，或手动跑 `scripts/build-agent-bootstrap.py --output-dir /opt/agent-mesh/data/bootstrap`），然后节点页点「升级」或：
+- **手动升级**：先构建/更新安装包并发布到 `/opt/agent-mesh/data/bootstrap/`（在 `agent-mesh-edge` 仓库构建，或 `POST /api/bootstrap/sync` 从 Release 同步），然后节点页点「升级」或：
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/api/agents/1/upgrade \

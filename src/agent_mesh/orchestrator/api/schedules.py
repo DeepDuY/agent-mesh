@@ -170,6 +170,9 @@ def mount_schedule_routes(
             raise HTTPException(status_code=409, detail="schedule name already exists")
         _validate_cron_or_400(payload.cron)
         await _validate_target(payload, None, user)
+        skills_error = await store.validate_skills(payload.skills)
+        if skills_error:
+            raise HTTPException(status_code=400, detail=skills_error)
         if store.is_admin(user):
             owner_user_id, owner_team_id = payload.owner_user_id, payload.owner_team_id
         else:
@@ -230,6 +233,10 @@ def mount_schedule_routes(
             _validate_cron_or_400(fields["cron"])
         if any(k in fields for k in ("agent_id", "mode", "model")):
             await _validate_target(payload, schedule, user)
+        if fields.get("skills"):
+            skills_error = await store.validate_skills(fields["skills"])
+            if skills_error:
+                raise HTTPException(status_code=400, detail=skills_error)
 
         # Map request fields onto stored columns / constraints.
         update: dict[str, Any] = {}
