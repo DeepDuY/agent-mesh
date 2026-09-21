@@ -32,7 +32,7 @@ sudo ./deploy/install.sh --opencode /path/opencode  # 指定本机 opencode（�
 ## 核心特性
 
 - 主 Agent 通过 **REST API** 控制 orchestrator
-- **单进程架构**：FastAPI（:8000）与后台 sweeper 同一事件循环；`AGENT_MESH_WORKERS` 为预留项，当前不生效（见 docs/known-issues.md）
+- **单进程架构**：FastAPI（:8000）与后台 sweeper 同一事件循环；`AGENT_MESH_WORKERS>1` 被忽略，始终按单进程运行（见 docs/known-issues.md）
 - **存储层可插拔**：默认 SQLite（WAL 模式），可选 PostgreSQL（`AGENT_MESH_DB_TYPE=pg`）
 - 边沿 Agent 通过 **REST** 心跳拉取任务、提交结果
 - 任务双模式：`command`（shell 原样执行，不走 LLM）和 `llm`（opencode 自然语言任务）
@@ -87,7 +87,7 @@ uv sync
 默认监听：
 - REST/Web：`http://0.0.0.0:8000`
 
-> 当前为**单进程**运行：`AGENT_MESH_WORKERS>1` 不生效（`uvicorn.Server.serve()` 忽略 `workers`），多 worker 待修复。
+> 当前只支持**单进程**运行：`AGENT_MESH_WORKERS>1` 会被忽略并打警告，实际仍按 1 个 worker 运行（多 worker 待设计，见 docs/known-issues.md §1）。
 > 使用 PostgreSQL：`AGENT_MESH_DB_TYPE=pg AGENT_MESH_PG_DSN='postgresql://user:pass@host/db'`（统一连接层 `store/connection/` 按进程惰性建 asyncpg 池）。
 > ⚠️ 一律用 `uv run --no-sync`：直接 `uv run` 会重新解析依赖并尝试源码编译 `asyncpg`，在旧 glibc（<2.28）上会失败。
 
@@ -328,7 +328,7 @@ agent-mesh/
 | `AGENT_MESH_PORT` | `8000` | REST/Web 端口 |
 | `AGENT_MESH_TOKEN` | 空（生产必设） | 全局 Edge token；空值禁用 global 身份 |
 | `AGENT_MESH_PUBLIC_URL` | - | 对外 URL（用于 Agent 安装脚本） |
-| `AGENT_MESH_WORKERS` | `cpu 核数` | 预留；当前不生效（实际单进程） |
+| `AGENT_MESH_WORKERS` | `1` | 仅支持 `1`；`>1` 被忽略并打警告，始终单进程运行 |
 | `AGENT_MESH_DB_TYPE` | `sqlite` | 存储后端：`sqlite` / `pg` |
 | `AGENT_MESH_DB_PATH` | `./data/agent-mesh.db` | SQLite 路径 |
 | `AGENT_MESH_PG_DSN` | - | PostgreSQL DSN（db_type=pg 时） |

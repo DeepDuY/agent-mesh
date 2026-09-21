@@ -88,7 +88,7 @@ $env:TOKEN='<token>'; irm -Headers @{Authorization="Bearer <token>"} <public_url
 | `AGENT_MESH_PORT` | `8000` | 监听端口 |
 | `AGENT_MESH_TOKEN` | `""`（**生产必设**） | 全局 token；空值时禁用 global 身份（仅 user/agent token 可用），启动打印告警 |
 | `AGENT_MESH_PUBLIC_URL` | `""` | 对外 URL（安装脚本用，可留空） |
-| `AGENT_MESH_WORKERS` | `os.cpu_count()` | 预留；当前**不生效**（`uvicorn.Server.serve()` 忽略 `workers`，实际始终单进程） |
+| `AGENT_MESH_WORKERS` | `1` | 仅支持 `1`；`>1` 被忽略并打警告，始终单进程运行 |
 | `AGENT_MESH_DB_TYPE` | `sqlite` | 存储后端：`sqlite`（默认）或 `pg` |
 | `AGENT_MESH_DB_PATH` | `./data/agent-mesh.db` | SQLite 路径 |
 | `AGENT_MESH_PG_DSN` | `""` | PostgreSQL DSN（`db_type=pg` 时优先，如 `postgresql://u:p@host/db`） |
@@ -149,7 +149,7 @@ EDGE_AGENT_ID=client EDGE_ORCHESTRATOR_URL=http://127.0.0.1:8000 \
   uv run python -m agent_mesh.edge.agent
 ```
 
-**生产部署**：`deploy/install.sh` 只安装 **orchestrator** 到 `/opt/agent-mesh`（systemd 管理 `agent-mesh-orchestrator`）。⚠️ 服务日志走 systemd journal（`journalctl -u agent-mesh-orchestrator`），**不会**写入 `log/orchestrator.log`（见 [known-issues.md §13](./known-issues.md)）。**edge 探针不经此脚本安装**——单独在目标机器上用 bootstrap（`GET /api/bootstrap/install.sh`）安装到 `/opt/agent-mesh-agent`。
+**生产部署**：`deploy/install.sh` 只安装 **orchestrator** 到 `/opt/agent-mesh`（systemd 管理 `agent-mesh-orchestrator`）。⚠️ 服务日志走 systemd journal（`journalctl -u agent-mesh-orchestrator`；`./deploy/status.sh` 已改从 journal 读取），**不会**写入 `log/orchestrator.log`。**edge 探针不经此脚本安装**——单独在目标机器上用 bootstrap（`GET /api/bootstrap/install.sh`）安装到 `/opt/agent-mesh-agent`。
 
 **Web 看板**：`http://<host>:8000/`
 

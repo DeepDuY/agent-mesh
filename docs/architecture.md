@@ -46,9 +46,9 @@
 
 ### 1.3 运行模式（单进程）
 
-`orchestrator/main.py:main()` 当前**实际以单进程**运行：同一 asyncio 事件循环承载 uvicorn 与后台清扫器（`store.start_sweepers()`）。注意 `config.workers` 默认值为 `os.cpu_count()`，因此默认会走 `_run_multi_process()` 分支，但 uvicorn 仍只起 1 个进程（见下）。
+`orchestrator/main.py:main()` **只以单进程**运行：同一 asyncio 事件循环承载 uvicorn 与后台清扫器（`store.start_sweepers()`）。`config.workers` 默认 `1`，因此默认走 `_run_single_process()`。
 
-> ⚠️ `AGENT_MESH_WORKERS>1` 目前**不生效**：`main.py` 使用 `uvicorn.Config(workers=N)` 配合 `uvicorn.Server(config).serve()`，而该版本 uvicorn 的 `Server.serve()` 忽略 `workers`，实际只启动 1 个 server 进程。多 worker 需改用 import-string + `uvicorn.run`（或 supervisor），属架构改造，见 [known-issues.md §1](./known-issues.md)。
+> ⚠️ `AGENT_MESH_WORKERS>1` **会被忽略**：`_resolve_workers()` 检测到 `>1` 时打印警告并返回 `1`，服务仍以单进程启动。多 worker 需改用 import-string + `uvicorn.run`（或 supervisor）、把实时推送换成 PG `LISTEN/NOTIFY` 总线、并把 heartbeat 容量检查原子化，属架构改造，见 [known-issues.md §1](./known-issues.md)。
 
 ## 2. 目录结构
 

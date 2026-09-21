@@ -22,7 +22,7 @@
 构建一个通用的多 Agent 远程协同执行框架：
 
 - **主 Agent（外部进程）**：你自己的 LLM Agent（DeepChat、OpenCode、Claude 等）。用自然语言"帮我在那台机器跑个测试"，主 Agent 通过 REST（:8000）调用 orchestrator 完成派发与查询。
-- **orchestrator（独立调度器/Broker，单进程）**：持有任务队列、维护边沿节点心跳状态、持久化到 SQLite/PostgreSQL。当前以单进程运行（FastAPI :8000 与后台清扫器同一事件循环）；`AGENT_MESH_WORKERS>1` 目前**不生效**（uvicorn `Server.serve()` 忽略 `workers`，多 worker 启动尚待修复，见 [known-issues.md](./known-issues.md)）。
+- **orchestrator（独立调度器/Broker，单进程）**：持有任务队列、维护边沿节点心跳状态、持久化到 SQLite/PostgreSQL。当前以单进程运行（FastAPI :8000 与后台清扫器同一事件循环）；`AGENT_MESH_WORKERS>1` 会被忽略并按单进程运行（多 worker 待设计，见 [known-issues.md](./known-issues.md)）。
   - **FastAPI（:8000）**：REST 查询/管理接口 `/api/*` + 边沿 REST 协议 `/api/edge/*` + Web 看板 `/` + `/static`。
 - **边沿 Agent（每台远端机器一个守护进程）**：循环 HTTP 心跳拉取任务，调用本机已安装的 **opencode**（或 `claude`）执行任务，上传产物、回报结果。
 - **Web 浏览器（可选）**：静态页面，每 5 秒轮询 REST 接口展示节点/任务/配置。

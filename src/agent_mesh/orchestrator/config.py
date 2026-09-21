@@ -43,10 +43,13 @@ class OrchestratorConfig(BaseSettings):
     token: str = ""
     public_url: str = ""
 
-    # Multi-process
+    # Worker count. Only single-process is supported today; values >1 are
+    # ignored and the server still runs one process (multi-worker needs a
+    # shared realtime bus and atomic capacity checks, see docs/known-issues.md).
     workers: int = Field(
-        default_factory=lambda: os.cpu_count() or 1,
-        description="uvicorn worker count. 1=single-process, >1=multi-worker",
+        default=1,
+        description="uvicorn worker count. Only 1 is supported; >1 is ignored "
+        "(runs single-process).",
     )
 
     # Database type

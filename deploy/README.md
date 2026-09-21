@@ -39,7 +39,7 @@ cd <repo>
 └── log/                          # 预留；服务日志实际走 systemd journal
 ```
 
-> 服务日志走 systemd journal（`journalctl -u agent-mesh-orchestrator`），不会写入 `log/orchestrator.log`；`./deploy/status.sh` 对该文件的 tail 通常为空（见 `docs/known-issues.md`）。
+> 服务日志走 systemd journal（`journalctl -u agent-mesh-orchestrator`）；`./deploy/status.sh` 直接从 journal 读取最近日志（无 unit/日志不可用时回退到 `log/*.log` 文件）。
 
 ## 服务管理
 

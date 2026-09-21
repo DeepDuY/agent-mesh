@@ -55,7 +55,7 @@ main()
        └─ store.start_sweepers() → uvicorn.run(app, :8000)
 ```
 
-> 说明：`AGENT_MESH_WORKERS>1` 目前不生效（`uvicorn.Server.serve()` 忽略 `workers`），实际始终单进程；多 worker 待修复，见 [architecture.md §1.3](./architecture.md#13-运行模式单进程)。
+> 说明：`AGENT_MESH_WORKERS>1` 被忽略（`_resolve_workers()` 打警告并强制单进程），实际始终单进程；多 worker 待设计，见 [architecture.md §1.3](./architecture.md#13-运行模式单进程)。
 
 ### 1.4 边沿 Agent 启动与心跳循环时序
 

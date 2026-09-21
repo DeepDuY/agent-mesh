@@ -121,12 +121,30 @@ def _build_store(config: OrchestratorConfig) -> tuple[TaskStore, Any]:
     return store, store_backend
 
 
+def _resolve_workers(config: OrchestratorConfig) -> int:
+    """Return the effective worker count. Only single-process is supported.
+
+    ``AGENT_MESH_WORKERS>1`` is accepted for forward compatibility but does not
+    start multiple processes: the in-process realtime hub and the non-atomic
+    heartbeat capacity check are unsafe under multiple workers (see
+    docs/known-issues.md §1/§2). A warning is logged and 1 is returned.
+    """
+    if config.workers > 1:
+        logger.warning(
+            "AGENT_MESH_WORKERS=%d is ignored: only single-process is supported, "
+            "running 1 worker (see docs/known-issues.md)",
+            config.workers,
+        )
+    return 1
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     config = OrchestratorConfig()
+    _resolve_workers(config)
     if not config.token:
         logger.warning(
             "AGENT_MESH_TOKEN is not set: the global edge token is disabled. "
@@ -139,35 +157,7 @@ def main() -> None:
 
     asyncio.run(_init())
 
-    if config.workers > 1:
-        _run_multi_process(config, store, store_backend)
-    else:
-        _run_single_process(config, store)
-
-
-def _run_multi_process(config, store, store_backend):
-    """Multi-worker mode: the main process owns the sweepers; uvicorn workers
-    serve HTTP only."""
-    import uvicorn
-
-    async def _main_loop():
-        await store.start_sweepers()
-        app, _, _ = create_app(config, store, start_sweepers=False)
-        server_config = uvicorn.Config(
-            app,
-            host=config.host,
-            port=config.port,
-            workers=config.workers,
-            log_level="info",
-        )
-        server = uvicorn.Server(server_config)
-        try:
-            await server.serve()
-        finally:
-            await store.stop_sweepers()
-            await store_backend.close()
-
-    asyncio.run(_main_loop())
+    _run_single_process(config, store)
 
 
 def _run_single_process(config, store):

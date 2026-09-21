@@ -12,7 +12,7 @@
   - FastAPI：`title="agent-mesh-orchestrator"`、`version="1.0.0"`、`redirect_slashes=False`。
   - 挂载：`query_router`（`create_query_router(config, store, artifact_store)`，前缀 `/api`）、`/static`、`/` → `index.html`。
   - `lifespan`：启动时初始化后端 + `store.start_sweepers()`；退出时 `stop_sweepers()` + 关闭后端。
-- `main()`：初始化后端后启动 uvicorn（:8000，REST/Web）+ 后台清扫器。`config.workers` 默认 `os.cpu_count()`，因此默认走 `_run_multi_process()` 分支，但 `uvicorn.Server.serve()` 忽略 `workers`，**实际始终单进程**，`AGENT_MESH_WORKERS>1` 不生效（见 [architecture.md §1.3](./architecture.md#13-运行模式单进程)）。原 MCP 通道（`mcp_server.py`、SSE :8001、`mcp` 依赖）已整体移除。
+- `main()`：初始化后端后启动 uvicorn（:8000，REST/Web）+ 后台清扫器。`config.workers` 默认 `1`，始终走 `_run_single_process()`；`AGENT_MESH_WORKERS>1` 被 `_resolve_workers()` 忽略（打警告）并强制单进程（见 [architecture.md §1.3](./architecture.md#13-运行模式单进程)）。原 MCP 通道（`mcp_server.py`、SSE :8001、`mcp` 依赖）已整体移除。
 
 ### 1.2 task_store.py：状态机 + 心跳注册 + 清扫
 

@@ -27,6 +27,9 @@ class SQLiteDatabase(Database):
         self._execute_sync("PRAGMA journal_mode=WAL")
         self._execute_sync("PRAGMA busy_timeout=5000")
         await self._run_migrations()
+        # Drop the legacy global prompt (superseded by node/template prompts).
+        # Mirrors Postgres `ensure_settings`; idempotent, cleans old/hand-edited DBs.
+        await self.execute("DELETE FROM settings WHERE key = 'system_prompt'")
         await self._ensure_default_templates()
         await self._ensure_session_secret()
         await self._ensure_admin_user()
