@@ -13,6 +13,7 @@
 | [auth-security.md](./auth-security.md) | 认证与安全、agent 独立 token、自升级、LLM 配置同步 |
 | [features.md](./features.md) | LLM 会话复用、技能库、资源指标 |
 | [deployment.md](./deployment.md) | 一键安装（bootstrap）、配置项、启动与部署 |
+| [reference.md](./reference.md) | 环境变量、REST 接口清单与使用示例 |
 | [known-issues.md](./known-issues.md) | 已知问题与后续演进 |
 | [standards/edge-reporting.md](./standards/edge-reporting.md) | **标准**：边沿 Agent 上报接口规范与字段治理（新增字段流程） |
 | [standards/ui-copy.md](./standards/ui-copy.md) | **标准**：Web 看板文案规范（禁止在前端展示功能设计/内部机制） |
@@ -38,7 +39,7 @@
 必须同步更新：
 
 1. `skills/agent-mesh/SKILL.md` 及其 `references/*.md` —— 主 Agent 使用指南（索引、场景速查、端点表、派发参数、示例）；
-2. 本文档体系：`protocol.md`（接口清单）→ `features.md`（功能说明）→ `orchestrator.md`（数据模型/迁移）→ 根目录 `README.md`（对外文档）；
+2. 本文档体系：`protocol.md`（接口清单）→ `features.md`（功能说明）→ `orchestrator.md`（数据模型/迁移）→ `reference.md`（环境变量与接口参考）；
 3. 涉及边沿上报字段时按 [standards/edge-reporting.md §5](./standards/edge-reporting.md#5-新增上报字段标准-7-步流程) 走注册表流程；
 4. 涉及探针行为（如附件下载/校验）时同步更新 `task-and-execution.md`。
 
