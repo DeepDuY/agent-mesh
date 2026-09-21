@@ -196,6 +196,66 @@ class AbstractStore(abc.ABC):
     async def delete_template(self, template_id: int) -> bool: ...
 
     # ------------------------------------------------------------------
+    # Schedules (cron-triggered tasks)
+    # ------------------------------------------------------------------
+    @abc.abstractmethod
+    async def create_schedule(
+        self,
+        *,
+        name: str,
+        cron: str,
+        agent_ref: str,
+        instruction: str,
+        mode: str = "llm",
+        enabled: bool = True,
+        timezone: str | None = None,
+        constraints: dict[str, Any] | None = None,
+        attachments: list[str] | None = None,
+        user_id: str | None = None,
+        team_id: str | None = None,
+        created_by: str | None = None,
+        next_run_at: datetime | None = None,
+    ) -> int: ...
+
+    @abc.abstractmethod
+    async def get_schedule(self, schedule_id: int) -> dict[str, Any] | None: ...
+
+    @abc.abstractmethod
+    async def get_schedule_by_name(self, name: str) -> dict[str, Any] | None: ...
+
+    @abc.abstractmethod
+    async def list_schedules(self) -> list[dict[str, Any]]: ...
+
+    @abc.abstractmethod
+    async def update_schedule(self, schedule_id: int, **fields: Any) -> bool: ...
+
+    @abc.abstractmethod
+    async def delete_schedule(self, schedule_id: int) -> bool: ...
+
+    @abc.abstractmethod
+    async def list_due_schedules(
+        self, now: datetime, limit: int = 100
+    ) -> list[dict[str, Any]]: ...
+
+    @abc.abstractmethod
+    async def claim_schedule(
+        self,
+        schedule_id: int,
+        expected_next: datetime | None,
+        new_next: datetime | None,
+    ) -> bool: ...
+
+    @abc.abstractmethod
+    async def record_schedule_run(
+        self,
+        schedule_id: int,
+        *,
+        last_run_at: datetime,
+        last_task_id: str | None,
+        last_status: str,
+    ) -> None: ...
+
+    # ------------------------------------------------------------------
     # Skills library
     # ------------------------------------------------------------------
     @abc.abstractmethod

@@ -7,6 +7,7 @@ from typing import Any
 
 from agent_mesh.orchestrator.permissions import PermissionMixin
 from agent_mesh.orchestrator.realtime import publish
+from agent_mesh.orchestrator.scheduler import SchedulerMixin
 from agent_mesh.orchestrator.store.base import AbstractStore, _new_task_id
 from agent_mesh.orchestrator.sweeper import SweeperMixin
 from agent_mesh.orchestrator.tenancy import TenancyMixin
@@ -27,7 +28,7 @@ from agent_mesh.shared.schemas import (
 logger = logging.getLogger(__name__)
 
 
-class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin):
+class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin, SchedulerMixin):
     """Task store + state machine + heartbeat registry backed by an AbstractStore.
 
     Split across mixins:
@@ -35,6 +36,7 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin):
     * :class:`~agent_mesh.orchestrator.tenancy.TenancyMixin` -- ACL/task visibility
     * :class:`~agent_mesh.orchestrator.permissions.PermissionMixin` -- model/permission/config
     * :class:`~agent_mesh.orchestrator.sweeper.SweeperMixin` -- timeout/offline scans
+    * :class:`~agent_mesh.orchestrator.scheduler.SchedulerMixin` -- cron schedules
     """
 
     def __init__(

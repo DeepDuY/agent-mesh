@@ -129,6 +129,7 @@ def create_query_router(
     from agent_mesh.orchestrator.api.edge import mount_edge_routes
     from agent_mesh.orchestrator.api.files import mount_file_routes
     from agent_mesh.orchestrator.api.realtime import mount_realtime_routes
+    from agent_mesh.orchestrator.api.schedules import mount_schedule_routes
     from agent_mesh.orchestrator.api.skills import mount_skill_routes
     from agent_mesh.orchestrator.api.tasks import mount_task_routes
     from agent_mesh.orchestrator.api.teams import mount_team_routes
@@ -144,6 +145,7 @@ def create_query_router(
     mount_skill_routes(router, store, config, require_user_token, require_any_token)
     mount_template_routes(router, store, require_ui_user)
     mount_team_routes(router, store, require_admin)
+    mount_schedule_routes(router, store, require_user_token)
     mount_realtime_routes(router, require_any_token)
 
     return router

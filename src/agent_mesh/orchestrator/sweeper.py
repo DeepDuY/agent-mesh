@@ -24,6 +24,8 @@ class SweeperMixin:
         self._stop_event.clear()
         asyncio.create_task(self._sweep_timeouts())
         asyncio.create_task(self._sweep_offline())
+        # Cron schedules (SchedulerMixin); single-process only.
+        asyncio.create_task(self._sweep_schedules())
 
     async def stop_sweepers(self) -> None:
         self._stop_event.set()

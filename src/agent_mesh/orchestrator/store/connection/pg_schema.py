@@ -165,6 +165,29 @@ async def create_schema(conn: Any) -> None:
             created_at TIMESTAMP DEFAULT NOW()
         );
         CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs(task_id, id);
+
+        CREATE TABLE IF NOT EXISTS schedules (
+            id SERIAL PRIMARY KEY,
+            name TEXT UNIQUE NOT NULL,
+            cron TEXT NOT NULL,
+            timezone TEXT,
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            agent_ref TEXT NOT NULL,
+            mode TEXT NOT NULL DEFAULT 'llm',
+            instruction TEXT NOT NULL,
+            constraints JSONB,
+            attachments JSONB,
+            user_id TEXT,
+            team_id TEXT,
+            created_by TEXT,
+            next_run_at TIMESTAMP,
+            last_run_at TIMESTAMP,
+            last_task_id TEXT,
+            last_status TEXT,
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(enabled, next_run_at);
     """)
 
 
@@ -188,6 +211,8 @@ async def ensure_settings(conn: Any) -> None:
         ("bootstrap_download_base", ""),
         ("probe_release_repo", "DeepDuY/agent-mesh-edge"),
         ("probe_release_token", ""),
+        # Scheduled-task timezone (empty = system timezone).
+        ("schedule_timezone", ""),
     ):
         await conn.execute(
             "INSERT INTO settings (key, value) VALUES ($1, $2) "
