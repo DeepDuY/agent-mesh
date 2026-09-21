@@ -50,7 +50,11 @@ if (sessionStorage.getItem('agent_mesh_expired')) {
   if (errEl) errEl.textContent = '登录已过期，请重新登录';
 }
 
-if (TOKEN && localStorage.getItem('agent_mesh_user')) showApp();
+// Defer the first render until every page script has run (loadAll() calls
+// loaders that are defined in later <script> files).
+if (TOKEN && localStorage.getItem('agent_mesh_user')) {
+  window.addEventListener('DOMContentLoaded', showApp);
+}
 
 function isAdmin() {
   return USER_ROLE === 'admin';
@@ -180,7 +184,7 @@ function resumeRefresh() {
 
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
-  ['agents', 'tasks', 'files', 'skills', 'templates', 'users', 'teams', 'config'].forEach(n => {
+  ['agents', 'tasks', 'files', 'skills', 'schedules', 'templates', 'users', 'teams', 'config'].forEach(n => {
     document.getElementById(`tab-${n}`).classList.toggle('hidden', n !== name);
   });
   // Load the config once on entry (the periodic refresh is paused here).
@@ -204,7 +208,7 @@ async function loadAll() {
   if (_loadAllInFlight) return;
   _loadAllInFlight = true;
   try {
-    await Promise.all([loadAgents(), loadTasks(), loadFiles(), loadSkills(), loadTemplates(), loadConfig(), loadProfile()]);
+    await Promise.all([loadAgents(), loadTasks(), loadFiles(), loadSkills(), loadSchedules(), loadTemplates(), loadConfig(), loadProfile()]);
     if (isAdmin()) { await loadUsers(); await loadTeams(); }
   } finally {
     _loadAllInFlight = false;

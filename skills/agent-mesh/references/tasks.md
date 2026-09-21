@@ -36,7 +36,7 @@ curl -s -X POST "$AGENT_MESH_BASE_URL/tasks/dispatch" \
 | `timeout_s` | 超时秒数，默认 300；超时任务置 `timed_out` |
 | `model` | 仅 llm：指定模型，须命中可用模型列表；不填用节点/模板/全局默认 |
 | `max_retries` | 超时后自动重试次数 |
-| `depends_on` | 依赖的任务 id 列表（当前仅校验存在，不阻塞执行） |
+| `depends_on` | 依赖的任务 id 列表。依赖全部 `completed` 后才派发；任一依赖失败/终止会**级联取消**本任务（摘要与事件记录原因）；派发时校验依赖存在与环 |
 | `session_id` | 仅 llm：续用上一个 llm 任务的会话 |
 | `attachments` | 文件库 file_id 列表，见 [files.md](files.md) |
 | `skills` | 提示该任务可参考的技能名（预留） |

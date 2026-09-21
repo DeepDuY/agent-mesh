@@ -24,6 +24,7 @@ agent-mesh 让**你（主 Agent）**把工作委派给远程**边缘节点**执�
 | 「任务跑到哪了」「把输出实时给我看」 | 轮询任务状态、增量拉取实时日志 | [references/tasks.md](references/tasks.md) |
 | 「把那个任务停了」 | 取消排队中/执行中的任务（杀掉远程进程组） | [references/tasks.md](references/tasks.md) |
 | 「查一下之前那个任务」「看看谁在什么时候改过」 | 任务列表/搜索/审计事件 | [references/tasks.md](references/tasks.md) |
+| 「每天/每小时自动跑一次」「定时巡检/日报」 | 建 cron 定时任务，到点自动派发（命令或 LLM） | [references/schedules.md](references/schedules.md) |
 | 「让远程 LLM 按某个规范/流程干活」 | 浏览/下载技能，让任务里的 LLM 自主取用 | [references/skills.md](references/skills.md) |
 | 「报错了 / 401 / 一直排队」 | 故障定位与处理 | [references/troubleshooting.md](references/troubleshooting.md) |
 
@@ -59,6 +60,7 @@ set -a; . ./.env; set +a      # 在本 SKILL 目录下执行
 - [references/auth.md](references/auth.md) — 地址、token、401 处理、安全
 - [references/nodes.md](references/nodes.md) — 选节点、节点详情（只读）
 - [references/tasks.md](references/tasks.md) — 派发、监控、取消、审计、完整流程
+- [references/schedules.md](references/schedules.md) — 定时任务（cron 周期派发）
 - [references/files.md](references/files.md) — 上传附件、下载产物、文件库管理
 - [references/skills.md](references/skills.md) — 技能浏览与下载
 - [references/troubleshooting.md](references/troubleshooting.md) — 故障速查

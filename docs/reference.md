@@ -158,6 +158,8 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/
 > **上传大小限制是运行时可调设置**（不是环境变量）：文件库单文件 `file_max_size_mb`、产物单文件 `artifact_max_size_mb`、单任务产物总量 `artifact_task_total_mb`、产物全库总量 `artifact_total_mb`、超出全库时回收最旧 `artifact_evict_oldest`、产物传输超时 `artifact_timeout_s`。在「配置 → 上传大小限制」或 `PATCH /api/settings` 调整；默认 100/100/100/200/开/300s。其中 `artifact_timeout_s` 随心跳下发给探针（探针上传用），页面下载产物也按此超时。
 >
 > `max_concurrent`（每节点并发任务数，默认 2）同样不是环境变量，而是运行时可调设置（配置页或 `PATCH /api/settings`），随心跳下发到在线节点。
+>
+> `schedule_timezone`（定时任务 cron 求值所用时区，IANA 名，默认空 = 系统时区）也是运行时可调设置；定时任务可在自身 `timezone` 字段覆盖。
 
 ### edge agent
 
@@ -291,6 +293,29 @@ curl -s -X POST http://127.0.0.1:8000/api/tasks/dispatch \
 - 附件以原文件名写入工作目录；llm 模式提示词会提示"工作目录可能已放入附件"。
 - 文件库独立于任务，可在 Web 看板「文件」页管理（上传/下载/删除）；删除不校验引用，被删文件的任务执行时会因下载失败而标记失败。
 - 最新版 agent-mesh 使用指南可从看板右上角用户菜单「个人中心」（或 `GET /api/skill-pack/agent-mesh`）下载为 `agent-mesh.zip`：含 SKILL.md 索引与 `references/`（示例中的公开地址已自动填充），以及写有你用户 token 的 `.env`。解压后放进主 Agent 的 skills 目录即可。
+
+## 定时任务（cron 调度）
+
+服务端**进程内调度器**按 cron 表达式周期派发任务（单进程；错过不补跑；上一轮任务未结束则跳过本轮）。
+
+- cron 为 5 段（分 时 日 月 周），支持 `*`、`a`、`a-b`、`a,b`、`*/n`；周字段 0/7 均为周日；日/周同时限定时按 Vixie 语义取「或」。
+- 求值时区：任务自身 `timezone` > 设置 `schedule_timezone` > 系统时区；`next_run_at` 以 UTC 存储。非法 cron 会停用该任务并记录原因。
+- 可见性同任务：自己 + 团队，admin 全部。
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/schedules` | 新建（`name`/`cron`/`agent_id`/`mode`/`instruction`；可选 `timezone`/`timeout_s`/`model`/`enabled`/`attachments`） |
+| GET | `/api/schedules` | 列表（owner 可见） |
+| GET | `/api/schedules/{id}` | 详情 |
+| PATCH | `/api/schedules/{id}` | 更新（改 cron/时区/启停会重算下次运行） |
+| DELETE | `/api/schedules/{id}` | 删除 |
+| POST | `/api/schedules/{id}/run` | 立即运行一次（不影响下次运行） |
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/schedules \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"nightly","cron":"0 3 * * *","agent_id":1,"mode":"command","instruction":"echo hi"}'
+```
 
 ## 自升级与 LLM 配置同步
 

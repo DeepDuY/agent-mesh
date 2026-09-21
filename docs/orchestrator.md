@@ -16,11 +16,12 @@
 
 ### 1.2 task_store.py：状态机 + 心跳注册 + 清扫
 
-`TaskStore` 由核心 + 三个 mixin 组成（按职责拆分）：
+`TaskStore` 由核心 + 四个 mixin 组成（按职责拆分）：
 - `task_store.py`：核心（`__init__`、读助手、`dispatch`、`_resolve_agent`、`heartbeat`、`mark_started`/`submit_result`/`cancel_task`、`max_concurrent`）。
 - `tenancy.py`：`TenancyMixin`（节点 ACL、任务可见性、edge 身份校验：`can_access_agent`/`can_see_task`/`edge_can_access_task` 等）。
 - `permissions.py`：`PermissionMixin`（模型解析/校验、`effective_permission`/`check_command_permission`、agent token、`bump_config_version`）。
-- `sweeper.py`：`SweeperMixin`（`_sweep_timeouts`/`_sweep_offline`）。
+- `sweeper.py`：`SweeperMixin`（`_sweep_timeouts`/`_sweep_offline`，`start_sweepers()` 同时拉起下面的调度循环）。
+- `scheduler.py`：`SchedulerMixin`（cron 定时任务，见 §1.2.1）。
 
 - `dispatch()`：
   1. 校验 `mode ∈ {command, llm}`；
@@ -34,6 +35,16 @@
 - `submit_result()`：仅 `assigned/working` 接受；写 `task_results`、状态置 `result.status`、`finished_at`、清 `current_task`。
 - `cancel_task()`：仅非终态任务可取消——`queued` 先 `remove_from_queue()`；`assigned/working` 直接置 `cancelled`。取消后边沿 agent 的下一次 cancel 轮询会终止正在执行的子进程。
 - **并发模型**：TaskStore 本身不加锁（原 `asyncio.Lock` 已删除）；并发正确性依赖后端存储的原子操作——SQLite 每次操作持自身 `asyncio.Lock`，`dequeue` 在锁内完成"取队首+删行"。`update_task_status(..., expected_status=...)` 支持原子条件更新（追加 `WHERE status = <expected>`），用于需要"仅在当前状态为 X 时才迁移"的场景（如超时清扫，见 §1.3）。
+
+#### 1.2.1 定时任务（`scheduler.py`）
+
+`SchedulerMixin` 在单进程内按 `_schedule_tick_s`（默认 20s）扫描 `schedules` 表，由 `start_sweepers()` 一并启动。
+
+- **到期与认领**：每轮取 `enabled AND next_run_at <= now` 的记录；先算 `next_run_at`（以原到期时间为锚，保持节拍；若已过期则改以 `now` 为锚，**错过不补跑**），再用 `claim_schedule` 原子推进（`WHERE next_run_at = <expected>`），保证同一任务不会被重复派发。
+- **重叠**：上一轮任务仍处于 `queued/assigned/working` 时跳过本轮，`last_status=skipped`。
+- **派发**：`run_schedule()` 复用 `dispatch()`；command 模式先做服务端权限预检（拒绝则记 `denied` 任务），llm 模式校验模型；写 `scheduled` 事件与 `last_run_at/last_task_id/last_status`。
+- **cron/时区**：`cron.py` 内置 5 段解析（无外部依赖），支持 `* a,b a-b */n`，日/周采用 Vixie「或」语义；时区取任务 `timezone` > `settings.schedule_timezone` > 系统时区，`next_run_at` 以 UTC 存储。非法 cron 会停用该任务并记录原因。
+- 仅单进程有效（多 worker 未支持，见 [known-issues.md](./known-issues.md)）；接口与页面见 [reference.md](./reference.md#定时任务cron-调度)。
 
 ### 1.3 后台清扫协程（每 `sweep_interval_s` 一轮）
 

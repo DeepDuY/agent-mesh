@@ -48,6 +48,7 @@
       <div class="tab" data-tab="tasks" onclick="switchTab('tasks')">任务</div>
       <div class="tab" data-tab="files" onclick="switchTab('files')">文件</div>
       <div class="tab" data-tab="skills" onclick="switchTab('skills')">技能</div>
+      <div class="tab" data-tab="schedules" onclick="switchTab('schedules')">定时</div>
       <div class="tab admin-only hidden" data-tab="templates" onclick="switchTab('templates')">模板</div>
       <div class="tab admin-only hidden" data-tab="users" onclick="switchTab('users')">用户</div>
       <div class="tab admin-only hidden" data-tab="teams" onclick="switchTab('teams')">团队</div>
@@ -194,6 +195,21 @@
             <tbody id="skills-body"><tr><td colspan="5" class="empty">加载中...</td></tr></tbody>
           </table>
           <div id="skill-upload-status" class="status-msg"></div>
+        </div>
+      </section>
+
+      <section id="tab-schedules" class="tab-panel hidden">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>定时任务</h2>
+            <button class="btn btn-success" onclick="openScheduleModal()">+ 新建定时任务</button>
+          </div>
+          <table>
+            <thead><tr><th>名称</th><th>Cron</th><th>时区</th><th>节点</th><th>模式</th><th>指令</th><th>状态</th><th>下次运行</th><th>上次运行</th><th>操作</th></tr></thead>
+            <tbody id="schedules-body"><tr><td colspan="10" class="empty">加载中...</td></tr></tbody>
+          </table>
+          <div id="schedules-status" class="status-msg"></div>
+          <p class="refresh-hint">每 5 秒自动刷新</p>
         </div>
       </section>
 
@@ -507,6 +523,59 @@
     </div>
   </div>
 
+  <div id="schedule-modal" class="modal hidden" onclick="onScheduleBackdrop(event)">
+    <div class="modal-content" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h2 id="schedule-modal-title">新建定时任务</h2>
+        <span class="close" onclick="closeScheduleModal()">&times;</span>
+      </div>
+      <input id="sch-id" type="hidden">
+      <div class="form-group">
+        <label>名称（字母/数字/._-）</label>
+        <input id="sch-name" type="text" placeholder="例如：每日巡检">
+      </div>
+      <div class="form-group">
+        <label>Cron（分 时 日 月 周，5 段） <span class="help" data-tip="例如 0 3 * * * 表示每天 03:00；*/15 * * * * 表示每 15 分钟。周字段 0/7 均为周日。">?</span></label>
+        <input id="sch-cron" type="text" placeholder="0 3 * * *">
+      </div>
+      <div class="form-group">
+        <label>时区（可选，留空 = 系统默认）</label>
+        <input id="sch-timezone" type="text" placeholder="Asia/Shanghai">
+      </div>
+      <div class="form-group">
+        <label>目标节点</label>
+        <select id="sch-agent"></select>
+      </div>
+      <div class="form-group">
+        <label>模式</label>
+        <select id="sch-mode">
+          <option value="llm">LLM（自然语言任务）</option>
+          <option value="command">命令（shell）</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>指令</label>
+        <textarea id="sch-instruction" class="modal-textarea" rows="4" placeholder="例如：检查磁盘并用结果生成日报"></textarea>
+      </div>
+      <div class="form-group">
+        <label>超时（秒）</label>
+        <input id="sch-timeout" type="number" min="1" max="86400" value="300">
+      </div>
+      <div class="form-group">
+        <label>模型（仅 LLM；留空 = 用节点默认）</label>
+        <select id="sch-model"></select>
+      </div>
+      <div class="form-group">
+        <label class="toggle-line"><input type="checkbox" id="sch-enabled" checked> 启用</label>
+      </div>
+      <div id="sch-status" class="status-msg"></div>
+      <div class="sub-actions">
+        <button class="btn" onclick="saveSchedule()">保存</button>
+        <button class="btn btn-secondary" onclick="closeScheduleModal()">取消</button>
+      </div>
+    </div>
+  </div>
+
   <div id="password-modal" class="modal hidden" onclick="onPasswordBackdrop(event)">
     <div class="modal-content" style="max-width:420px" onclick="event.stopPropagation()">
       <div class="modal-header">
@@ -586,6 +655,7 @@
   <script src="/static/js/tasks.js"></script>
   <script src="/static/js/files.js"></script>
   <script src="/static/js/skills.js"></script>
+  <script src="/static/js/schedules.js"></script>
   <script src="/static/js/users.js"></script>
   <script src="/static/js/templates.js"></script>
   <script src="/static/js/teams.js"></script>
