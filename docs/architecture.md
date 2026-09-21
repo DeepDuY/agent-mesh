@@ -10,7 +10,7 @@
 |------|------|------|------|
 | 主 Agent | 外部 1+ | 通过 REST 派发与查询 | 无内置 |
 | orchestrator | 每部署 1 | FastAPI REST+Web(:8000) + 后台清扫器（单进程） | `python -m agent_mesh.orchestrator.main` |
-| 边沿 Agent | 每台远端机器 1 | 心跳拉任务、**多任务并发执行**（`max_concurrent` 默认 2）、产物上传、结果上报、实时输出上报 | `python -m agent_mesh.edge.agent`（或 PyInstaller 二进制） |
+| 边沿 Agent | 每台远端机器 1 | 心跳拉任务、**多任务并发执行**（`max_concurrent` 默认 2）、产物上传、结果上报、实时输出上报 | 独立仓库 `agent-mesh-edge`（PyInstaller 二进制） |
 | Web 浏览器 | 可选 | 看板轮询 | `http://<host>:8000/` |
 
 ### 1.2 架构图
@@ -65,32 +65,27 @@ agent-mesh/
 ├── data/                         # 运行数据（db/artifacts/bootstrap/skills/files + VERSION）
 ├── scripts/
 │   ├── start-orchestrator.sh     # 后台启动 orchestrator
-│   ├── build-agent-bootstrap.py  # Agent 安装包构建（含 VERSION 清单）
-│   ├── agent-mesh-edge.spec      # PyInstaller spec
 │   ├── migrate_sqlite_to_pg.py   # SQLite→PostgreSQL 迁移脚本
+│   ├── sync_probe_release.py     # 从 GitHub Release 同步探针包
 │   └── relocate_venv.py          # 重写 venv 符号链接（打包用）
 ├── src/agent_mesh/
 │   ├── shared/{constants,schemas,permissions}.py
 │   ├── orchestrator/
-│   │   ├── main.py  task_store.py  tenancy.py  permissions.py  sweeper.py
-│   │   ├── config.py  auth.py  artifact_store.py
+│   │   ├── main.py  task_store.py  tenancy.py  permissions.py  sweeper.py  scheduler.py  cron.py
+│   │   ├── config.py  auth.py  artifact_store.py  realtime.py
 │   │   ├── api/                   # REST 层（按领域拆分）
 │   │   │   ├── __init__.py        # create_query_router + 认证依赖
-│   │   │   ├── auth.py  tasks.py  agents.py  edge.py  artifacts.py  files.py  bootstrap.py  skills.py
+│   │   │   ├── auth.py  tasks.py  agents.py  edge.py  artifacts.py  files.py  bootstrap.py  skills.py  schedules.py  realtime.py
 │   │   │   ├── agent_common.py  agent_config.py  agent_access.py  agent_lifecycle.py
 │   │   │   └── teams.py  templates.py
 │   │   ├── store/
 │   │   │   ├── base.py            # AbstractStore
 │   │   │   ├── connection/{__init__,base,sqlite,pg,pg_schema,pg_schema_upgrade}.py
-│   │   │   ├── sqlite/{__init__,connection,agents,tasks,artifacts,files,logs,settings,skills,users,teams,templates}.py
-│   │   │   ├── pg/{__init__,base,agents,tasks,artifacts,files,logs,settings,skills,users,teams,templates}.py
-│   │   │   └── migrations/001-018_*.sql
-│   │   └── web_ui/{index.html,style.css,js/app,auth,agents,tasks,files,skills,users,teams,templates,config}.js
-│   └── edge/
-│       ├── agent.py  rest_client.py  config_writer.py
-│       ├── execution/             # 任务执行（拆分）
-│       │   ├── __init__.py        # Executor 门面
-│       │   └── common.py  command.py  llm.py
+│   │   │   ├── sqlite/{__init__,connection,agents,tasks,artifacts,files,logs,settings,skills,users,teams,templates,schedules}.py
+│   │   │   ├── pg/{__init__,base,agents,tasks,artifacts,files,logs,settings,skills,users,teams,templates,schedules}.py
+│   │   │   └── migrations/001-022_*.sql
+│   │   └── web_ui/{index.html,style.css,js/app,auth,agents,tasks,files,skills,schedules,users,teams,templates,config}.js
+│   └── edge/                      # ← 已迁出：探针代码在独立仓库 agent-mesh-edge
 ├── deploy/
 │   ├── install.sh                 # systemd 部署 orchestrator（edge 探针单独 bootstrap 安装）
 │   ├── redeploy.sh  status.sh  uninstall.sh  common.sh

@@ -5,14 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from agent_mesh.edge.config_writer import (
-    apply_llm_config,
-    build_opencode_config,
-    read_permission,
-)
-from agent_mesh.edge.execution.command import run_command
 from agent_mesh.shared import permissions
-from agent_mesh.shared.schemas import Task
 
 ADMIN_API_TOKEN = "admin-api-token-123"
 GLOBAL_TOKEN = "mcp-global-token"
@@ -88,57 +81,6 @@ def test_evaluate_command_whitelist_and_blacklist():
     assert permissions.evaluate_command({"*": "deny"}, "ls") == "deny"
     assert permissions.evaluate_command({"*": "allow"}, "ls") == "allow"
     assert permissions.evaluate_command(None, "ls") == "deny"  # no policy -> ask -> deny
-
-
-def test_build_opencode_config_embeds_permission():
-    cfg = build_opencode_config(
-        api_key="k",
-        base_url="https://x/v1",
-        model="anthropic/m1",
-        permission=permissions.expand_profile("readonly"),
-        models=["anthropic/m1"],
-    )
-    assert cfg["permission"]["*"] == "deny"
-    assert cfg["permission"]["read"] == "allow"
-    # No leaked hardcoded allow-all permission.
-    assert cfg["permission"].get("bash") is None
-
-
-def test_apply_llm_config_persists_permission(tmp_path):
-    install = tmp_path / "agent"
-    (install / "etc").mkdir(parents=True)
-    (install / "etc" / "edge.env").write_text("EDGE_AGENT_ID=node\n", encoding="utf-8")
-    apply_llm_config(
-        str(install),
-        {"llm_api_key": "k", "permission": {"*": "allow"}},
-        "3",
-    )
-    assert read_permission(str(install)) == {"*": "allow"}
-    # read_permission returns None when never synced.
-    install2 = tmp_path / "agent2"
-    (install2 / "etc").mkdir(parents=True)
-    assert read_permission(str(install2)) is None
-
-
-@pytest.mark.asyncio
-async def test_command_denied_by_edge_policy(tmp_path):
-    task = Task(
-        task_id="t-deny",
-        agent_id="node",
-        mode="command",
-        instruction="rm -rf /",
-    )
-    entries: list[dict] = []
-
-    async def _cb(items):
-        entries.extend(items)
-
-    outcome = await run_command(
-        task, tmp_path, log_callback=_cb, permission=permissions.expand_profile("readonly")
-    )
-    assert outcome.exit_code != 0
-    assert "权限被拒绝" in outcome.stderr_tail
-    assert any(e["kind"] == "error" for e in entries)
 
 
 # ----------------------------------------------------------------------

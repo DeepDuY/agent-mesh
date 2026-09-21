@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 # Deploy the agent-mesh orchestrator to /opt/agent-mesh with a systemd service,
-# then build and publish the edge probe package (opencode bundled).
+# then optionally build and publish the edge probe package (opencode bundled).
 #
-# The probe is built with the deployed virtualenv (which has PyInstaller via the
-# `dev` extra) but from the current repo checkout, and the resulting package is
-# written to <INSTALL_DIR>/data/bootstrap/ where the orchestrator serves it.
-# opencode is bundled into the probe: it is auto-detected locally or downloaded
-# from the official GitHub releases if missing.
+# The edge probe lives in its OWN repository (`agent-mesh-edge`) and is built
+# there with its own virtualenv. Point EDGE_REPO_DIR at a checkout (a sibling
+# ../agent-mesh-edge is auto-detected) or pass --no-probe and sync a prebuilt
+# package from a GitHub Release later. The resulting package is written to
+# <INSTALL_DIR>/data/bootstrap/ where the orchestrator serves it.
 #
 # Usage:
 #   ./deploy/install.sh                 # deploy server + build probe
-#   ./deploy/install.sh --no-probe      # server only (no opencode needed here)
+#   ./deploy/install.sh --no-probe      # server only (no edge repo needed)
 #   ./deploy/install.sh --opencode /path/to/opencode
+#   EDGE_REPO_DIR=/path/to/agent-mesh-edge ./deploy/install.sh
 #   OPENCODE_BIN=/path/to/opencode ./deploy/install.sh
 set -euo pipefail
 
@@ -23,13 +24,33 @@ REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_PROBE=1
 OPENCODE_BIN="${OPENCODE_BIN:-}"
 
+# Edge probe repository (separate from this server repo). Auto-detects a sibling
+# checkout; override with EDGE_REPO_DIR.
+find_edge_repo() {
+    if [ -n "${EDGE_REPO_DIR:-}" ] && [ -f "${EDGE_REPO_DIR}/scripts/build-agent-bootstrap.py" ]; then
+        return 0
+    fi
+    local cand
+    for cand in "${REPO_DIR}/../agent-mesh-edge" "/opt/agent-mesh-edge"; do
+        if [ -f "${cand}/scripts/build-agent-bootstrap.py" ]; then
+            EDGE_REPO_DIR="$(cd "${cand}" && pwd)"
+            return 0
+        fi
+    done
+    EDGE_REPO_DIR=""
+    return 1
+}
+
+
 usage() {
     cat <<EOF
-Usage: ./deploy/install.sh [--no-probe] [--opencode PATH]
+Usage: ./deploy/install.sh [--no-probe] [--opencode PATH] [--edge-repo DIR]
   --no-probe        skip building/publishing the edge probe package
   --opencode PATH   opencode binary to bundle (else auto-detected, or downloaded from GitHub)
+  --edge-repo DIR   agent-mesh-edge checkout used to build the probe (else auto-detected)
   --help            show this help
-Env: OPENCODE_BIN (same as --opencode), INSTALL_DIR, SERVICE_USER, AGENT_MESH_PORT
+Env: OPENCODE_BIN (same as --opencode), EDGE_REPO_DIR (same as --edge-repo),
+     INSTALL_DIR, SERVICE_USER, AGENT_MESH_PORT
 EOF
 }
 
@@ -37,6 +58,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --no-probe) BUILD_PROBE=0 ;;
         --opencode) OPENCODE_BIN="${2:-}"; shift ;;
+        --edge-repo) EDGE_REPO_DIR="${2:-}"; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "ERROR: unknown argument: $1" >&2; usage; exit 2 ;;
     esac
@@ -149,12 +171,9 @@ ensure_venv "${INSTALL_DIR}/lib/venv" "${PYBIN}"
 
 echo "==> Installing dependencies"
 "${INSTALL_DIR}/lib/venv/bin/pip" install -q -U pip
-# PyInstaller (dev extra) is only needed when building the probe.
-EXTRAS=""
-[ "${BUILD_PROBE}" = "1" ] && EXTRAS="[dev]"
 # asyncpg>=0.30 has only manylinux_2_28 wheels; on older glibc the source build
 # fails. Pin <0.30 which ships a broadly-compatible wheel (see known-issues §18).
-"${INSTALL_DIR}/lib/venv/bin/pip" install -q -e "${INSTALL_DIR}/lib/agent-mesh${EXTRAS}" 'asyncpg<0.30'
+"${INSTALL_DIR}/lib/venv/bin/pip" install -q -e "${INSTALL_DIR}/lib/agent-mesh" 'asyncpg<0.30'
 
 # ------------------------------------------------------------------
 # Orchestrator env (idempotent: never clobber an existing token/config)
@@ -232,30 +251,38 @@ systemctl enable agent-mesh-orchestrator >/dev/null 2>&1 || true
 systemctl restart agent-mesh-orchestrator
 
 # ------------------------------------------------------------------
-# Edge probe package (opencode bundled)
+# Edge probe package (opencode bundled) — built from the separate edge repo
 # ------------------------------------------------------------------
 if [ "${BUILD_PROBE}" = "1" ]; then
-    echo "==> Building edge probe package"
-    # The build script needs the package installer as its source.
-    mkdir -p "${INSTALL_DIR}/lib/agent-mesh/data/bootstrap"
-    cp -f "${REPO_DIR}/data/bootstrap/install.sh" \
-          "${INSTALL_DIR}/lib/agent-mesh/data/bootstrap/install.sh"
+    if ! find_edge_repo; then
+        echo "ERROR: edge probe repository not found." >&2
+        echo "  The probe is built from the separate 'agent-mesh-edge' repo." >&2
+        echo "  Clone it next to this repo (../agent-mesh-edge), pass --edge-repo DIR," >&2
+        echo "  set EDGE_REPO_DIR, or re-run with --no-probe and sync a release later." >&2
+        exit 1
+    fi
+    EDGE_PYTHON="${EDGE_PYTHON:-${EDGE_REPO_DIR}/.venv/bin/python}"
+    if [ ! -x "${EDGE_PYTHON}" ]; then
+        echo "ERROR: edge build env not found at ${EDGE_PYTHON}" >&2
+        echo "  Create it in ${EDGE_REPO_DIR}, e.g.:" >&2
+        echo "    python3 -m venv .venv && .venv/bin/pip install pyinstaller httpx pydantic pydantic-settings psutil" >&2
+        exit 1
+    fi
+    echo "==> Building edge probe package from ${EDGE_REPO_DIR}"
 
     OPENCODE_ARG=()
     [ -n "${OPENCODE_BIN}" ] && OPENCODE_ARG=(--opencode "${OPENCODE_BIN}")
 
-    # Run the repo's build script with the deployed venv (guaranteed PyInstaller),
-    # writing the package where the orchestrator serves it from.
-    "${INSTALL_DIR}/lib/venv/bin/python" \
-        "${REPO_DIR}/scripts/build-agent-bootstrap.py" \
+    "${EDGE_PYTHON}" "${EDGE_REPO_DIR}/scripts/build-agent-bootstrap.py" \
         --output-dir "${INSTALL_DIR}/data/bootstrap" \
         ${OPENCODE_ARG[@]+"${OPENCODE_ARG[@]}"}
 
     echo "==> Probe package published to ${INSTALL_DIR}/data/bootstrap/"
     ls -lh "${INSTALL_DIR}/data/bootstrap/"
 else
-    echo "==> Skipped probe build (--no-probe). Publish one later with:"
-    echo "    ${INSTALL_DIR}/lib/venv/bin/python ${REPO_DIR}/scripts/build-agent-bootstrap.py --output-dir ${INSTALL_DIR}/data/bootstrap"
+    echo "==> Skipped probe build (--no-probe). Publish one later by re-running:"
+    echo "    EDGE_REPO_DIR=/path/to/agent-mesh-edge $0"
+    echo "    or sync a published release: ${INSTALL_DIR}/lib/venv/bin/python ${REPO_DIR}/scripts/sync_probe_release.py"
 fi
 
 echo ""

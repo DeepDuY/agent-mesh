@@ -4,20 +4,22 @@
 
 ## 1. 一键安装（bootstrap）
 
-### 1.1 安装包构建（orchestrator 端）
+### 1.1 安装包构建（edge 仓）
+
+探针安装包在**独立仓库 `agent-mesh-edge`** 中构建（本仓库只含 orchestrator 服务端，不含探针源码）：
 
 ```bash
-uv run --no-sync python scripts/build-agent-bootstrap.py
+cd agent-mesh-edge
+.venv/bin/python scripts/build-agent-bootstrap.py \
+    --output-dir /opt/agent-mesh/data/bootstrap
 ```
 
-> 需在当前 venv 已安装 `pyinstaller`（dev extra：`uv pip install pyinstaller`）。用 `--no-sync` 避免 `uv` 重新同步环境——本机 glibc < 2.28 时 asyncpg 0.31.0 的 `manylinux_2_28` wheel 不可用，`uv run` 会回退源码编译而失败（2026-09-01 发现）。
-
-> ⚠️ **改了探针代码（`src/agent_mesh/edge/**`）必须重建**：先升 `shared/constants.py:VERSION` 再跑本命令，否则在线节点不会拿到新代码（见 [docs/README.md 变更规范 §B](./README.md#b-修改探针edge-下的代码)）。
+> 需 Python 3.12 + `pyinstaller` + `httpx/pydantic/pydantic-settings/psutil`。改探针代码后**必须升该仓库根 `VERSION` 并重建**，否则在线节点不会拿到新代码（见 [docs/README.md 变更规范 §B](./README.md#b-修改探针edge-下的代码)）。也可走其 CI：push 触发 `build-probe`，在原生 runner 上出包并发布 `probe-v<VERSION>` Release；再用 `POST /api/bootstrap/sync` 或 `python scripts/sync_probe_release.py` 拉成品到 `data/bootstrap/`。
 
 产物（写到 `data/bootstrap/`）：
 - `agent-mesh-agent-{linux|darwin|win32}-{x64|arm64}.tar.gz`：PyInstaller 构建的 `agent-mesh-edge`（Windows 为 `.exe`）单二进制 + `opencode`（Windows 为 `opencode.exe`）二进制 + 包内 `install.sh`（Windows 为 `install.ps1`） + `VERSION` + `MANIFEST.json`（version + 各文件 size/sha256，升级时据此跳过未变化成员）。
 - `install.sh` / `install.ps1`：包内安装脚本的副本，供直接 curl / irm。
-- `VERSION`：版本清单（= `shared/constants.py:VERSION`），升级比对用。
+- `VERSION`：版本清单（= edge 仓根 `VERSION`），升级比对用。
 
 > ⚠️ **Windows 包必须在 Windows 机器上构建**：PyInstaller 不能交叉编译，`win32` 产物只能由 Windows 主机运行同一脚本生成。
 
@@ -143,8 +145,10 @@ uv run python -m agent_mesh.orchestrator.main
 ```
 > `start-orchestrator.sh` 从 `data/orchestrator.env` 读取 `AGENT_MESH_TOKEN`；文件不存在或 token 为占位/默认值时，首次启动自动生成随机 token 并持久化到该文件（不再硬编码 `demo-token`）。生产用 `deploy/install.sh` 部署，token 同样放在 `orchestrator.env`。
 
-**边沿 agent（开发）**：
+**边沿 agent（开发）**：探针源码在独立仓库 `agent-mesh-edge`，在该仓库内联调：
+
 ```bash
+# 在 agent-mesh-edge 仓库
 EDGE_AGENT_ID=client EDGE_ORCHESTRATOR_URL=http://127.0.0.1:8000 \
   uv run python -m agent_mesh.edge.agent
 ```

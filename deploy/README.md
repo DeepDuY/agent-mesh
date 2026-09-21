@@ -14,12 +14,11 @@ cd <repo>
 3. 设置数据路径到 `/opt/agent-mesh/data`（DB / artifacts / bootstrap）。
 4. **构建并发布 edge 探针安装包**（含 `opencode`）到 `/opt/agent-mesh/data/bootstrap/`，供节点安装与自动升级。
 
-> 从 GitHub 拉下源码后直接 `./deploy/install.sh` 即可。构建探针需要 `opencode`：默认从本机
-> (`~/.opencode/bin/opencode` / `PATH`) 自动探测，**没有则自动从 opencode 官方 GitHub releases 下载**
-> （`github.com/sst/opencode/releases/latest`）。如需指定本机二进制或跳过打包：
+> 探针源码在**独立仓库 `agent-mesh-edge`**，本仓库不含。构建探针需要该仓库的 checkout：默认自动探测同级 `../agent-mesh-edge`，也可 `--edge-repo DIR` / `EDGE_REPO_DIR=...` 指定；其 `.venv` 里需装 `pyinstaller` 等构建依赖。opencode 默认从本机探测，没有则自动从官方 GitHub releases 下载。不需要在服务端构建时可加 `--no-probe`，之后用看板/`POST /api/bootstrap/sync` 同步成品包：
 > ```bash
-> ./deploy/install.sh --opencode /path/to/opencode   # 指定 opencode
-> ./deploy/install.sh --no-probe                     # 只装服务端，不打包探针
+> ./deploy/install.sh --edge-repo /path/to/agent-mesh-edge   # 指定 edge 仓
+> ./deploy/install.sh --opencode /path/to/opencode           # 指定 opencode
+> ./deploy/install.sh --no-probe                             # 只装服务端，不打包探针
 > ```
 > 探针包在服务端目录：`/opt/agent-mesh/data/bootstrap/agent-mesh-agent-<os>-<arch>.tar.gz`。
 
@@ -60,8 +59,11 @@ BUILD_PROBE=1 ./deploy/redeploy.sh   # 同时重新构建探针包（需 opencod
 
 ## 单独构建探针包
 
+在 **`agent-mesh-edge` 仓库**中构建（本仓库不含构建脚本）：
+
 ```bash
-python scripts/build-agent-bootstrap.py \
+cd agent-mesh-edge
+.venv/bin/python scripts/build-agent-bootstrap.py \
     --output-dir /opt/agent-mesh/data/bootstrap \
     --opencode /path/to/opencode
 ```

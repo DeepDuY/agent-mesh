@@ -33,3 +33,6 @@ etc/
 # Internal review artifacts (not for publication)
 代码审核报告.md
 代码审核整改计划.md
+
+# Local, machine-specific dev notes (not for publication)
+/AGENTS.md

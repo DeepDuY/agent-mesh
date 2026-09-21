@@ -124,23 +124,8 @@ def test_max_concurrent_in_poll_response(client: TestClient):
 
 
 # ----------------------------------------------------------------------
-# Edge: concurrent execution + workdir isolation
+# Orchestrator: concurrent execution
 # ----------------------------------------------------------------------
-def test_resolve_workdir_isolates_default_tasks(tmp_path):
-    from agent_mesh.edge.execution import resolve_workdir
-    from agent_mesh.shared.schemas import Constraints, Task
-
-    t1 = Task(task_id="t-aaa", agent_id="a", instruction="x", constraints=Constraints(workdir=""))
-    t2 = Task(task_id="t-bbb", agent_id="a", instruction="x", constraints=Constraints(workdir="."))
-    base = str(tmp_path / "edge-work")
-    w1 = resolve_workdir(t1, base)
-    w2 = resolve_workdir(t2, base)
-    assert w1.parent == (tmp_path / "edge-work" / "tasks").resolve()
-    assert w1.name == "t-aaa"
-    assert w2.name == "t-bbb"
-    assert w1 != w2
-
-
 @pytest.mark.asyncio
 async def test_edge_executes_tasks_concurrently(client: TestClient, tmp_path):
     """Three command tasks finish in under ~1s thanks to 2-way concurrency."""
@@ -190,17 +175,3 @@ async def test_edge_executes_tasks_concurrently(client: TestClient, tmp_path):
     tasks = c.get("/api/tasks", headers=_admin_headers()).json()["tasks"]
     completed = [t for t in tasks if t["status"] == "completed"]
     assert len(completed) == 3
-
-
-def test_workdir_isolated_per_task(client: TestClient, tmp_path):
-    from agent_mesh.edge.execution import resolve_workdir
-    from agent_mesh.shared.schemas import Constraints, Task
-
-    _poll(client)
-    task_id = _dispatch(client)
-    claimed = _poll(client)["tasks"][0]
-    assert claimed["task_id"] == task_id
-    task = Task(**claimed)
-    wd = resolve_workdir(task, str(tmp_path / "edge-work"))
-    assert wd.name == task_id
-    assert str(wd).startswith(str((tmp_path / "edge-work" / "tasks").resolve()))

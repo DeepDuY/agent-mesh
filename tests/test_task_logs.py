@@ -103,43 +103,6 @@ def test_delete_task_cascades_logs(client: TestClient):
     assert client.get(f"/api/tasks/{task_id}/logs", headers=_admin_headers()).status_code == 404
 
 
-def test_opencode_line_classification():
-    from agent_mesh.edge.execution.parsing import _classify_opencode_line
-
-    assert _classify_opencode_line('{"type":"text","part":{"text":"hello"}}') == {"kind": "text", "content": "hello"}
-    assert _classify_opencode_line('{"type":"error","error":{"message":"boom"}}') == {"kind": "error", "content": "boom"}
-    assert _classify_opencode_line('{"type":"complete","summary":"done"}') == {"kind": "complete", "content": "done"}
-    assert _classify_opencode_line("plain output line") == {"kind": "raw", "content": "plain output line"}
-    assert _classify_opencode_line('{"type":"text"}') == {"kind": "raw", "content": '{"type":"text"}'}
-
-
-def test_stream_task_log_flushes_every_entry():
-    import asyncio
-
-    from agent_mesh.edge.execution.common import stream_task_log
-
-    async def _run():
-        received: list[dict] = []
-        q: asyncio.Queue = asyncio.Queue()
-
-        async def cb(entries):
-            received.extend(entries)
-
-        flush = asyncio.create_task(stream_task_log(cb, q, None))
-        q.put_nowait({"kind": "text", "content": "A"})
-        q.put_nowait({"kind": "error", "content": "B"})
-        q.put_nowait({"kind": "complete", "content": "C"})
-        await asyncio.sleep(0.8)
-        flush.cancel()
-        try:
-            await flush
-        except (asyncio.CancelledError, Exception):
-            pass
-        assert [e["content"] for e in received] == ["A", "B", "C"]
-
-    asyncio.run(_run())
-
-
 def test_task_logs_store_roundtrip(tmp_path):
     import asyncio
 

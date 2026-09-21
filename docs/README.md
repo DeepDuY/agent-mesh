@@ -45,16 +45,17 @@
 
 > 缺失同步会让主 Agent 拿到过期的 SKILL.md 而用错接口。
 
-### B. 修改探针（edge/ 下的代码）
+### B. 修改探针（edge）
 
-探针代码（`src/agent_mesh/edge/**`）是**打包进安装包、通过心跳自升级分发**的，只改源码不会自动生效。修改后**必须**：
+探针代码**不在本仓库**：它位于独立仓库 **`agent-mesh-edge`**（本仓库只含 orchestrator 服务端，已不含 `src/agent_mesh/edge/**`）。修改探针必须：
 
-1. **升版本**：递增 `src/agent_mesh/shared/constants.py` 的 `VERSION`（升级判定基准，见 [auth-security.md §8](./auth-security.md#8-agent-自升级)）；
-2. **重建安装包**：`uv run --no-sync python scripts/build-agent-bootstrap.py`，刷新 `data/bootstrap/VERSION` 与 `agent-mesh-agent-{os}-{arch}.tar.gz`（需 venv 已装 pyinstaller；`--no-sync` 避免 uv 重新同步触发 asyncpg 源码编译，见 [deployment.md §1.1](./deployment.md)）；
-3. 在线节点在**空闲时自动升级**（或看板「升级」手动触发）；探针升级后按规则 A 同步接口相关文档；
+1. **在 edge 仓库修改并升版本**：递增 `agent-mesh-edge` 仓库根 `VERSION`（升级判定基准，见 [auth-security.md §8](./auth-security.md#8-agent-自升级)）；
+2. **在该仓库重建安装包**：`scripts/build-agent-bootstrap.py`（本地或用其 CI：push 触发 `build-probe`，产出 `probe-v<VERSION>` Release）；
+3. **同步到服务端**：`POST /api/bootstrap/sync`（或 `python scripts/sync_probe_release.py`）把成品包拉到 `data/bootstrap/`；在线节点在**空闲时自动升级**（或看板「升级」手动触发）；
 4. 若改动涉及探针上报字段，另按 [standards/edge-reporting.md §5](./standards/edge-reporting.md#5-新增上报字段标准-7-步流程) 走注册表 + 迁移流程。
 
-> 忘记重打包 = 探针永远跑旧代码；忘记升版本 = 已发布包与 `data/bootstrap/VERSION` 不一致，升级判断失效。
+> 本地开发目录与构建命令见根目录 `AGENTS.md`（机器相关的本地说明，未纳入版本控制）。
+> **忘记重打包 = 探针永远跑旧代码；忘记升版本 = 已发布包与 `data/bootstrap/VERSION` 不一致，升级判断失效。**
 
 ### C. 修改 Web 看板（`web_ui/`）
 

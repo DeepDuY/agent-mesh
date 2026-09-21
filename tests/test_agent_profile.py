@@ -2,15 +2,6 @@
 
 from fastapi.testclient import TestClient
 
-from agent_mesh.edge.config_writer import (
-    apply_llm_config,
-    build_opencode_config,
-    parse_model_list,
-    read_llm_models,
-    read_system_prompt,
-)
-from agent_mesh.edge.execution.prompt import _wrap_llm_instruction
-
 ADMIN_API_TOKEN = "admin-api-token-123"
 GLOBAL_TOKEN = "mcp-global-token"
 DEVICE = "00:aa:bb:cc:dd:01"
@@ -142,59 +133,6 @@ def test_template_prompt_and_model_compose(client: TestClient):
     )
     poll = _poll(client)
     assert poll["config"]["llm_model"] == "anthropic/deepseek-v4-flash"
-
-
-# ----------------------------------------------------------------------
-# Edge-side config persistence / opencode map (unit)
-# ----------------------------------------------------------------------
-def test_apply_llm_config_persists_prompt_and_models(tmp_path):
-    install = tmp_path / "agent"
-    (install / "etc").mkdir(parents=True)
-    (install / "etc" / "edge.env").write_text("EDGE_AGENT_ID=node\n", encoding="utf-8")
-    apply_llm_config(
-        str(install),
-        {
-            "llm_api_key": "k",
-            "llm_base_url": "https://x/v1",
-            "llm_model": "anthropic/m1",
-            "llm_models": "anthropic/m1\nanthropic/m2",
-            "system_prompt": "line1\nline2",
-        },
-        "7",
-    )
-    assert read_system_prompt(str(install)) == "line1\nline2"
-    assert parse_model_list(read_llm_models(str(install))) == ["anthropic/m1", "anthropic/m2"]
-    env = (install / "etc" / "edge.env").read_text(encoding="utf-8")
-    assert "EDGE_LLM_MODEL=anthropic/m1" in env
-    assert (install / "etc" / "config_version").read_text(encoding="utf-8") == "7"
-
-
-def test_build_opencode_config_from_list_no_hardcoding():
-    cfg = build_opencode_config(
-        api_key="k",
-        base_url="https://x/v1",
-        model="anthropic/deepseek-v4-flash",
-        models=["anthropic/deepseek-v4-flash", "anthropic/vip/kimi-k2.7-code"],
-    )
-    models = cfg["provider"]["anthropic"]["models"]
-    assert models["deepseek-v4-flash"]["name"] == "deepseek-v4-flash"
-    assert models["vip/kimi-k2.7-code"]["name"] == "kimi-k2.7-code"
-    # Nothing beyond the configured list + requested model is present.
-    assert set(models) == {"deepseek-v4-flash", "vip/kimi-k2.7-code"}
-
-    # Empty list: only the requested model is declared (still no hardcoding).
-    cfg2 = build_opencode_config("k", "u", "anthropic/m1", models=[])
-    assert set(cfg2["provider"]["anthropic"]["models"]) == {"m1"}
-
-
-def test_wrap_llm_instruction_injects_system_prompt():
-    plain = _wrap_llm_instruction("do it")
-    assert "角色与上下文" not in plain
-
-    wrapped = _wrap_llm_instruction("do it", "你是运维专员。")
-    assert "## 角色与上下文" in wrapped
-    assert "你是运维专员。" in wrapped
-    assert "do it" in wrapped
 
 
 # ----------------------------------------------------------------------
