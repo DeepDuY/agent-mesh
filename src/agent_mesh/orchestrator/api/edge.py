@@ -28,6 +28,20 @@ def _bootstrap_package_exists(config: OrchestratorConfig, filename: str) -> bool
     return (pkg_dir / filename).exists()
 
 
+def _sanitize_text(value: Any) -> str:
+    """Normalise edge-supplied text for storage.
+
+    PostgreSQL text columns cannot hold a NUL byte (0x00); Windows command
+    output (UTF-16/CLIXML) and some tooling can carry one, which made
+    ``submit_result`` / ``task_log`` return HTTP 500 and lose the result. Drop
+    NUL bytes here so the ingest path is robust to any edge payload.
+    """
+    if value is None:
+        return ""
+    return str(value).replace("\x00", "")
+
+
+
 async def _auto_upgrade_enabled(store: TaskStore) -> bool:
     """Whether stale nodes should auto-upgrade. Setting `auto_upgrade`, default on."""
     value = await store.store.get_setting("auto_upgrade")
@@ -184,15 +198,7 @@ def mount_edge_routes(
                 os_name = agent.os or "linux"
                 arch_name = agent.arch or "x64"
                 filename = f"agent-mesh-agent-{os_name}-{arch_name}.tar.gz"
-                if os_name == "win32":
-                    # The Windows probe has no self-upgrade path yet; sending a
-                    # directive would only make it retry and give up. Windows
-                    # nodes are upgraded by reinstalling.
-                    logger.info(
-                        "skipping auto-upgrade for Windows agent %s (unsupported)",
-                        key,
-                    )
-                elif _bootstrap_package_exists(config, filename):
+                if _bootstrap_package_exists(config, filename):
                     resp["upgrade"] = {
                         "version": target_ver,
                         "filename": filename,
@@ -236,11 +242,11 @@ def mount_edge_routes(
             status=result_status,
             mode=body.get("mode", "llm"),
             exit_code=body.get("exit_code", -1),
-            stdout_tail=body.get("stdout_tail", ""),
-            stderr_tail=body.get("stderr_tail", ""),
+            stdout_tail=_sanitize_text(body.get("stdout_tail", "")),
+            stderr_tail=_sanitize_text(body.get("stderr_tail", "")),
             artifacts=artifacts,
             duration_ms=body.get("duration_ms", 0),
-            summary=body.get("summary", ""),
+            summary=_sanitize_text(body.get("summary", "")),
             session_id=body.get("session_id"),
         )
         accepted = await store.submit_result(task_id, result)
@@ -298,7 +304,7 @@ def mount_edge_routes(
         clean = [
             {
                 "kind": e.get("kind", "raw") if e.get("kind") in valid_kinds else "raw",
-                "content": str(e.get("content", "")),
+                "content": _sanitize_text(e.get("content", "")),
             }
             for e in entries
             if isinstance(e, dict)

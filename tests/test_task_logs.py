@@ -91,6 +91,42 @@ def test_task_log_requires_token(client: TestClient):
     assert resp.status_code == 401
 
 
+def test_edge_ingest_strips_nul_bytes(client: TestClient):
+    task_id = _make_task(client)
+    # Claim the task so submit_result is accepted.
+    client.post(
+        "/api/edge/poll_for_task",
+        json={"agent_id": "client", "device_id": "00:aa:bb:cc:dd:01",
+              "runtime": "opencode", "hostname": "h", "os": "linux"},
+        headers=_edge_headers(),
+    )
+
+    # NUL bytes (common in Windows UTF-16 output) must not break ingest: the
+    # PostgreSQL text columns reject 0x00, which used to 500 and drop results.
+    r = client.post(
+        "/api/edge/task_log",
+        json={"task_id": task_id, "entries": [{"kind": "raw", "content": "a\x00b"}]},
+        headers=_edge_headers(),
+    )
+    assert r.status_code == 200 and r.json()["accepted"] is True
+    logs = client.get(f"/api/tasks/{task_id}/logs", headers=_admin_headers()).json()
+    assert logs["logs"][0]["content"] == "ab"
+
+    r = client.post(
+        "/api/edge/submit_result",
+        json={
+            "task_id": task_id, "status": "completed", "mode": "command",
+            "exit_code": 0, "stdout_tail": "x\x00y", "stderr_tail": "",
+            "summary": "s\x00", "duration_ms": 1,
+        },
+        headers=_edge_headers(),
+    )
+    assert r.status_code == 200 and r.json()["accepted"] is True
+    task = client.get(f"/api/tasks/{task_id}", headers=_admin_headers()).json()["task"]
+    assert task["result"]["stdout_tail"] == "xy"
+    assert task["result"]["summary"] == "s"
+
+
 def test_delete_task_cascades_logs(client: TestClient):
     task_id = _make_task(client)
     client.post(

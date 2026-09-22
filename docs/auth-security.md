@@ -75,6 +75,8 @@
 - 下发：心跳响应在 `upgrade_requested` 且包存在时携带 `upgrade: {version, filename}`（filename 由 agent 的 `os/arch` 拼出）；节点上报版本 ≥ 目标版本时自动 `clear_agent_upgrade`。
 - 执行（edge **完全空闲**时，即无任何正在执行的任务 `_running` 为空，v1.4.0 多任务并发下同样只在空闲才升级）：从 `/api/bootstrap/{filename}` 下载（`bootstrap_download` 已改为 `require_any_token`，全局 token 可下）→ staging 校验解包 → 备份 `.bin.old` 与 `agent_version.bak` → **用 `os.replace()` 原子替换** `bin/agent-mesh-edge.bin`/`opencode`（⚠️ 不能原地 `copy2` 覆盖——运行中的进程会报 Linux `Text file busy`）→ 写回滚感知 wrapper（`WRAPPER_SCRIPT`）→ 写 `etc/upgrading` 标记与 `etc/agent_version` → **优先 `systemctl restart agent-mesh-edge`（Linux）/ `launchctl kickstart system/com.agentmesh.edge`（macOS）重启**，失败回退 `os.execv(wrapper)`。⚠️ 只替换磁盘文件、进程仍在旧代码（execv 在 PyInstaller onefile 下不可靠）是 1.3.0 之前升级"假成功"的根因，服务管理器重启才是可靠路径。
 - 回滚（两阶段握手）：① 首次重启时 wrapper 发现 `upgrading` 存在且无 `upgrade-started` → 记录 `upgrade-started` 并运行新二进制；② 新二进制**首次成功心跳**后由 edge 清除标记与备份（确认健康）；③ 若新二进制启动失败、systemd 再次拉起 wrapper 时 `upgrading` + `upgrade-started` 同时存在 → 恢复 `.bin.old` 与旧版本号。
+- **Windows（与 POSIX 同一套逻辑）**：布局对应为 `bin\agent-mesh-edge.bin.exe` + 启动器 `bin\agent-mesh-edge.cmd`。因 Windows 不能替换运行中的 `.exe`，edge 只把新镜像流式解出为 `bin\agent-mesh-edge.bin.exe.new`（`opencode.exe.new` 按需）并写 `etc/upgrading`/`agent_version` 后退出；保活启动器在 agent 未运行的下一轮循环里 `move /y` 换名（旧镜像留 `.old`）再启动，并复用同一套 `upgrading`/`upgrade-started` 两阶段回滚。服务端不再对 `win32` 跳过升级指令。
+  - ⚠️ `≤1.6.5` 的 Windows 旧布局是 `bin\agent-mesh-edge.exe`，agent 无法替换自身运行镜像 → 需**重装一次**进入新布局后才能自升级。
 - 前提：旧二进制无 `_perform_upgrade`，**无法自升级**，只能重装新包；新二进制装好后即可看板点升级。
 
 ## 9. LLM 配置同步

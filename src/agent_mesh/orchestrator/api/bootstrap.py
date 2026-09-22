@@ -139,7 +139,10 @@ try {
         Write-Error "unexpected package layout (no install.ps1 in $pkgDir)"
         exit 1
     }
-    & (Join-Path $pkgDir 'install.ps1') -OrchestratorUrl $BaseUrl -Token $Token -AgentId $env:EDGE_ALIAS
+    # -Force makes re-running the same command an idempotent (re)install: without
+    # it an existing install aborts before the Scheduled Task is registered, which
+    # is how a node ends up installed but not auto-starting.
+    & (Join-Path $pkgDir 'install.ps1') -OrchestratorUrl $BaseUrl -Token $Token -AgentId $env:EDGE_ALIAS -Force
 } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }

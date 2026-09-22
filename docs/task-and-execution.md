@@ -78,7 +78,7 @@ queued ──心跳领取──▶ assigned ──mark_started──▶ working 
   3. **收到 `agent_token`（仅首次注册返回一次）→ `persist_edge_token()` 写入 `edge.env` 并 `client.set_token()` 切换为独立 token 认证（见 [auth-security.md §7](./auth-security.md#7-agent-独立-token-与设备-用户关联)）**。
   4. 读响应 `max_concurrent`（服务端并发上限，默认 2）更新本地并发数。
   5. 对 `tasks` 数组里每个新任务 `asyncio.create_task(_execute(task))` 并发执行（`self._running` 去重 + 计数，达到上限则留给下轮心跳）；旧版 orchestrator 单任务响应（`task` 字段）同样兼容。
-  6. `_confirm_upgrade_healthy()`：首次成功心跳清除 `etc/upgrading`、`etc/upgrade-started`、`.bin.old`、`agent_version.bak`（见 [auth-security.md §8](./auth-security.md#8-agent-自升级)）。
+  6. `_confirm_upgrade_healthy()`：首次成功心跳清除 `etc/upgrading`、`etc/upgrade-started`、升级备份（POSIX `.bin.old` / Windows `.bin.exe.old`）、`agent_version.bak`（见 [auth-security.md §8](./auth-security.md#8-agent-自升级)）。
   7. **收到 `upgrade` 指令且完全空闲（`_running` 为空、本轮无新任务）→ `_perform_upgrade()`（见 [auth-security.md §8](./auth-security.md#8-agent-自升级)）**。
   8. SIGTERM/SIGINT 置 `_stop_event` 退出。
 - `_execute(task)`：

@@ -189,6 +189,27 @@ def test_auto_upgrade_can_be_disabled(client: TestClient):
     assert "upgrade" not in poll
 
 
+@pytest_asyncio.fixture
+async def win_client(tmp_path):
+    """Client whose bootstrap dir also carries a Windows package."""
+    db_path = tmp_path / "data" / "db.sqlite"
+    async with sqlite_client(tmp_path, db_path=str(db_path), bootstrap=True) as c:
+        (tmp_path / "data" / "bootstrap" / "agent-mesh-agent-win32-x64.tar.gz").write_bytes(b"pkg")
+        yield c
+
+
+def test_windows_node_receives_upgrade_directive(win_client: TestClient):
+    from agent_mesh.shared.constants import VERSION
+
+    poll = _poll(win_client, device_id="00:aa:bb:cc:dd:77", version="0.9.0", os="win32")
+    assert poll["upgrade"]["version"] == VERSION
+    assert poll["upgrade"]["filename"] == "agent-mesh-agent-win32-x64.tar.gz"
+
+    # Up to date -> no directive (no Windows-specific skip, no loop).
+    poll = _poll(win_client, device_id="00:aa:bb:cc:dd:77", version=VERSION, os="win32")
+    assert "upgrade" not in poll
+
+
 # ----------------------------------------------------------------------
 # Node lifecycle is admin-only
 # ----------------------------------------------------------------------

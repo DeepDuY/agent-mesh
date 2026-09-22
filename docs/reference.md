@@ -334,6 +334,8 @@ curl -s -X POST http://127.0.0.1:8000/api/agents/1/upgrade \
 3. 写入带回滚逻辑的 wrapper 与 `etc/upgrading` 标记，通过 `systemctl restart`（Linux）/`launchctl kickstart`（macOS）重启，失败回退 `execv`；systemd 未启用时走 `execv`
 4. 新版本首次成功心跳后确认健康并清除标记与备份；若新二进制启动失败，wrapper 在下次启动时检测到未确认标记会自动回滚到旧版本（`.bin.old` + 恢复旧版本号）
 
+Windows 节点同一套逻辑，但布局为 `bin\agent-mesh-edge.bin.exe` + 启动器 `bin\agent-mesh-edge.cmd`：Windows 不能替换运行中的 exe，所以 agent 只暂存 `*.new` 并退出，由保活启动器在 agent 未运行时换名并启动，回滚标记与确认流程一致。**旧版（≤ 1.6.5）Windows 安装需重装一次**进入该布局。
+
 > 升级请求会持续保留，直到节点上报的目标版本到达。节点上报的版本写入 `agents.version`，看板会展示当前/目标版本。
 
 ### LLM 配置同步

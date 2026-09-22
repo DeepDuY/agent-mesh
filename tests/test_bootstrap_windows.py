@@ -58,6 +58,9 @@ def test_install_ps1_script(client):
     assert "agent-mesh-agent-win32-" in body
     assert "install.ps1" in body
     assert "http://testserver" in body
+    # Re-running the bootstrap must be an idempotent (re)install, otherwise an
+    # existing install aborts before the Scheduled Task gets (re)registered.
+    assert "-Force" in body
 
 
 def test_upload_and_download_win32_package(client):

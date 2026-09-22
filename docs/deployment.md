@@ -62,10 +62,15 @@ $env:TOKEN='<token>'; irm -Headers @{Authorization="Bearer <token>"} <public_url
 ```
 
 包内 `install.ps1`：
-1. 默认安装到 `C:\ProgramData\agent-mesh-agent`（可用 `-InstallDir` / `$env:INSTALL_DIR` 覆盖），需管理员权限。
+1. 需要**管理员** PowerShell：非管理员直接报错退出（不再静默跳过自启，避免"装好了但不开机自启"）。默认安装到 `C:\ProgramData\agent-mesh-agent`（可用 `-InstallDir` / `$env:INSTALL_DIR` 覆盖）。
 2. 写 `etc\edge.env`（UTF-8 无 BOM）并用 `icacls` 收窄为 SYSTEM + Administrators。
-3. 注册开机自启的**计划任务** `agent-mesh-edge`（SYSTEM、最高权限），运行 `bin\agent-mesh-edge.cmd` 保活循环；无需 NSSM/WinSW。
-4. 依赖系统自带 `tar.exe`（Windows 10 1803+）。当前 Windows **不支持探针自升级**（Windows 节点升级需手动重装）。
+3. 二进制安装为 `bin\agent-mesh-edge.bin.exe`，由 `bin\agent-mesh-edge.cmd` 保活启动器运行；该间接层让自升级能在 agent 未运行时替换镜像（Windows 不能覆盖运行中的 exe）。
+4. 注册开机自启的**计划任务** `agent-mesh-edge`（SYSTEM、最高权限，`At startup` + 每 5 分钟重复触发兜底），注册后立即 `Start-ScheduledTask` 并校验；日志写入 `logs\install.log`。无需 NSSM/WinSW。
+5. 依赖系统自带 `tar.exe`（Windows 10 1803+）。
+
+**Windows 自升级**与 Linux 同一套逻辑：节点空闲时下载新包 → 只解出变化的 `bin\agent-mesh-edge.bin.exe.new` / `opencode.exe.new` → 写 `etc\agent_version`、`etc\upgrading` 后退出 → 保活启动器在下一次循环里换名（旧镜像留 `.old`）并启动新二进制 → 首次成功心跳确认健康后清理备份，新二进制起不来则回滚。
+
+> ⚠️ **旧版（≤ 1.6.5）Windows 节点**布局是 `bin\agent-mesh-edge.exe`，agent 无法替换自己的运行镜像，需先**重装一次**进入新布局，之后才会自升级（服务端对旧布局会持续下指令，agent 侧识别到后跳过并打日志）。
 
 节点启动后即自动以 device_id（machine-id）注册上线。
 

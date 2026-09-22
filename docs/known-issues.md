@@ -21,12 +21,11 @@
 ### 平台
 
 7. **macOS Intel（darwin-x64）无探针包**：CI 只构建 `darwin-arm64`；`install.sh` 会按 `uname` 找 `darwin-x64` 但发布里没有。
-8. **Windows 节点不支持自升级**：服务端对 `win32` 跳过自动升级指令（安装/重装正常）；需实现计划任务下的下载替换 + 重启。
-9. **探针 Release 自动同步缺失**：目前只有配置页手动按钮（`POST /api/bootstrap/sync`），无启动/定时/发布回调触发。
+8. **探针 Release 自动同步缺失**：目前只有配置页手动按钮（`POST /api/bootstrap/sync`），无启动/定时/发布回调触发。
 
 ### 执行隔离后续
 
-10. **缺强隔离沙箱 / 结构化 argv**：command 权限匹配器（OpenCode permission 规格）**只防误操作、不是安全边界**，shell 间接调用可绕过；生产建议低权限账号/容器。
+9. **缺强隔离沙箱 / 结构化 argv**：command 权限匹配器（OpenCode permission 规格）**只防误操作、不是安全边界**，shell 间接调用可绕过；生产建议低权限账号/容器。
 
 ---
 
@@ -41,4 +40,4 @@
 1. **安全收口第二期**：`GET /api/settings` 已限 Web UI + 白名单；节点详情已对非 admin 脱敏；文件下载已按任务归属限制 agent token。后续可评估全局 token 的下载范围、以及 LLM 密钥的写入/回显策略。
 2. **`depends_on` 已落地**：依赖全部 `completed` 才派发；依赖失败/终止会级联取消依赖者；派发时校验环。后续可加"等待依赖"的显式状态/UI 提示。
 3. **多进程与心跳原子性**（§1/§2），并随之把实时推送换成 `LISTEN/NOTIFY` 总线。
-4. **平台补齐**：macOS Intel 包、Windows 自升级、探针 Release 自动同步（§7/§8/§9）。
+4. **平台补齐**：macOS Intel 包、探针 Release 自动同步（§7/§8）。
