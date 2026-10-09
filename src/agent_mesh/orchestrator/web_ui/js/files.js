@@ -16,7 +16,7 @@ async function loadFiles() {
       <td>${escHtml(f.filename)}</td>
       <td>${formatBytes(f.size)}</td>
       <td class="mono">${f.md5 || '-'}</td>
-      <td class="mono">${(f.created_at || '').replace('T', ' ').slice(0, 19)}</td>
+      <td class="mono">${formatDateTime(f.created_at)}</td>
       <td>
         <span class="actions">
           <button class="btn" onclick="downloadLibraryFile('${f.file_id}')">下载</button>

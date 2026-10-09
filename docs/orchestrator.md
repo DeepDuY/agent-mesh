@@ -136,8 +136,9 @@ class Task(BaseModel):
     max_retries: int = 0
     attachments: list[FileRef] = []   # 派发时引用的文件库快照（tasks.attachments JSON 列）
     user_id: str | None = None        # 归属用户（由 token 自动生成；迁移 017）
-    team_id: str | None = None        # 归属团队（由 token 自动生成；迁移 017）
+    team_ids: list[str] = []          # 归属团队集合（由 token 自动生成；迁移 024；旧 team_id 列保留兼容）
     dispatched_by: str | None = None  # 派发者用户名（tasks.dispatched_by，任务列表/详情展示来源用户）
+    run_id: str | None = None         # 批次（run）分组（迁移 023；批量派发写入，见 §2.1）
     # model_dump_json_safe(): 输出 JSON 安全字典（含 constraints、result、attachments）
 ```
 
@@ -251,7 +252,7 @@ store/
 │   ├── logs.py          # TaskLogMixin
 │   ├── settings.py      # SettingsMixin
 │   ├── skills.py        # SkillsMixin
-│   ├── teams.py         # TeamMixin（teams/team_members + 用户唯一团队）
+│   ├── teams.py         # TeamMixin（teams/team_members，用户可属多团队）
 │   └── users.py         # UsersMixin
 ├── pg/                  # PostgresStore（可选，按域拆分为 mixin，持有 PostgresDatabase）
 └── migrations/
@@ -272,12 +273,19 @@ store/
     ├── 015_permissions.sql         # templates.permission、删除 tasks/templates.allowed_tools、settings.default_permission
     ├── 016_template_node_description.sql  # templates.node_description（与模板说明分离）
     ├── 017_tenancy.sql             # teams/team_members、agents.access、tasks.user_id/team_id、templates.owner_user_id/owner_team_id
-    └── 018_agent_ip_address.sql    # agents.ip_address（来源 IP，节点详情展示）
+    ├── 018_agent_ip_address.sql    # agents.ip_address（来源 IP，节点详情展示）
+    ├── 019_user_token_expiry.sql   # users.token_expires_at（NULL=永久）
+    ├── 020_upload_limits.sql       # settings 上传/产物限制项（运行时读取）
+    ├── 021_probe_release.sql       # settings 探针分发项（bootstrap_download_base 等）
+    ├── 022_schedules.sql           # schedules 表（cron 定时任务）
+    ├── 023_task_runs.sql           # tasks.run_id + idempotency_keys（批量派发/批次）
+    └── 024_multi_team.sql          # 删除 team_members.user_id 唯一索引 + tasks/schedules.team_ids、templates.owner_team_ids（多团队归属，回填旧单值列）
 ```
 
 ### 3.2 迁移机制
 - SQLite `_run_migrations()` 按文件名前缀序号升序执行，`schema_migrations(version)` 记录已应用版本，`executescript` 原子执行，幂等。
 - PG `initialize()` 用一次性连接建 schema + 列级升级（`connection/pg_schema.py` 的 `create_schema`/`ensure_settings`/`ensure_default_templates`/`ensure_session_secret`/`ensure_admin_user`，`connection/pg_schema_upgrade.py` 的 `ensure_user_schema_upgrade`/`ensure_agent_schema_upgrade`/`ensure_task_schema_upgrade`）用 `information_schema.columns` 做列级增量升级（`ALTER TABLE ADD COLUMN`），新列只需在 `additions` 字典登记。
+- ⚠️ **执行顺序约束（务必遵守 [README.md §D](./README.md#d-修改数据模型--新增列关键ddl-执行顺序)）**：`create_schema` 先于 upgrade 函数执行，且 `CREATE TABLE/INDEX IF NOT EXISTS` 对旧表是 no-op。**依赖新列的索引/约束只能放在 upgrade 函数里（加列之后），不能写进 `create_schema`**，否则旧库启动时报 `UndefinedColumnError`（2026-09 `idx_tasks_run_id` 曾导致生产启动崩溃）。
 
 ### 3.3 表清单
 | 表 | 说明 | 备注 |
@@ -286,7 +294,8 @@ store/
 | `users` | 账号（`username` 唯一、`token_hash` 唯一，**不含明文 token**） | 含 `disabled/created_by/last_login_at/token_created_at/token_expires_at`（`NULL`=永久，迁移 019）；默认 admin |
 | `agents` | 节点注册表（`id` 自增、`device_id` UNIQUE） | 含 `llm_api_key/base_url/model` 列（节点级 LLM 覆盖，随心跳 config-sync 下发，见 auth-security.md §9）、`distro`、`ip_address`、`access`(ACL)、`template_id` |
 | `agent_users` | 设备-用户关联（多对多；操作者审计） | 迁移 008；节点注册时自动关联 |
-| `tasks` | 任务（**无外键**，`agent_id` 存稳定键） | |
+| `tasks` | 任务（**无外键**，`agent_id` 存稳定键） | 含 `run_id`（批次分组，迁移 023） |
+| `idempotency_keys` | 批量派发幂等键（`(scope,key)` 主键 → `run_id`） | 迁移 023；见 §2.1 |
 | `task_queue` | 队列（`task_id` UNIQUE，外键级联删除） | |
 | `task_results` | 结果（`task_id` UNIQUE） | |
 | `artifacts` | 产物元数据 | `storage_path` 落盘路径 |
@@ -294,6 +303,6 @@ store/
 | `skills` | 技能库（name 主键、description/version/enabled/filename） | zip 落盘 `<db_path>/../skills/<name>/` |
 | `task_logs` | 实时执行输出流（`id` 自增、`task_id`、`kind`、`content`） | `kind`: text/error/complete/raw；**无外键**，删除任务时由代码显式清理 |
 | `task_events` | 事件审计表 | 写入方 `append_task_event`（`dispatched`/`cancelled`/`permission_denied`）；`GET /api/tasks/{id}/events` 读取 |
-| `templates` | 节点模板（`system_prompt`/`llm_model`/`permission`/`node_description`；`owner_user_id`/`owner_team_id`） | 内置 `build`/`plan`/`readonly` 幂等 seed |
-| `teams` / `team_members` | 团队/组织与成员（一个用户只属于一个团队） | `team_members.user_id` 唯一索引 |
+| `templates` | 节点模板（`system_prompt`/`llm_model`/`permission`/`node_description`；`owner_user_id`/`owner_team_ids`，旧 `owner_team_id` 保留兼容） | 内置 `build`/`plan`/`readonly` 幂等 seed |
+| `teams` / `team_members` | 团队/组织与成员（一个用户可属于多个团队） | `team_members` 主键 `(team_id,user_id)`；不再有 `user_id` 唯一索引（迁移 024 删除） |
 | `settings` | 全局配置 | `public_url`/`llm_*`/`llm_models`/`default_permission`/`auto_upgrade`/`config_version`/`session_secret` |

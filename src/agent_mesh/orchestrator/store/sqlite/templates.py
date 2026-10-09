@@ -12,7 +12,7 @@ from agent_mesh.orchestrator.store.sqlite.connection import (
 
 _TEMPLATE_COLUMNS = (
     "id, name, description, node_description, system_prompt, llm_model, permission, "
-    "owner_user_id, owner_team_id, data, created_at, updated_at"
+    "owner_user_id, owner_team_ids, data, created_at, updated_at"
 )
 
 
@@ -20,6 +20,7 @@ def _row_to_template(row: Any) -> dict[str, Any]:
     data = dict(row)
     data["permission"] = _load_json(data.get("permission"))
     data["data"] = _load_json(data.get("data"))
+    data["owner_team_ids"] = _load_json(data.get("owner_team_ids")) or []
     return data
 
 
@@ -34,13 +35,13 @@ class TemplateMixin(SQLiteBase):
         permission: dict[str, Any] | None = None,
         data: dict[str, Any] | None = None,
         owner_user_id: str | None = None,
-        owner_team_id: str | None = None,
+        owner_team_ids: list[str] | None = None,
     ) -> int:
         rows = await self._execute(
             """
             INSERT INTO templates
                 (name, description, node_description, system_prompt, llm_model,
-                 permission, data, owner_user_id, owner_team_id)
+                 permission, data, owner_user_id, owner_team_ids)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
             """,
             (
@@ -52,7 +53,7 @@ class TemplateMixin(SQLiteBase):
                 _dump_json(permission),
                 _dump_json(data),
                 owner_user_id,
-                owner_team_id,
+                _dump_json(owner_team_ids or []),
             ),
         )
         return rows[0]["id"]
@@ -85,14 +86,14 @@ class TemplateMixin(SQLiteBase):
             "permission",
             "data",
             "owner_user_id",
-            "owner_team_id",
+            "owner_team_ids",
         }
         sets: list[str] = []
         params: list[Any] = []
         for key, value in fields.items():
             if key not in allowed:
                 continue
-            if key in ("permission", "data"):
+            if key in ("permission", "data", "owner_team_ids"):
                 value = _dump_json(value)
             sets.append(f"{key}=?")
             params.append(value)

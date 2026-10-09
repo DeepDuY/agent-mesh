@@ -161,11 +161,12 @@ def mount_edge_routes(
             if auth.get("auth") == "user":
                 await store.store.add_agent_user(agent.id, auth["user_id"])
                 try:
-                    await store.grant_agent_access(
-                        agent,
-                        user_id=auth.get("user_id"),
-                        team_id=await store.user_team(auth),
-                    )
+                    for team_id in await store.user_teams(auth):
+                        await store.grant_agent_access(
+                            agent,
+                            user_id=auth.get("user_id"),
+                            team_id=team_id,
+                        )
                 except Exception:
                     logger.warning("grant agent access failed", exc_info=True)
 

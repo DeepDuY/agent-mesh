@@ -107,7 +107,7 @@ EdgeAgent.run()
 
 > 已移除的冗余接口：`/api/edge/dispatch_task`、`/api/edge/cancel_task`（控制面已有等价接口，探针从未使用）。
 
-> **任务归属校验**：`submit_result` / `mark_started` / `get_task_status` / `task_log` 不只验 token——global token 全权；user token 需为任务所有者或同团队；agent 独立 token 仅能操作队列键等于自身 `device_id`/`agent_id` 的任务。越权写返回 403，越权读返回 `{"found": false}`（避免指令泄露）。
+> **任务归属校验**：`submit_result` / `mark_started` / `get_task_status` / `task_log` 不只验 token——global token 全权；user token 需为任务所有者或与任务所属团队之一同团队；agent 独立 token 仅能操作队列键等于自身 `device_id`/`agent_id` 的任务。越权写返回 403，越权读返回 `{"found": false}`（避免指令泄露）。
 
 **认证（`require_any_token`，见 [auth-security.md §1](./auth-security.md)）接受三类凭据**，并返回调用者身份：
 1. 全局 token（`AGENT_MESH_TOKEN`）→ `{auth: "global"}`；
@@ -124,7 +124,7 @@ EdgeAgent.run()
 | GET | `/api/auth/me` | 当前用户信息（含 `token_created_at`/`token_expires_at`） |
 | POST | `/api/auth/token` | **自助**轮换自己的 API token（`require_user_token`）：`{expires_in_days?: int}`（留空/`null` = 永久，1–36500），明文只返回一次；旧 API token 立即失效，session token 不受影响 |
 | GET | `/api/healthz` | **公开**。健康检查 → `{status:"ok", version:"<SERVER_VERSION>"}` |
-| GET | `/api/tasks` | 任务列表（按身份过滤：自己 + 同团队，admin 全部；`agent_id?`, `status?`, `mode?`(`command`/`llm`), `search?`(指令/任务ID/节点/来源用户名模糊), `started_after?`/`started_before?`(ISO 时间, 开始时间区间), `limit` 1–1000, `offset` 分页；返回 `total` 总数供分页/跨页选择。任务含 `dispatched_by`（派发者用户名）、`user_id`/`team_id`） |
+| GET | `/api/tasks` | 任务列表（按身份过滤：自己 + 所在团队之一，admin 全部；`agent_id?`, `status?`, `mode?`(`command`/`llm`), `run_id?`(批次), `search?`(指令/任务ID/节点/来源用户名模糊), `started_after?`/`started_before?`(ISO 时间, 开始时间区间), `limit` 1–1000, `offset` 分页；返回 `total` 总数供分页/跨页选择。任务含 `dispatched_by`（派发者用户名）、`user_id`/`team_ids`（并保留 `team_id`=第一个）、`run_id`） |
 | GET | `/api/tasks/{task_id}` | 任务详情（越权/不存在 → 404） |
 | GET | `/api/tasks/{task_id}/status` | 任务状态（`{found, task}`） |
 | GET | `/api/tasks/{task_id}/logs` | 任务实时执行输出（`?after_id=&limit=`，增量；v1.4.0） |
@@ -132,7 +132,11 @@ EdgeAgent.run()
 | POST | `/api/tasks/{task_id}/cancel` | 终止任务（`{accepted}`） |
 | DELETE | `/api/tasks/{task_id}` | 删除单个任务（含 queue/results/artifacts 关联行） |
 | POST | `/api/tasks/batch-delete` | 批量删除：`{task_ids: [...]}` 按 id，或 `{all_matching: true, status?, mode?, search?, started_after?, started_before?, agent_id?}` 删除匹配筛选的全部任务 |
-| POST | `/api/tasks/dispatch` | 派发任务（REST 版）。`command` 模式被权限策略拦截时返回 403，并落一条终态 `denied` 任务（摘要=拒绝原因）便于追溯。可选 `depends_on: [task_id]`：依赖全部 `completed` 后才派发（未就绪保持排队，不占并发）；依赖失败/终止则本任务级联 `cancelled`；非法/成环依赖返回 400 |
+| POST | `/api/tasks/dispatch` | 派发任务（REST 版）。`command` 模式被权限策略拦截时返回 403，并落一条终态 `denied` 任务（摘要=拒绝原因）便于追溯。可选 `depends_on: [task_id]`：依赖全部 `completed` 后才派发（未就绪保持排队，不占并发）；依赖失败/终止则本任务级联 `cancelled`；非法/成环依赖返回 400。另有 `run_id?`(批次号)、`depends_on_run?`(展开为该批次全部任务 id)、`attachments_from?`(上游任务产物转附件) |
+| POST | `/api/tasks/dispatch-batch` | **批量派发**：`{targets: [agent_ref...], mode, instruction, 其余同 dispatch, run_id?, depends_on_run?, attachments_from?, idempotency_key?}`；逐目标独立校验，返回 `{run_id, queued, task_ids, denied:[{target,reason,task_id?}]}`；`Idempotency-Key` 头幂等；受 `max_batch_fanout`/`max_run_per_node` 护栏 |
+| GET | `/api/runs/{run_id}` | **批次聚合**：`{run_id,total,counts,active,tasks:[紧凑行]}`；`status?`/`include_tasks?`；`wait`(≤30s) 长轮询直到状态变化或结束 |
+| POST | `/api/runs/{run_id}/cancel` | 终止整批（`{total,cancelled,skipped}`） |
+| POST | `/api/runs/{run_id}/retry` | 重跑批内 `failed`/`timed_out`（`{total,retried,skipped}`） |
 | GET | `/api/agents` | 节点列表（按 ACL 过滤：admin 全部，其余仅可见/可操作节点） |
 | GET | `/api/agents/{agent_id}` | 单个节点（数字 id / device_id / agent_id；不可访问 → 404） |
 | GET | `/api/agents/{agent_id}/detail` | 详情 + 最近 20 任务（`metadata.allowed_users` 仅 admin 返回） |
@@ -153,7 +157,7 @@ EdgeAgent.run()
 | GET | `/api/settings` | 全局配置。**`require_admin` + 必须携带 `X-Agent-Mesh-UI: 1`**（否则 404）；返回**白名单**键值（`public_url`/`llm_*`/`llm_models`/`default_permission`/`auto_upgrade`/限额等），不含 `session_secret`；admin 额外附带 `agent_mesh_token` |
 | PATCH | `/api/settings` | 更新全局配置（同样限 Web UI + admin） |
 | GET | `/api/realtime` | **SSE** 实时推送（`require_any_token`，走 `Authorization` 头；`fetch` 流式读取）。事件：`tasks_changed`/`task_log`/`agents_changed`；客户端断线时回落到 5s 轮询 |
-| GET/POST/PATCH/DELETE | `/api/teams*` | 团队/组织 CRUD 与成员（admin；用户归属单一团队）。含 `POST /api/teams/{team_id}/members`、`DELETE .../members/{user_id}`、`PUT /api/teams/{team_id}/nodes`（全量替换团队可见节点） |
+| GET/POST/PATCH/DELETE | `/api/teams*` | 团队/组织 CRUD 与成员（admin；一个用户可属多个团队）。含 `POST /api/teams/{team_id}/members`（追加成员）、`DELETE .../members/{user_id}`（仅移出该团队）、`PUT /api/teams/{team_id}/nodes`（全量替换团队可见节点） |
 | GET/POST/PATCH/DELETE | `/api/templates*` | 模板 CRUD（`require_ui_user`：**必须携带 `X-Agent-Mesh-UI: 1`**，否则一律 404；Web UI 专用，不对外开放） |
 | GET | `/api/bootstrap/install.sh` | 生成新节点安装命令脚本（内嵌 orchestrator `base_url`：优先 `public_url`，否则校验 `Host` 头；**不再内嵌 LLM 配置**，新节点注册后由心跳 config-sync 下发） |
 | GET | `/api/bootstrap/info` | **admin**：服务端版本（`SERVER_VERSION`）+ 已发布探针包版本（`bootstrap/VERSION`）与文件列表（配置页展示） |

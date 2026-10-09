@@ -91,13 +91,25 @@ async def create_schema(conn: Any) -> None:
             dispatched_by TEXT,
             user_id TEXT,
             team_id TEXT,
+            team_ids JSONB,
             metadata JSONB,
             session_id TEXT,
             skills JSONB,
-            attachments JSONB
+            attachments JSONB,
+            run_id TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_tasks_agent_id ON tasks(agent_id);
         CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+        -- idx_tasks_run_id is created in ensure_task_schema_upgrade (after the
+        -- run_id column is added to pre-existing databases).
+
+        CREATE TABLE IF NOT EXISTS idempotency_keys (
+            scope TEXT NOT NULL,
+            key TEXT NOT NULL,
+            run_id TEXT,
+            created_at TIMESTAMP DEFAULT NOW(),
+            PRIMARY KEY (scope, key)
+        );
 
         CREATE TABLE IF NOT EXISTS task_queue (
             id SERIAL PRIMARY KEY,
@@ -179,6 +191,7 @@ async def create_schema(conn: Any) -> None:
             attachments JSONB,
             user_id TEXT,
             team_id TEXT,
+            team_ids JSONB,
             created_by TEXT,
             next_run_at TIMESTAMP,
             last_run_at TIMESTAMP,

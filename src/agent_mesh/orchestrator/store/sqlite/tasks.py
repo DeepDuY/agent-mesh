@@ -31,7 +31,7 @@ class TaskMixin(SQLiteBase):
             constraints=constraints,
             status=TaskStatus(row["status"]),
             user_id=row["user_id"] if "user_id" in row.keys() else None,
-            team_id=row["team_id"] if "team_id" in row.keys() else None,
+            team_ids=_load_json(row["team_ids"]) if "team_ids" in row.keys() and _load_json(row["team_ids"]) else [],
             dispatched_by=row["dispatched_by"] if "dispatched_by" in row.keys() else None,
             created_at=_iso_to_dt(row["created_at"]) or datetime.now(timezone.utc),
             assigned_at=_iso_to_dt(row["assigned_at"]),
@@ -42,6 +42,7 @@ class TaskMixin(SQLiteBase):
             max_retries=row["max_retries"],
             attachments=attachments,
             depends_on=_load_json(row["depends_on"]) if "depends_on" in row.keys() else [],
+            run_id=row["run_id"] if "run_id" in row.keys() else None,
         )
 
     async def _load_result(self, task_id: str) -> TaskResult | None:
@@ -69,7 +70,7 @@ class TaskMixin(SQLiteBase):
         task: Task,
         dispatched_by: str | None = None,
         user_id: str | None = None,
-        team_id: str | None = None,
+        team_ids: list[str] | None = None,
     ) -> None:
         await self._execute(
             """
@@ -77,8 +78,9 @@ class TaskMixin(SQLiteBase):
                 task_id, agent_id, mode, instruction, workdir, timeout_s, model,
                 output_limit, status, max_retries, retry_count,
                 created_at, assigned_at, started_at, finished_at, depends_on,
-                dispatched_by, user_id, team_id, metadata, session_id, skills, attachments
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                dispatched_by, user_id, team_ids, metadata, session_id, skills, attachments,
+                run_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task.task_id, task.agent_id, task.mode, task.instruction,
@@ -95,11 +97,12 @@ class TaskMixin(SQLiteBase):
                 _dump_json(task.depends_on),
                 dispatched_by,
                 user_id,
-                team_id,
+                _dump_json(team_ids or []),
                 _dump_json(None),
                 task.constraints.session_id,
                 _dump_json(task.constraints.skills),
                 _dump_json([a.model_dump() for a in task.attachments]),
+                task.run_id,
             ),
         )
 
@@ -122,13 +125,17 @@ class TaskMixin(SQLiteBase):
         started_after: datetime | None,
         started_before: datetime | None,
         owner_user_id: str | None = None,
-        owner_team_id: str | None = None,
+        owner_team_ids: list[str] | None = None,
+        run_id: str | None = None,
     ) -> tuple[str, list[Any]]:
         where = " WHERE 1=1"
         params: list[Any] = []
         if agent_id:
             where += " AND agent_id = ?"
             params.append(agent_id)
+        if run_id:
+            where += " AND run_id = ?"
+            params.append(run_id)
         if status:
             where += " AND status = ?"
             params.append(status)
@@ -145,15 +152,19 @@ class TaskMixin(SQLiteBase):
         if started_before is not None:
             where += " AND started_at <= ?"
             params.append(_dt_to_iso(started_before))
-        # Tenancy: a non-admin sees their own tasks and (if in a team) their team's.
-        if owner_user_id is not None or owner_team_id is not None:
+        # Tenancy: a non-admin sees their own tasks and their teams' tasks.
+        if owner_user_id is not None or owner_team_ids:
             clauses = []
             if owner_user_id is not None:
                 clauses.append("user_id = ?")
                 params.append(owner_user_id)
-            if owner_team_id is not None:
-                clauses.append("team_id = ?")
-                params.append(owner_team_id)
+            if owner_team_ids:
+                placeholders = ",".join("?" * len(owner_team_ids))
+                clauses.append(
+                    "team_ids IS NOT NULL AND EXISTS ("
+                    f"SELECT 1 FROM json_each(team_ids) WHERE value IN ({placeholders}))"
+                )
+                params.extend(owner_team_ids)
             where += " AND (" + " OR ".join(clauses) + ")"
         return where, params
 
@@ -168,11 +179,12 @@ class TaskMixin(SQLiteBase):
         limit: int = 100,
         offset: int = 0,
         owner_user_id: str | None = None,
-        owner_team_id: str | None = None,
+        owner_team_ids: list[str] | None = None,
+        run_id: str | None = None,
     ) -> list[Task]:
         where, params = self._tasks_where(
             agent_id, status, mode, search, started_after, started_before,
-            owner_user_id, owner_team_id,
+            owner_user_id, owner_team_ids, run_id,
         )
         sql = f"SELECT * FROM tasks{where} ORDER BY created_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
@@ -191,15 +203,45 @@ class TaskMixin(SQLiteBase):
         started_after: datetime | None = None,
         started_before: datetime | None = None,
         owner_user_id: str | None = None,
-        owner_team_id: str | None = None,
+        owner_team_ids: list[str] | None = None,
+        run_id: str | None = None,
     ) -> int:
         where, params = self._tasks_where(
             agent_id, status, mode, search, started_after, started_before,
-            owner_user_id, owner_team_id,
+            owner_user_id, owner_team_ids, run_id,
         )
         sql = f"SELECT COUNT(*) AS n FROM tasks{where}"
         rows = await self._execute(sql, tuple(params))
         return int(rows[0]["n"]) if rows else 0
+
+    async def count_tasks_by_status(
+        self,
+        run_id: str,
+        owner_user_id: str | None = None,
+        owner_team_ids: list[str] | None = None,
+    ) -> dict[str, int]:
+        where, params = self._tasks_where(
+            None, None, None, None, None, None,
+            owner_user_id, owner_team_ids, run_id,
+        )
+        rows = await self._execute(
+            f"SELECT status, COUNT(*) AS n FROM tasks{where} GROUP BY status",
+            tuple(params),
+        )
+        return {r["status"]: int(r["n"]) for r in rows}
+
+    async def get_idempotent_run(self, scope: str, key: str) -> str | None:
+        rows = await self._execute(
+            "SELECT run_id FROM idempotency_keys WHERE scope = ? AND key = ?",
+            (scope, key),
+        )
+        return rows[0]["run_id"] if rows else None
+
+    async def set_idempotent_run(self, scope: str, key: str, run_id: str) -> None:
+        await self._execute(
+            "INSERT OR IGNORE INTO idempotency_keys (scope, key, run_id) VALUES (?, ?, ?)",
+            (scope, key, run_id),
+        )
 
     async def delete_task(self, task_id: str) -> bool:
         # task_queue/task_results/artifacts cascade via FK, but task_logs has no

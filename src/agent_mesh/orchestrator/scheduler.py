@@ -149,7 +149,7 @@ class SchedulerMixin:
         )
         attachments = await self._resolve_schedule_attachments(schedule.get("attachments") or [])
         user_id = schedule.get("user_id")
-        team_id = schedule.get("team_id")
+        team_ids = schedule.get("team_ids") or []
         dispatched_by = schedule.get("created_by") or f"schedule:{schedule['name']}"
 
         skills_error = await self.validate_skills(constraints.skills)
@@ -166,7 +166,7 @@ class SchedulerMixin:
                     reason=denial,
                     dispatched_by=dispatched_by,
                     user_id=user_id,
-                    team_id=team_id,
+                    team_ids=team_ids,
                 )
                 await self.store.append_task_event(
                     task_id=task_id,
@@ -187,7 +187,7 @@ class SchedulerMixin:
             dispatched_by=dispatched_by,
             attachments=attachments,
             user_id=user_id,
-            team_id=team_id,
+            team_ids=team_ids,
         )
         await self.store.append_task_event(
             task_id=task_id,

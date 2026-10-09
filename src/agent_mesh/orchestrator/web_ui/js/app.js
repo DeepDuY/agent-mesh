@@ -141,6 +141,30 @@ function hostLabel(a) {
   return (a.hostname || a.agent_id || '-').split('.')[0];
 }
 
+// All server timestamps are UTC. Some endpoints return them without an explicit
+// offset; treat a missing offset as UTC so the browser can convert to the
+// viewer's local timezone (otherwise a bare "…T08:00:00" is read as local time).
+function parseServerTime(value) {
+  if (!value) return null;
+  const s = String(value);
+  const hasTz = /(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(s);
+  const d = new Date(hasTz ? s : s + 'Z');
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function formatDateTime(value) {
+  const d = parseServerTime(value);
+  if (!d) return value ? escHtml(String(value)) : '-';
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+    `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+function toLocaleDateTime(value) {
+  const d = parseServerTime(value);
+  return d ? d.toLocaleString() : '-';
+}
+
 function showApp() {
   document.getElementById('login-view').classList.add('hidden');
   document.getElementById('app-view').classList.remove('hidden');

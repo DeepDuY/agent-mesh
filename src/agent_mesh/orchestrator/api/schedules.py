@@ -32,7 +32,7 @@ class _ScheduleCreate(BaseModel):
     skills: list[str] | None = None
     attachments: list[str] = Field(default_factory=list)
     owner_user_id: str | None = None  # admin-only assignment
-    owner_team_id: str | None = None  # admin-only assignment
+    owner_team_ids: list[str] | None = None  # admin-only assignment
 
 
 class _SchedulePatch(BaseModel):
@@ -51,7 +51,7 @@ class _SchedulePatch(BaseModel):
     skills: list[str] | None = None
     attachments: list[str] | None = None
     owner_user_id: str | None = None  # admin-only assignment
-    owner_team_id: str | None = None  # admin-only assignment
+    owner_team_ids: list[str] | None = None  # admin-only assignment
 
 
 def _iso(value: Any) -> str | None:
@@ -73,7 +73,8 @@ def _public(schedule: dict[str, Any]) -> dict[str, Any]:
         "constraints": schedule.get("constraints") or {},
         "attachments": schedule.get("attachments") or [],
         "owner_user_id": schedule.get("user_id"),
-        "owner_team_id": schedule.get("team_id"),
+        "owner_team_ids": list(schedule.get("team_ids") or []),
+        "owner_team_id": (schedule.get("team_ids") or [None])[0],
         "created_by": schedule.get("created_by"),
         "next_run_at": _iso(schedule.get("next_run_at")),
         "last_run_at": _iso(schedule.get("last_run_at")),
@@ -107,18 +108,18 @@ def mount_schedule_routes(
     endpoints (a user token is required).
     """
 
-    def _owner_ok(schedule: dict[str, Any], user: dict[str, Any], team: str | None) -> bool:
+    def _owner_ok(schedule: dict[str, Any], user: dict[str, Any], teams: set[str]) -> bool:
         if store.is_admin(user):
             return True
         if schedule.get("user_id") and schedule["user_id"] == user.get("user_id"):
             return True
-        return bool(team and schedule.get("team_id") == team)
+        return bool(teams & set(schedule.get("team_ids") or []))
 
     async def _require_owned(schedule_id: int, user: dict[str, Any]) -> dict[str, Any]:
         schedule = await store.store.get_schedule(schedule_id)
         if schedule is None:
             raise HTTPException(status_code=404, detail="schedule not found")
-        if not _owner_ok(schedule, user, await store.user_team(user)):
+        if not _owner_ok(schedule, user, await store.user_teams(user)):
             raise HTTPException(status_code=404, detail="schedule not found")
         return schedule
 
@@ -149,10 +150,10 @@ def mount_schedule_routes(
     async def list_schedules(
         user: dict[str, Any] = Depends(require_user_token),
     ) -> dict[str, Any]:
-        team = await store.user_team(user)
+        teams = await store.user_teams(user)
         schedules = await store.store.list_schedules()
         if not store.is_admin(user):
-            schedules = [s for s in schedules if _owner_ok(s, user, team)]
+            schedules = [s for s in schedules if _owner_ok(s, user, teams)]
         return {"schedules": [_public(s) for s in schedules]}
 
     @router.post("/schedules")
@@ -174,11 +175,11 @@ def mount_schedule_routes(
         if skills_error:
             raise HTTPException(status_code=400, detail=skills_error)
         if store.is_admin(user):
-            owner_user_id, owner_team_id = payload.owner_user_id, payload.owner_team_id
+            owner_user_id, owner_team_ids = payload.owner_user_id, payload.owner_team_ids
         else:
-            team = await store.user_team(user)
-            owner_user_id = None if team else user.get("user_id")
-            owner_team_id = team
+            team_ids = sorted(await store.user_teams(user))
+            owner_user_id = None if team_ids else user.get("user_id")
+            owner_team_ids = team_ids
         next_run = await store.compute_schedule_next_run(payload.cron, {"timezone": payload.timezone})
         schedule_id = await store.store.create_schedule(
             name=name,
@@ -191,7 +192,7 @@ def mount_schedule_routes(
             constraints=_constraints_payload(payload),
             attachments=payload.attachments,
             user_id=owner_user_id,
-            team_id=owner_team_id,
+            team_ids=owner_team_ids,
             created_by=user["username"],
             next_run_at=next_run,
         )
@@ -216,7 +217,7 @@ def mount_schedule_routes(
         fields = payload.model_dump(exclude_unset=True)
         if not store.is_admin(user):
             fields.pop("owner_user_id", None)
-            fields.pop("owner_team_id", None)
+            fields.pop("owner_team_ids", None)
 
         if "name" in fields and fields["name"] is not None:
             name = fields["name"].strip()
@@ -250,8 +251,8 @@ def mount_schedule_routes(
         if store.is_admin(user):
             if "owner_user_id" in fields:
                 update["user_id"] = fields["owner_user_id"]
-            if "owner_team_id" in fields:
-                update["team_id"] = fields["owner_team_id"]
+            if "owner_team_ids" in fields:
+                update["team_ids"] = fields["owner_team_ids"]
         if any(k in fields for k in ("workdir", "timeout_s", "model", "output_limit", "session_id", "skills")):
             constraints = dict(schedule.get("constraints") or {})
             for key in ("workdir", "timeout_s", "model", "output_limit", "session_id", "skills"):

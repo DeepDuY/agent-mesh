@@ -12,6 +12,10 @@ def _new_task_id() -> str:
     return f"t-{uuid.uuid4().hex[:8]}"
 
 
+def _new_run_id() -> str:
+    return f"r-{uuid.uuid4().hex[:8]}"
+
+
 class AbstractStore(abc.ABC):
     """Abstract persistence layer for agent-mesh orchestrator."""
 
@@ -150,10 +154,13 @@ class AbstractStore(abc.ABC):
     async def list_team_members(self, team_id: str) -> list[str]: ...
 
     @abc.abstractmethod
-    async def set_user_team(self, user_id: str, team_id: str | None) -> None: ...
+    async def add_user_to_team(self, user_id: str, team_id: str) -> None: ...
 
     @abc.abstractmethod
-    async def get_user_team(self, user_id: str) -> str | None: ...
+    async def remove_user_from_team(self, user_id: str, team_id: str) -> None: ...
+
+    @abc.abstractmethod
+    async def get_user_teams(self, user_id: str) -> list[str]: ...
 
     @abc.abstractmethod
     async def request_agent_upgrade(self, agent_id: int, version: str) -> bool: ...
@@ -175,7 +182,7 @@ class AbstractStore(abc.ABC):
         permission: dict[str, Any] | None = None,
         data: dict[str, Any] | None = None,
         owner_user_id: str | None = None,
-        owner_team_id: str | None = None,
+        owner_team_ids: list[str] | None = None,
     ) -> int: ...
 
     @abc.abstractmethod
@@ -212,7 +219,7 @@ class AbstractStore(abc.ABC):
         constraints: dict[str, Any] | None = None,
         attachments: list[str] | None = None,
         user_id: str | None = None,
-        team_id: str | None = None,
+        team_ids: list[str] | None = None,
         created_by: str | None = None,
         next_run_at: datetime | None = None,
     ) -> int: ...
@@ -296,7 +303,7 @@ class AbstractStore(abc.ABC):
         task: Task,
         dispatched_by: str | None = None,
         user_id: str | None = None,
-        team_id: str | None = None,
+        team_ids: list[str] | None = None,
     ) -> None: ...
 
     @abc.abstractmethod
@@ -314,7 +321,8 @@ class AbstractStore(abc.ABC):
         limit: int = 100,
         offset: int = 0,
         owner_user_id: str | None = None,
-        owner_team_id: str | None = None,
+        owner_team_ids: list[str] | None = None,
+        run_id: str | None = None,
     ) -> list[Task]: ...
 
     @abc.abstractmethod
@@ -327,8 +335,26 @@ class AbstractStore(abc.ABC):
         started_after: datetime | None = None,
         started_before: datetime | None = None,
         owner_user_id: str | None = None,
-        owner_team_id: str | None = None,
+        owner_team_ids: list[str] | None = None,
+        run_id: str | None = None,
     ) -> int: ...
+
+    @abc.abstractmethod
+    async def count_tasks_by_status(
+        self,
+        run_id: str,
+        owner_user_id: str | None = None,
+        owner_team_ids: list[str] | None = None,
+    ) -> dict[str, int]:
+        """Count tasks in a run grouped by status (tenancy-filtered)."""
+
+    @abc.abstractmethod
+    async def get_idempotent_run(self, scope: str, key: str) -> str | None:
+        """Return the run_id previously stored for (scope, key), else None."""
+
+    @abc.abstractmethod
+    async def set_idempotent_run(self, scope: str, key: str, run_id: str) -> None:
+        """Remember that (scope, key) maps to run_id; ignore if already set."""
 
     @abc.abstractmethod
     async def delete_task(self, task_id: str) -> bool: ...

@@ -1,11 +1,5 @@
 let currentTeams = [];
 
-function _teamUserTeamMap() {
-  const map = {};
-  (currentTeams || []).forEach(t => (t.members || []).forEach(uid => { map[uid] = t; }));
-  return map;
-}
-
 async function loadTeams() {
   try {
     const res = await fetch('/api/teams', { headers });
@@ -19,14 +13,14 @@ async function loadTeams() {
 }
 
 function renderUserTeamOptions() {
-  const select = document.getElementById('new-user-team');
-  if (!select) return;
-  const current = select.value;
-  const options = (currentTeams || []).map(t =>
-    `<option value="${escHtml(t.team_id)}">${escHtml(t.name)}</option>`
-  ).join('') || '<option value="">（请先创建团队）</option>';
-  setHtmlIfChanged(select, options);
-  if (current) select.value = current;
+  const el = document.getElementById('new-user-team');
+  if (!el) return;
+  // Preserve any in-progress selection across background refreshes.
+  const checked = new Set(Array.from(el.querySelectorAll('input:checked')).map(c => c.value));
+  const html = (currentTeams || []).map(t =>
+    `<label style="display:inline-block;margin:2px 10px 2px 0"><input type="checkbox" value="${escHtml(t.team_id)}" ${checked.has(t.team_id) ? 'checked' : ''}> ${escHtml(t.name)}</label>`
+  ).join('') || '<span class="muted">（请先创建团队）</span>';
+  setHtmlIfChanged(el, html);
 }
 
 function teamNodeCount(teamId) {
@@ -110,13 +104,9 @@ function openTeamModal(teamId) {
   document.getElementById('team-name').value = t ? (t.name || '') : '';
   document.getElementById('team-desc').value = t ? (t.description || '') : '';
   const selected = new Set(t ? (t.members || []) : []);
-  const teamByUser = _teamUserTeamMap();
   document.getElementById('team-members').innerHTML = (currentUsers || []).map(u => {
-    const other = teamByUser[u.user_id];
-    const note = other && other.team_id !== teamId
-      ? ` <span class="muted">（现属 ${escHtml(other.name)}）</span>` : '';
     return `<label style="display:block;margin:2px 0">
-      <input type="checkbox" value="${escHtml(u.user_id)}" ${selected.has(u.user_id) ? 'checked' : ''}> ${escHtml(u.username)}${note}
+      <input type="checkbox" value="${escHtml(u.user_id)}" ${selected.has(u.user_id) ? 'checked' : ''}> ${escHtml(u.username)}
     </label>`;
   }).join('') || '<span class="muted">暂无用户</span>';
   document.getElementById('team-status').textContent = '';
@@ -193,7 +183,7 @@ async function saveTeam() {
 
 async function deleteTeam(teamId) {
   const t = currentTeams.find(x => x.team_id === teamId);
-  if (!confirm(`确认删除团队 ${t ? t.name : teamId}？成员的团队归属会被清除。`)) return;
+  if (!confirm(`确认删除团队 ${t ? t.name : teamId}？成员与该团队的归属会被清除。`)) return;
   try {
     const res = await fetch(`/api/teams/${teamId}`, { method: 'DELETE', headers });
     if (!res.ok) {

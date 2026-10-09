@@ -8,7 +8,7 @@ from typing import Any
 from agent_mesh.orchestrator.permissions import PermissionMixin
 from agent_mesh.orchestrator.realtime import publish
 from agent_mesh.orchestrator.scheduler import SchedulerMixin
-from agent_mesh.orchestrator.store.base import AbstractStore, _new_task_id
+from agent_mesh.orchestrator.store.base import AbstractStore, _new_run_id, _new_task_id
 from agent_mesh.orchestrator.sweeper import SweeperMixin
 from agent_mesh.orchestrator.tenancy import TenancyMixin
 from agent_mesh.shared.constants import (
@@ -67,7 +67,8 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin, SchedulerMixin):
         limit: int = 100,
         offset: int = 0,
         owner_user_id: str | None = None,
-        owner_team_id: str | None = None,
+        owner_team_ids: str | None = None,
+        run_id: str | None = None,
     ) -> list[Task]:
         return await self.store.list_tasks(
             agent_id=agent_id,
@@ -79,7 +80,8 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin, SchedulerMixin):
             limit=limit,
             offset=offset,
             owner_user_id=owner_user_id,
-            owner_team_id=owner_team_id,
+            owner_team_ids=owner_team_ids,
+            run_id=run_id,
         )
 
     async def list_agents(self) -> list[AgentStatus]:
@@ -192,7 +194,8 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin, SchedulerMixin):
         dispatched_by: str | None = None,
         attachments: list[FileRef] | None = None,
         user_id: str | None = None,
-        team_id: str | None = None,
+        team_ids: list[str] | None = None,
+        run_id: str | None = None,
     ) -> str:
         if mode not in ("command", "llm"):
             raise ValueError(f"invalid task mode: {mode}")
@@ -215,10 +218,11 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin, SchedulerMixin):
             attachments=attachments or [],
             depends_on=deps,
             user_id=user_id,
-            team_id=team_id,
+            team_ids=list(team_ids or []),
+            run_id=run_id,
         )
         await self.store.create_task(
-            task, dispatched_by=dispatched_by, user_id=user_id, team_id=team_id
+            task, dispatched_by=dispatched_by, user_id=user_id, team_ids=list(team_ids or [])
         )
         await self.store.enqueue(task.task_id, queue_key)
         logger.info("dispatched task %s for agent=%s mode=%s", task.task_id, queue_key, mode)
@@ -233,7 +237,7 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin, SchedulerMixin):
         reason: str,
         dispatched_by: str | None = None,
         user_id: str | None = None,
-        team_id: str | None = None,
+        team_ids: list[str] | None = None,
     ) -> str:
         """Record a dispatch that was rejected by policy as a visible task.
 
@@ -253,11 +257,11 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin, SchedulerMixin):
             constraints=Constraints(),
             status=TaskStatus.DENIED,
             user_id=user_id,
-            team_id=team_id,
+            team_ids=list(team_ids or []),
             finished_at=now,
         )
         await self.store.create_task(
-            task, dispatched_by=dispatched_by, user_id=user_id, team_id=team_id
+            task, dispatched_by=dispatched_by, user_id=user_id, team_ids=list(team_ids or [])
         )
         await self.store.set_task_result(
             task.task_id,
@@ -500,3 +504,91 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin, SchedulerMixin):
         logger.info("cancelled task %s (was %s)", task_id, task.status.value)
         publish("tasks_changed")
         return True
+
+    # ------------------------------------------------------------------
+    # Runs (batch dispatch grouping)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def new_run_id() -> str:
+        return _new_run_id()
+
+    async def list_run_task_ids(
+        self,
+        run_id: str,
+        owner_user_id: str | None = None,
+        owner_team_ids: str | None = None,
+    ) -> list[str]:
+        """All task ids belonging to a run, in creation order (oldest first)."""
+        tasks = await self.store.list_tasks(
+            run_id=run_id,
+            limit=100000,
+            offset=0,
+            owner_user_id=owner_user_id,
+            owner_team_ids=owner_team_ids,
+        )
+        return [t.task_id for t in tasks]
+
+    async def run_status_counts(
+        self,
+        run_id: str,
+        owner_user_id: str | None = None,
+        owner_team_ids: str | None = None,
+    ) -> dict[str, int]:
+        return await self.store.count_tasks_by_status(
+            run_id, owner_user_id=owner_user_id, owner_team_ids=owner_team_ids
+        )
+
+    async def cancel_run(
+        self,
+        run_id: str,
+        owner_user_id: str | None = None,
+        owner_team_ids: str | None = None,
+    ) -> dict[str, int]:
+        """Cancel every non-terminal task in a run. Returns counts."""
+        tasks = await self.store.list_tasks(
+            run_id=run_id,
+            limit=100000,
+            owner_user_id=owner_user_id,
+            owner_team_ids=owner_team_ids,
+        )
+        cancelled = skipped = 0
+        for t in tasks:
+            if await self.cancel_task(t.task_id):
+                cancelled += 1
+            else:
+                skipped += 1
+        return {"total": len(tasks), "cancelled": cancelled, "skipped": skipped}
+
+    async def retry_run(
+        self,
+        run_id: str,
+        owner_user_id: str | None = None,
+        owner_team_ids: str | None = None,
+    ) -> dict[str, int]:
+        """Re-queue failed/timed-out tasks in a run. Returns counts."""
+        retryable = {TaskStatus.FAILED, TaskStatus.TIMED_OUT}
+        tasks = await self.store.list_tasks(
+            run_id=run_id,
+            limit=100000,
+            owner_user_id=owner_user_id,
+            owner_team_ids=owner_team_ids,
+        )
+        retried = skipped = 0
+        for t in tasks:
+            if t.status not in retryable:
+                skipped += 1
+                continue
+            ok = await self.store.update_task_status(
+                task_id=t.task_id,
+                status=TaskStatus.QUEUED.value,
+                retry_count=t.retry_count + 1,
+                expected_status=t.status.value,
+            )
+            if not ok:
+                skipped += 1
+                continue
+            await self.store.enqueue(t.task_id, t.agent_id)
+            retried += 1
+        if retried:
+            publish("tasks_changed")
+        return {"total": len(tasks), "retried": retried, "skipped": skipped}

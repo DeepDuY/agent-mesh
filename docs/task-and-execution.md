@@ -65,6 +65,17 @@ queued ──心跳领取──▶ assigned ──mark_started──▶ working 
 - 队列与 `agents.current_task_id` 均以节点 **device_id（稳定键）** 匹配。
 - **派发被拦截（`denied`）**：`command` 模式在服务端权限预检被拒时不入队、不执行，而是直接写一条终态 `denied` 任务（`task_results.summary` = 拒绝原因）并追加 `permission_denied` 审计事件，使被拒的派发在任务列表可追溯；REST 仍返回 `403`。
 
+### 2.1 批次（Run）与批量派发
+
+- `POST /api/tasks/dispatch-batch` 把同一条任务派发到多个节点，所有任务写同一个 `tasks.run_id`（`r-<uuid8>`，可由调用方指定）。
+- **逐目标独立校验**：节点 ACL、模型白名单、技能、命令权限各算各的；不合格目标计入响应 `denied`（命令被拦截时同时落一条 `denied` 任务），其余正常入队，整体仍返回 `200`。
+- **扇出护栏**：整批上限 `max_batch_fanout`（默认 200）、单节点每批上限 `max_run_per_node`（默认 50），均可在 settings 调整；超限目标进 `denied`。
+- **幂等**：`Idempotency-Key`（或 body `idempotency_key`）→ `idempotency_keys` 表按 `(scope=调用者, key)` 记住 `run_id`，重复请求返回同一批次（`duplicate: true`），不重复派发。
+- **聚合视图**：`GET /api/runs/{run_id}` 用 `count_tasks_by_status` 一次拿到各状态计数，并返回每任务一行紧凑摘要（不含日志）；`?wait=30` 在进程内阻塞直到任一任务状态变化或整批结束。
+- **批次操作**：`POST /api/runs/{run_id}/cancel` 逐个 `cancel_task`；`/retry` 把 `failed`/`timed_out` 任务按 `expected_status` 原子回 `queued` 并重新入队。
+- **fan-in**：`depends_on_run` 在派发时展开为该批次全部任务 id 追加到 `depends_on`，复用既有依赖门禁/级联取消，无需专门引擎。
+- **产物流转**：`attachments_from` 把上游任务产物复制进文件库（按 md5 去重）并作为新任务附件，边沿用自身 token 经普通附件链路下载。
+
 ## 3. 边沿 Agent 内部逻辑
 
 ### 3.1 agent.py：主循环

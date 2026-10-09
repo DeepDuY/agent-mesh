@@ -4,6 +4,7 @@ let taskTotal = 0;
 let taskFilter = '';      // status
 let taskMode = '';
 let taskSearch = '';
+let taskRun = '';         // run_id
 let taskTimeOp = '';      // '' | 'after' | 'between' | 'before'
 let taskTimeFrom = '';
 let taskTimeTo = '';
@@ -17,6 +18,7 @@ function readTaskFilters() {
   taskFilter = document.getElementById('task-status-filter').value;
   taskMode = document.getElementById('task-mode-filter').value;
   taskSearch = document.getElementById('task-search').value.trim();
+  taskRun = document.getElementById('task-run-filter').value.trim();
   taskTimeOp = document.getElementById('task-time-op').value;
   taskTimeFrom = document.getElementById('task-time-from').value;
   taskTimeTo = document.getElementById('task-time-to').value;
@@ -32,12 +34,19 @@ function applyTaskFilters() {
 
 function clearTaskFilters() {
   document.getElementById('task-search').value = '';
+  document.getElementById('task-run-filter').value = '';
   document.getElementById('task-status-filter').value = '';
   document.getElementById('task-mode-filter').value = '';
   document.getElementById('task-time-op').value = '';
   document.getElementById('task-time-from').value = '';
   document.getElementById('task-time-to').value = '';
   toggleTimeInputs();
+  applyTaskFilters();
+}
+
+function filterByRun(runId) {
+  document.getElementById('task-run-filter').value = runId;
+  closeAgentModal();
   applyTaskFilters();
 }
 
@@ -65,6 +74,7 @@ function taskQueryParams() {
   if (taskFilter) params.append('status', taskFilter);
   if (taskMode) params.append('mode', taskMode);
   if (taskSearch) params.append('search', taskSearch);
+  if (taskRun) params.append('run_id', taskRun);
   const after = toIso(taskTimeFrom);
   const before = toIso(taskTimeTo);
   if (taskTimeOp === 'after' && after) params.append('started_after', after);
@@ -82,11 +92,7 @@ function modeBadge(mode) {
 }
 
 function formatTime(iso) {
-  if (!iso) return '-';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return '-';
-  const p = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  return formatDateTime(iso);
 }
 
 function selectedCount() {
@@ -129,7 +135,7 @@ async function loadTasks() {
       <td class="col-select" onclick="event.stopPropagation()">
         <input type="checkbox" class="task-checkbox" ${checked ? 'checked' : ''} onclick="toggleTaskSelect('${t.task_id}')">
       </td>
-      <td class="mono">${t.task_id}</td>
+      <td class="mono">${t.task_id}${t.run_id ? `<div class="muted" style="font-size:.75em">批次 ${escHtml(t.run_id)}</div>` : ''}</td>
       <td>${escHtml(agentDisplayName(t.agent_id))}</td>
       <td>${escHtml(t.dispatched_by || '-')}</td>
       <td title="${escHtml(t.instruction)}">${escHtml(t.instruction.slice(0, 60))}${t.instruction.length > 60 ? '...' : ''}</td>
@@ -300,6 +306,7 @@ async function showTaskDetail(taskId) {
       ${t.constraints && t.constraints.session_id ? `<div class="detail-item"><label>复用会话</label><span class="mono">${escHtml(t.constraints.session_id)}</span></div>` : ''}
       ${r.session_id ? `<div class="detail-item"><label>会话 ID</label><span class="mono">${escHtml(r.session_id)}</span></div>` : ''}
       ${t.depends_on && t.depends_on.length ? `<div class="detail-item"><label>依赖任务</label><span class="mono">${t.depends_on.map(escHtml).join(', ')}</span></div>` : ''}
+      ${t.run_id ? `<div class="detail-item"><label>批次</label><span class="mono">${escHtml(t.run_id)} <button class="btn btn-secondary" style="padding:0 .4rem" onclick="filterByRun('${t.run_id}')">只看此批次</button></span></div>` : ''}
     </div>
     ${cancellable ? `<p style="margin:.5rem 0"><button class="btn btn-danger" onclick="cancelTask('${t.task_id}')">终止此任务</button></p>` : ''}
     <p><strong>指令：</strong></p><pre>${escHtml(t.instruction)}</pre>

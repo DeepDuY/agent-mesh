@@ -21,6 +21,7 @@ agent-mesh 让**你（主 Agent）**把工作委派给远程**边缘节点**执�
 | 用户的话（举例） | 你能达成的结果 | 看这里 |
 |---|---|---|
 | 「在服务器 A 上执行 `docker ps`」「跑一下这个脚本」「部署到那台机器」 | 在指定远程节点上跑一条 shell 命令，拿到 stdout/exit code | [references/tasks.md](references/tasks.md) |
+| 「给这几台 / 所有 Linux 机器都跑一遍」「批量部署/巡检，然后汇总结果」 | 一次派发到多个节点（一个「批次/run」），再一次性看整批进度与失败项 | [references/tasks.md](references/tasks.md) |
 | 「让远程那台机器上的 AI 帮我改代码 / 排查日志 / 分析数据」 | 把自然语言任务交给远程节点的 opencode 执行（多步推理、写文件） | [references/tasks.md](references/tasks.md) |
 | 「把这个文件传到远程处理一下」「用那个 csv 生成报表」 | 上传本地文件到文件库，再作为附件随任务下发到节点工作目录 | [references/files.md](references/files.md) |
 | 「把远程生成的文件/产物拿回来」 | 从任务结果里下载产物到本地 | [references/files.md](references/files.md) |
@@ -56,6 +57,7 @@ set -a; . ./.env; set +a      # 在本 SKILL 目录下执行
 1. `GET /agents` → 选一个 `online=true` 且 `effective_description` 匹配需求的节点，记下数字 `id`（见 [references/nodes.md](references/nodes.md)）。
 2. 若任务要用本地文件：`POST /files` 上传拿 `file_id`（见 [references/files.md](references/files.md)）。
 3. `POST /tasks/dispatch` → 拿到 `task_id`（见 [references/tasks.md](references/tasks.md)）。
+   - **要发给多台/一批**：改用 `POST /tasks/dispatch-batch`，拿 `run_id`，再用 `GET /runs/{run_id}`（可 `?wait=30`）一次看整批。
 4. 需要进度：`GET /tasks/{task_id}/logs?after_id=<next_id>` 增量看输出。
 5. 每 2–3 秒 `GET /tasks/{task_id}/status` 直到终态；用户要停就 `POST /tasks/{task_id}/cancel`。
 6. 读 `task.result`；有 `artifacts` 就下载给用户。

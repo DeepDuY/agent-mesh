@@ -90,13 +90,13 @@ async def bind_template_checked(
 ) -> None:
     """Validate ownership/b1-lock and bind a template (raises HTTPException)."""
     is_admin = store.is_admin(user)
-    team = await store.user_team(user)
+    teams = await store.user_teams(user)
 
     # b1 lock: a non-admin may not override a template binding that was set
     # by an administrator (global templates have no owner).
     if not is_admin and agent.template_id is not None:
         current = await store.store.get_template(agent.template_id)
-        if current is not None and not current.get("owner_user_id") and not current.get("owner_team_id"):
+        if current is not None and not current.get("owner_user_id") and not current.get("owner_team_ids"):
             raise HTTPException(
                 status_code=403,
                 detail="this node's template is locked by an administrator",
@@ -108,7 +108,7 @@ async def bind_template_checked(
             raise HTTPException(status_code=404, detail="template not found")
         if not is_admin:
             owned = (template.get("owner_user_id") == user.get("user_id")) or bool(
-                team and template.get("owner_team_id") == team
+                teams & set(template.get("owner_team_ids") or [])
             )
             if not owned:
                 raise HTTPException(
@@ -126,9 +126,9 @@ async def check_template_owner(
     if template is None:
         raise HTTPException(status_code=404, detail="template not found")
     if not store.is_admin(user):
-        team = await store.user_team(user)
+        teams = await store.user_teams(user)
         owned = (template.get("owner_user_id") == user.get("user_id")) or bool(
-            team and template.get("owner_team_id") == team
+            teams & set(template.get("owner_team_ids") or [])
         )
         if not owned:
             raise HTTPException(status_code=403, detail="you do not own this template")

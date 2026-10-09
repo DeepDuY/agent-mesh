@@ -60,3 +60,29 @@
 ### C. 修改 Web 看板（`web_ui/`）
 
 按 [standards/ui-copy.md](./standards/ui-copy.md) 检查文案：**前端只写用户操作/校验/安全提示，不写功能设计或内部机制**。字段含义用标题旁 `?` tooltip，不铺成段落。UI 文案变更无需升探针版本。
+
+### D. 修改数据模型 / 新增列（关键：DDL 执行顺序）
+
+新增/变更表结构时，**必须同时覆盖「全新建库」与「旧库增量升级」两条路径**，并严格遵守执行顺序：
+
+- **`create_schema`（`connection/pg_schema.py`）在 `ensure_*_schema_upgrade`（`connection/pg_schema_upgrade.py`）之前执行**（见 `connection/pg.py::initialize`）。
+- `create_schema` 里用的是 `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`——对**已存在的旧表是 no-op**。因此**任何引用新列的东西（索引、唯一约束、外键、CHECK、触发器）都不许写进 `create_schema`**：旧库上该列还不存在，会直接抛 `asyncpg.exceptions.UndefinedColumnError`，**服务启动失败**（2026-09 的 `idx_tasks_run_id` 就是这样把生产打挂的）。
+- 规则：**先加列，再建依赖它的约束/索引**，且都在对应的 `ensure_*_schema_upgrade` 里；`create_schema` 只负责"全新库的最终形态"，不负责旧库增量。
+
+新增一个列的检查清单（缺一不可）：
+
+1. `create_schema` 的 `CREATE TABLE` 里加上该列（**供全新库**；不要在同一个 `execute` 块里建依赖它的索引）。
+2. `ensure_<域>_schema_upgrade` 的 `additions` 字典里加上 `ALTER TABLE ... ADD COLUMN`（**供旧库**）。
+3. 该列上的索引/约束写在 upgrade 函数里，且**位于加列之后**（同一函数内顺序靠后即可；`create_schema` 里不写）。
+4. SQLite 侧新增 `store/migrations/NNN_*.sql`（按序号升序执行），同样遵守"先加列再建索引"。
+5. 对照 `docs/orchestrator.md §3.1 迁移文件清单` 与 `§3.3 表清单` 同步文档。
+6. **验证不能只用全新 SQLite**（全新库有列，掩盖问题）：至少人工核对 `create_schema` 与 upgrade 的执行顺序；条件允许时对一份"旧 schema"的 PG 库跑一次启动。
+
+> 一句话：**新列的索引永远放 upgrade 函数里（加列之后），`create_schema` 里只放表定义。**
+
+### E. 时间字段（统一 UTC + 前端换算）
+
+- **存储与接口一律 UTC**：PG 会话时区为 `Etc/UTC`，列用 `TIMESTAMP`（无时区）；写入前经 `_pg_param` 把 aware datetime 转成 naive UTC。
+- **接口输出必须带时区偏移**：对外序列化的 datetime 要经过 `_iso_to_dt`（naive 视为 UTC）或用 `_utcnow()`，使其 `isoformat()` 输出 `+00:00`。**不要直接把 asyncpg 返回的 naive datetime 透传**（用户的 `users`/`files` 等 dict 返回路径曾漏掉，导致前端把 UTC 当本地时间显示）。
+- **前端显示**：统一用 `app.js` 的 `parseServerTime()` / `formatDateTime()` / `toLocaleDateTime()`——缺时区偏移时按 UTC 处理，再换算到浏览器本地时区；**禁止**用 `.replace('T',' ').slice(0,19)` 之类原样截断（会显示 UTC 而非本地时间）。
+

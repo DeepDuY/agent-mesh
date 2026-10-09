@@ -53,6 +53,7 @@ async def ensure_agent_schema_upgrade(conn: Any) -> None:
             permission JSONB,
             owner_user_id TEXT,
             owner_team_id TEXT,
+            owner_team_ids JSONB,
             data JSONB,
             created_at TIMESTAMP DEFAULT NOW(),
             updated_at TIMESTAMP DEFAULT NOW()
@@ -72,6 +73,12 @@ async def ensure_agent_schema_upgrade(conn: Any) -> None:
         await conn.execute("ALTER TABLE templates ADD COLUMN owner_user_id TEXT")
     if "owner_team_id" not in tpl_cols:
         await conn.execute("ALTER TABLE templates ADD COLUMN owner_team_id TEXT")
+    if "owner_team_ids" not in tpl_cols:
+        await conn.execute("ALTER TABLE templates ADD COLUMN owner_team_ids JSONB")
+    await conn.execute(
+        "UPDATE templates SET owner_team_ids = to_jsonb(ARRAY[owner_team_id]) "
+        "WHERE owner_team_ids IS NULL AND owner_team_id IS NOT NULL"
+    )
     if "allowed_tools" in tpl_cols:
         await conn.execute("ALTER TABLE templates DROP COLUMN allowed_tools")
     cols = {
@@ -129,7 +136,7 @@ async def ensure_agent_schema_upgrade(conn: Any) -> None:
         )
     """)
     await conn.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_id)"
+        "DROP INDEX IF EXISTS idx_team_members_user"
     )
 
 
@@ -147,11 +154,43 @@ async def ensure_task_schema_upgrade(conn: Any) -> None:
         "attachments": "ALTER TABLE tasks ADD COLUMN attachments JSONB",
         "user_id": "ALTER TABLE tasks ADD COLUMN user_id TEXT",
         "team_id": "ALTER TABLE tasks ADD COLUMN team_id TEXT",
+        "team_ids": "ALTER TABLE tasks ADD COLUMN team_ids JSONB",
+        "run_id": "ALTER TABLE tasks ADD COLUMN run_id TEXT",
     }.items():
         if col not in cols:
             await conn.execute(sql)
+    await conn.execute(
+        "UPDATE tasks SET team_ids = to_jsonb(ARRAY[team_id]) "
+        "WHERE team_ids IS NULL AND team_id IS NOT NULL"
+    )
     if "allowed_tools" in cols:
         await conn.execute("ALTER TABLE tasks DROP COLUMN allowed_tools")
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tasks_run_id ON tasks(run_id)"
+    )
+
+    sched_cols = {
+        r["column_name"]
+        for r in await conn.fetch(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'schedules'"
+        )
+    }
+    if sched_cols and "team_ids" not in sched_cols:
+        await conn.execute("ALTER TABLE schedules ADD COLUMN team_ids JSONB")
+    if sched_cols:
+        await conn.execute(
+            "UPDATE schedules SET team_ids = to_jsonb(ARRAY[team_id]) "
+            "WHERE team_ids IS NULL AND team_id IS NOT NULL"
+        )
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS idempotency_keys (
+            scope TEXT NOT NULL,
+            key TEXT NOT NULL,
+            run_id TEXT,
+            created_at TIMESTAMP DEFAULT NOW(),
+            PRIMARY KEY (scope, key)
+        )
+    """)
 
     res_cols = {
         r["column_name"]

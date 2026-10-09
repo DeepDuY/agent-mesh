@@ -5,8 +5,7 @@ function roleLabel(role) {
 }
 
 function formatTime(value) {
-  if (!value) return '-';
-  return String(value).replace('T', ' ').slice(0, 19);
+  return formatDateTime(value);
 }
 
 async function loadUsers() {
@@ -27,7 +26,7 @@ function renderUsers() {
     <tr>
       <td>${escHtml(u.username)}</td>
       <td>${roleLabel(u.role)}</td>
-      <td>${u.team_name ? escHtml(u.team_name) : '<span class="muted">-</span>'}</td>
+      <td>${u.team_names && u.team_names.length ? escHtml(u.team_names.join('、')) : '<span class="muted">-</span>'}</td>
       <td>${u.disabled ? '<span class="offline">已禁用</span>' : '<span class="online">正常</span>'}</td>
       <td class="mono">${formatTime(u.created_at)}</td>
       <td class="mono">${u.last_login_at ? formatTime(u.last_login_at) : '-'}</td>
@@ -57,14 +56,15 @@ async function createUser() {
   const username = document.getElementById('new-user-username').value.trim();
   const password = document.getElementById('new-user-password').value;
   const role = document.getElementById('new-user-role').value;
-  const team_id = document.getElementById('new-user-team').value;
+  const teamIds = Array.from(
+    document.querySelectorAll('#new-user-team input:checked')).map(c => c.value);
   if (!username || !password) {
     statusEl.textContent = '请填写用户名和密码';
     statusEl.style.color = 'var(--danger)';
     return;
   }
-  if (!team_id) {
-    statusEl.textContent = '请先选择团队（新用户必须归属一个团队）';
+  if (!teamIds.length) {
+    statusEl.textContent = '请至少选择一个团队（新用户必须归属团队）';
     statusEl.style.color = 'var(--danger)';
     return;
   }
@@ -72,7 +72,7 @@ async function createUser() {
     const res = await fetch('/api/auth/users', {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, role, team_id }),
+      body: JSON.stringify({ username, password, role, team_ids: teamIds }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);

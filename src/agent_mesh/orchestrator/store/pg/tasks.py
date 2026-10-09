@@ -43,7 +43,7 @@ class TaskMixin(PostgresBase):
             constraints=constraints,
             status=TaskStatus(row["status"]),
             user_id=row.get("user_id"),
-            team_id=row.get("team_id"),
+            team_ids=_load_json(row.get("team_ids")) or [],
             dispatched_by=row.get("dispatched_by"),
             created_at=_iso_to_dt(row.get("created_at")) or _utcnow(),
             assigned_at=_iso_to_dt(row.get("assigned_at")),
@@ -54,6 +54,7 @@ class TaskMixin(PostgresBase):
             max_retries=row.get("max_retries", 0),
             attachments=attachments,
             depends_on=_load_json(row.get("depends_on")) or [],
+            run_id=row.get("run_id"),
         )
 
     async def _load_result(self, task_id: str) -> TaskResult | None:
@@ -78,7 +79,7 @@ class TaskMixin(PostgresBase):
         task: Task,
         dispatched_by: str | None = None,
         user_id: str | None = None,
-        team_id: str | None = None,
+        team_ids: list[str] | None = None,
     ) -> None:
         await self._db.execute(
             """
@@ -86,8 +87,9 @@ class TaskMixin(PostgresBase):
                 task_id, agent_id, mode, instruction, workdir, timeout_s, model,
                 output_limit, status, max_retries, retry_count,
                 created_at, assigned_at, started_at, finished_at, depends_on,
-                dispatched_by, user_id, team_id, metadata, session_id, skills, attachments
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                dispatched_by, user_id, team_ids, metadata, session_id, skills, attachments,
+                run_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?::jsonb, ?::jsonb, ?)
             """,
             (
                 task.task_id, task.agent_id, task.mode, task.instruction,
@@ -104,11 +106,12 @@ class TaskMixin(PostgresBase):
                 _dump_json(task.depends_on),
                 dispatched_by,
                 user_id,
-                team_id,
+                _dump_json(team_ids or []),
                 _dump_json(None),
                 task.constraints.session_id,
                 _dump_json(task.constraints.skills),
                 _dump_json([a.model_dump() for a in task.attachments]),
+                task.run_id,
             ),
         )
 
@@ -129,13 +132,17 @@ class TaskMixin(PostgresBase):
         started_after: datetime | None,
         started_before: datetime | None,
         owner_user_id: str | None = None,
-        owner_team_id: str | None = None,
+        owner_team_ids: list[str] | None = None,
+        run_id: str | None = None,
     ) -> tuple[str, list[Any]]:
         where = " WHERE 1=1"
         params: list[Any] = []
         if agent_id:
             where += " AND agent_id = ?"
             params.append(agent_id)
+        if run_id:
+            where += " AND run_id = ?"
+            params.append(run_id)
         if status:
             where += " AND status = ?"
             params.append(status)
@@ -152,14 +159,19 @@ class TaskMixin(PostgresBase):
         if started_before is not None:
             where += " AND started_at <= ?"
             params.append(started_before)
-        if owner_user_id is not None or owner_team_id is not None:
+        if owner_user_id is not None or owner_team_ids:
             clauses = []
             if owner_user_id is not None:
                 clauses.append("user_id = ?")
                 params.append(owner_user_id)
-            if owner_team_id is not None:
-                clauses.append("team_id = ?")
-                params.append(owner_team_id)
+            if owner_team_ids:
+                placeholders = ",".join("?" * len(owner_team_ids))
+                clauses.append(
+                    "team_ids IS NOT NULL AND EXISTS ("
+                    "SELECT 1 FROM jsonb_array_elements_text(team_ids) AS t(v) "
+                    f"WHERE t.v IN ({placeholders}))"
+                )
+                params.extend(owner_team_ids)
             where += " AND (" + " OR ".join(clauses) + ")"
         return where, params
 
@@ -174,11 +186,12 @@ class TaskMixin(PostgresBase):
         limit: int = 100,
         offset: int = 0,
         owner_user_id: str | None = None,
-        owner_team_id: str | None = None,
+        owner_team_ids: list[str] | None = None,
+        run_id: str | None = None,
     ) -> list[Task]:
         where, params = self._tasks_where(
             agent_id, status, mode, search, started_after, started_before,
-            owner_user_id, owner_team_id,
+            owner_user_id, owner_team_ids, run_id,
         )
         sql = f"SELECT * FROM tasks{where} ORDER BY created_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
@@ -197,14 +210,45 @@ class TaskMixin(PostgresBase):
         started_after: datetime | None = None,
         started_before: datetime | None = None,
         owner_user_id: str | None = None,
-        owner_team_id: str | None = None,
+        owner_team_ids: list[str] | None = None,
+        run_id: str | None = None,
     ) -> int:
         where, params = self._tasks_where(
             agent_id, status, mode, search, started_after, started_before,
-            owner_user_id, owner_team_id,
+            owner_user_id, owner_team_ids, run_id,
         )
         row = await self._db.fetchrow(f"SELECT COUNT(*) AS n FROM tasks{where}", tuple(params))
         return int(row["n"]) if row else 0
+
+    async def count_tasks_by_status(
+        self,
+        run_id: str,
+        owner_user_id: str | None = None,
+        owner_team_ids: list[str] | None = None,
+    ) -> dict[str, int]:
+        where, params = self._tasks_where(
+            None, None, None, None, None, None,
+            owner_user_id, owner_team_ids, run_id,
+        )
+        rows = await self._db.execute(
+            f"SELECT status, COUNT(*) AS n FROM tasks{where} GROUP BY status",
+            tuple(params),
+        )
+        return {r["status"]: int(r["n"]) for r in rows}
+
+    async def get_idempotent_run(self, scope: str, key: str) -> str | None:
+        row = await self._db.fetchrow(
+            "SELECT run_id FROM idempotency_keys WHERE scope = ? AND key = ?",
+            (scope, key),
+        )
+        return row["run_id"] if row else None
+
+    async def set_idempotent_run(self, scope: str, key: str, run_id: str) -> None:
+        await self._db.execute(
+            "INSERT INTO idempotency_keys (scope, key, run_id) VALUES (?, ?, ?) "
+            "ON CONFLICT (scope, key) DO NOTHING",
+            (scope, key, run_id),
+        )
 
     async def delete_task(self, task_id: str) -> bool:
         await self._db.execute("DELETE FROM task_queue WHERE task_id = ?", (task_id,))

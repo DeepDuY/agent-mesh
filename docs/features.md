@@ -56,3 +56,15 @@
 - **存储**：`task_logs` 表（id 自增/task_id/kind/content/created_at，迁移 012）；删除任务级联清日志。
 - **查询**：`GET /api/tasks/{task_id}/logs?after_id=&limit=`（用户 token）增量拉取。
 - **看板**：任务详情弹窗新增「实时输出」区，执行中按 `task_log_poll_interval`（默认 5s）轮询增量渲染（text 普通/error 红/complete 绿），关闭弹窗自动停止轮询。
+
+## 8. 批量派发与批次（Run）
+
+面向「主 Agent 一次把同一条任务发给多个节点，再一次性看结果」——把 N 次派发/查询压成常数次调用。
+
+- **批量派发**：`POST /api/tasks/dispatch-batch` 用 `targets`（节点引用数组，去重）扇出一批任务，共享一个 `run_id`（`tasks.run_id`，迁移 023）。逐目标独立校验（节点 ACL/模型/技能/命令策略），不合格目标进 `denied`（命令被拦截时另落一条 `denied` 任务），不影响其余；整体返回 `200`。
+- **护栏**：整批 `max_batch_fanout`（默认 200）、单节点每批 `max_run_per_node`（默认 50），超限目标进 `denied`。
+- **幂等**：`Idempotency-Key` 头（或 body `idempotency_key`）→ `idempotency_keys` 表 `(scope=调用者, key)` 记住 `run_id`；重复请求返回同一批次（`duplicate: true`），不重复派发。
+- **聚合监控**：`GET /api/runs/{run_id}` 一次返回 `counts`（各状态数量）+ 每任务一行紧凑摘要（不含日志）；`status?` 过滤、`include_tasks=false` 只要计数、`wait`(≤30s) 长轮询直到任一任务状态变化或整批结束。
+- **批次操作**：`POST /api/runs/{run_id}/cancel` 终止整批；`/retry` 原子重排 `failed`/`timed_out` 任务回 `queued`。
+- **fan-out / fan-in**：`depends_on_run` 在派发时展开为该批次全部任务 id 追加到 `depends_on`，复用既有依赖门禁 + 级联取消实现「等全批完成再汇总」；`attachments_from` 把上游任务产物复制进文件库（md5 去重）作为下游附件，省去「下载再上传」。
+- **看板**：任务列表展示批次号并支持按 `run_id` 过滤，详情可「只看此批次」。

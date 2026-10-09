@@ -9,6 +9,7 @@ from agent_mesh.orchestrator.store.pg.base import PostgresBase
 def _row_to_template(row: dict[str, Any]) -> dict[str, Any]:
     row["permission"] = _load_json(row.get("permission"))
     row["data"] = _load_json(row.get("data"))
+    row["owner_team_ids"] = _load_json(row.get("owner_team_ids")) or []
     return row
 
 
@@ -25,14 +26,14 @@ class TemplateMixin(PostgresBase):
         permission: dict[str, Any] | None = None,
         data: dict[str, Any] | None = None,
         owner_user_id: str | None = None,
-        owner_team_id: str | None = None,
+        owner_team_ids: list[str] | None = None,
     ) -> int:
         row = await self._db.fetchrow(
             """
             INSERT INTO templates
                 (name, description, node_description, system_prompt, llm_model,
-                 permission, data, owner_user_id, owner_team_id)
-            VALUES (?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?) RETURNING id
+                 permission, data, owner_user_id, owner_team_ids)
+            VALUES (?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?::jsonb) RETURNING id
             """,
             (
                 name,
@@ -43,7 +44,7 @@ class TemplateMixin(PostgresBase):
                 _dump_json(permission),
                 _dump_json(data),
                 owner_user_id,
-                owner_team_id,
+                _dump_json(owner_team_ids or []),
             ),
         )
         return row["id"]
@@ -74,14 +75,14 @@ class TemplateMixin(PostgresBase):
             "permission",
             "data",
             "owner_user_id",
-            "owner_team_id",
+            "owner_team_ids",
         }
         sets: list[str] = []
         params: list[Any] = []
         for key, value in fields.items():
             if key not in allowed:
                 continue
-            if key in ("permission", "data"):
+            if key in ("permission", "data", "owner_team_ids"):
                 sets.append(f"{key}=?::jsonb")
                 params.append(_dump_json(value))
             else:

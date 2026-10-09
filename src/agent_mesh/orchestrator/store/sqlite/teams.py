@@ -67,9 +67,27 @@ class TeamMixin(SQLiteBase):
 
     async def delete_team(self, team_id: str) -> bool:
         await self._execute("DELETE FROM team_members WHERE team_id = ?", (team_id,))
-        # Detach the deleted team from tasks and node ACLs so it does not linger
-        # as a dangling reference (ghost team pointer).
+        # Detach the deleted team from owned resources and node ACLs so it does
+        # not linger as a dangling reference (ghost team pointer). The legacy
+        # single-team columns are also cleared.
+        for table, column in (
+            ("tasks", "team_ids"),
+            ("schedules", "team_ids"),
+            ("templates", "owner_team_ids"),
+        ):
+            await self._execute(
+                f"UPDATE {table} SET {column} = COALESCE("
+                f"(SELECT json_group_array(value) FROM json_each({table}.{column}) "
+                f"WHERE value <> ?), '[]') "
+                f"WHERE {column} IS NOT NULL "
+                f"AND EXISTS (SELECT 1 FROM json_each({table}.{column}) WHERE value = ?)",
+                (team_id, team_id),
+            )
         await self._execute("UPDATE tasks SET team_id = NULL WHERE team_id = ?", (team_id,))
+        await self._execute("UPDATE schedules SET team_id = NULL WHERE team_id = ?", (team_id,))
+        await self._execute(
+            "UPDATE templates SET owner_team_id = NULL WHERE owner_team_id = ?", (team_id,)
+        )
         for agent in await self.list_agents():
             access = dict(agent.access or {})
             teams = access.get("teams") or []
@@ -89,17 +107,22 @@ class TeamMixin(SQLiteBase):
         )
         return [r["user_id"] for r in rows]
 
-    async def set_user_team(self, user_id: str, team_id: str | None) -> None:
-        """Assign a user to a team (at most one). Pass ``None`` to remove."""
-        await self._execute("DELETE FROM team_members WHERE user_id = ?", (user_id,))
-        if team_id:
-            await self._execute(
-                "INSERT INTO team_members (team_id, user_id) VALUES (?, ?)",
-                (team_id, user_id),
-            )
-
-    async def get_user_team(self, user_id: str) -> str | None:
-        rows = await self._execute(
-            "SELECT team_id FROM team_members WHERE user_id = ?", (user_id,)
+    async def add_user_to_team(self, user_id: str, team_id: str) -> None:
+        """Add a user to a team (idempotent; a user may belong to many teams)."""
+        await self._execute(
+            "INSERT OR IGNORE INTO team_members (team_id, user_id) VALUES (?, ?)",
+            (team_id, user_id),
         )
-        return rows[0]["team_id"] if rows else None
+
+    async def remove_user_from_team(self, user_id: str, team_id: str) -> None:
+        await self._execute(
+            "DELETE FROM team_members WHERE team_id = ? AND user_id = ?",
+            (team_id, user_id),
+        )
+
+    async def get_user_teams(self, user_id: str) -> list[str]:
+        rows = await self._execute(
+            "SELECT team_id FROM team_members WHERE user_id = ? ORDER BY team_id",
+            (user_id,),
+        )
+        return [r["team_id"] for r in rows]

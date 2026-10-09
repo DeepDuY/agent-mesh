@@ -26,7 +26,7 @@
 
 ## 4. 用户管理（admin）
 
-- `POST /api/auth/users` 创建用户：校验用户名（`[A-Za-z0-9_.-]`）、角色（`admin`/`user`）**与 `team_id`（必填，且团队必须存在——一个用户只属于一个团队）**，返回一次性 API token；`GET /api/auth/users` 列表（不含任何 token/hash，含 `team_id`/`team_name`/`token_expires_at`）；`DELETE /api/auth/users/{username}` 删除（禁止删 admin 与自身；同时清理 `team_members`/`agent_users` 幽灵关联）；`POST /api/auth/users/{username}/token` 轮换（可选 `{expires_in_days}`）；`POST /api/auth/users/{username}/password` 重置密码；`POST /api/auth/change-password` 自助改密。
+- `POST /api/auth/users` 创建用户：校验用户名（`[A-Za-z0-9_.-]`）、角色（`admin`/`user`）**与 `team_ids`（至少一个，且团队必须存在；兼容旧的单值 `team_id`）——一个用户可属于多个团队**，返回一次性 API token；`GET /api/auth/users` 列表（不含任何 token/hash，含 `team_ids`/`team_names`，并保留 `team_id`/`team_name`=第一个团队兼容旧调用，及 `token_expires_at`）；`DELETE /api/auth/users/{username}` 删除（禁止删 admin 与自身；同时清理 `team_members`/`agent_users` 幽灵关联）；`POST /api/auth/users/{username}/token` 轮换（可选 `{expires_in_days}`）；`POST /api/auth/users/{username}/password` 重置密码；`POST /api/auth/change-password` 自助改密。
 - **自助轮换**：`POST /api/auth/token`（`require_user_token`）让用户生成/轮换自己的 API token，可选 `{expires_in_days}`（留空 = 永久）；明文只返回一次，旧 API token 立即失效。Web 看板「个人中心」即调用此端点。
 - 禁用用户（`users.disabled=1`）后：REST 鉴权拒绝（401），登录拒绝（403）。
 

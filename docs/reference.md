@@ -102,13 +102,13 @@ curl -s -X POST http://127.0.0.1:8000/api/tasks/dispatch \
 ### 用户管理（admin）
 
 ```bash
-# 创建用户（必须归属一个团队；返回的 token 只显示这一次）
+# 创建用户（至少归属一个团队，可多选；返回的 token 只显示这一次）
 TEAM_ID=$(curl -s -X POST http://127.0.0.1:8000/api/teams \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"name":"ops"}' | python -c 'import sys,json;print(json.load(sys.stdin)["team"]["team_id"])')
 curl -s -X POST http://127.0.0.1:8000/api/auth/users \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d "{\"username\":\"bob\",\"password\":\"secret123\",\"role\":\"user\",\"team_id\":\"$TEAM_ID\"}"
+  -d "{\"username\":\"bob\",\"password\":\"secret123\",\"role\":\"user\",\"team_ids\":[\"$TEAM_ID\"]}"
 
 # 用户列表 / 轮换 token / 改密 / 删除
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/auth/users
@@ -199,12 +199,16 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/tasks/dispatch` | 下发任务（`mode` 必填；`session_id` 选填续用 opencode 会话；`attachments` 选填引用文件库 file_id） |
+| POST | `/api/tasks/dispatch` | 下发任务（`mode` 必填；`session_id` 选填续用 opencode 会话；`attachments` 选填引用文件库 file_id；另有 `run_id`、`depends_on_run`、`attachments_from`） |
+| POST | `/api/tasks/dispatch-batch` | **批量下发**：把同一条任务发给多个 `targets`，返回一个 `run_id`；逐目标独立校验，失败项进 `denied`。支持 `Idempotency-Key` 幂等 |
 | GET | `/api/tasks/{task_id}` | 查询任务详情 |
 | GET | `/api/tasks/{task_id}/status` | 查询任务状态 |
 | POST | `/api/tasks/{task_id}/cancel` | 终止任务 |
 | GET | `/api/tasks/{task_id}/logs` | 任务实时执行输出（增量，`?after_id=`、`?limit=`） |
-| GET | `/api/tasks` | 任务列表（支持 `limit`/`offset` 分页、`status`/`mode` 过滤、`search` 模糊、`started_after`/`started_before` 开始时间区间，返回 `total` 总数） |
+| GET | `/api/tasks` | 任务列表（支持 `limit`/`offset` 分页、`status`/`mode`/`run_id` 过滤、`search` 模糊、`started_after`/`started_before` 开始时间区间，返回 `total` 总数） |
+| GET | `/api/runs/{run_id}` | **批次聚合**：`counts` 各状态数量 + 每任务一行紧凑摘要；`?status=`/`?include_tasks=false`/`?wait=30` 长轮询 |
+| POST | `/api/runs/{run_id}/cancel` | 终止整批 |
+| POST | `/api/runs/{run_id}/retry` | 重跑批内失败/超时任务 |
 | DELETE | `/api/tasks/{task_id}` | 删除单个任务 |
 | POST | `/api/tasks/batch-delete` | 批量删除：`{"task_ids": [...]}` 按 id；或 `{"all_matching": true, "status": "..."}` 删除匹配筛选的全部任务 |
 | GET | `/api/agents` | 节点列表 |
@@ -298,7 +302,7 @@ curl -s -X POST http://127.0.0.1:8000/api/tasks/dispatch \
 
 - cron 为 5 段（分 时 日 月 周），支持 `*`、`a`、`a-b`、`a,b`、`*/n`；周字段 0/7 均为周日；日/周同时限定时按 Vixie 语义取「或」。
 - 求值时区：任务自身 `timezone` > 设置 `schedule_timezone` > 系统时区；`next_run_at` 以 UTC 存储。非法 cron 会停用该任务并记录原因。
-- 可见性同任务：自己 + 团队，admin 全部。
+- 可见性同任务：自己 + 所在团队之一，admin 全部。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|

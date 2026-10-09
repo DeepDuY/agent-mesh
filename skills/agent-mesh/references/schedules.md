@@ -24,7 +24,7 @@
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | POST | `/schedules` | 新建 |
-| GET | `/schedules` | 列表（只看得到自己/本团队的） |
+| GET | `/schedules` | 列表（只看得到自己/所属团队的） |
 | GET | `/schedules/{id}` | 详情 |
 | PATCH | `/schedules/{id}` | 更新（改 cron/时区/启停会重算下次运行） |
 | DELETE | `/schedules/{id}` | 删除 |
@@ -70,4 +70,4 @@ curl -s -X PATCH -H "Authorization: Bearer $AGENT_MESH_TOKEN" -H "Content-Type: 
 
 - 定时任务派发的任务，其 `task_events` 里有一条 `scheduled` 事件，含 `schedule_id`/`schedule_name`/`trigger`（`scheduled` 或 `manual`）。
 - `next_run_at` / `last_run_at` 为 UTC ISO；`last_status` 为最近一次派发结果（`queued` / `skipped` / `denied` / `error: ...`）。
-- 可见性同任务：只能管理自己（或本团队）创建的定时任务，无权的返回 404。
+- 可见性同任务：只能管理自己（或所属团队）创建的定时任务，无权的返回 404。

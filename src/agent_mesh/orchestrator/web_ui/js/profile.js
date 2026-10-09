@@ -32,8 +32,7 @@ async function loadProfile() {
 }
 
 function fmtProfileTime(value) {
-  if (!value) return '-';
-  return String(value).replace('T', ' ').slice(0, 19);
+  return formatDateTime(value);
 }
 
 function renderProfileInfo(me) {
@@ -42,7 +41,7 @@ function renderProfileInfo(me) {
   const rows = [
     ['用户名', me.username || '-'],
     ['角色', me.role === 'admin' ? '管理员' : '普通用户'],
-    ['团队', me.team_name || '-'],
+    ['团队', (me.team_names && me.team_names.length) ? me.team_names.join('、') : '-'],
     ['最近登录', fmtProfileTime(me.last_login_at)],
   ];
   el.innerHTML = rows.map(([k, v]) =>

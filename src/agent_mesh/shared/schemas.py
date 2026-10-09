@@ -97,7 +97,7 @@ class Task(BaseModel):
     constraints: Constraints = Field(default_factory=Constraints)
     status: TaskStatus = TaskStatus.QUEUED
     user_id: str | None = None
-    team_id: str | None = None
+    team_ids: list[str] = Field(default_factory=list)
     dispatched_by: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     assigned_at: datetime | None = None
@@ -108,6 +108,7 @@ class Task(BaseModel):
     max_retries: int = 0
     attachments: list[FileRef] = Field(default_factory=list)
     depends_on: list[str] = Field(default_factory=list)
+    run_id: str | None = None
 
     def model_dump_json_safe(self) -> dict[str, Any]:
         return {
@@ -118,7 +119,8 @@ class Task(BaseModel):
             "constraints": self.constraints.model_dump(),
             "status": self.status.value,
             "user_id": self.user_id,
-            "team_id": self.team_id,
+            "team_ids": list(self.team_ids),
+            "team_id": self.team_ids[0] if self.team_ids else None,
             "dispatched_by": self.dispatched_by,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "assigned_at": self.assigned_at.isoformat() if self.assigned_at else None,
@@ -129,6 +131,7 @@ class Task(BaseModel):
             "max_retries": self.max_retries,
             "attachments": [a.model_dump() for a in self.attachments],
             "depends_on": list(self.depends_on),
+            "run_id": self.run_id,
         }
 
 

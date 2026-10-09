@@ -16,11 +16,11 @@ class TenancyMixin:
     def is_admin(user: dict[str, Any] | None) -> bool:
         return bool(user) and user.get("role") == "admin"
 
-    async def user_team(self, user: dict[str, Any] | None) -> str | None:
+    async def user_teams(self, user: dict[str, Any] | None) -> set[str]:
         user_id = (user or {}).get("user_id")
         if not user_id:
-            return None
-        return await self.store.get_user_team(user_id)
+            return set()
+        return set(await self.store.get_user_teams(user_id))
 
     async def can_access_agent(self, user: dict[str, Any] | None, agent) -> bool:
         """Whether ``user`` may operate ``agent`` (admin always may)."""
@@ -32,8 +32,8 @@ class TenancyMixin:
         user_id = (user or {}).get("user_id")
         if user_id and user_id in (access.get("users") or []):
             return True
-        team = await self.user_team(user)
-        return bool(team and team in (access.get("teams") or []))
+        teams = await self.user_teams(user)
+        return bool(teams & set(access.get("teams") or []))
 
     async def accessible_agent_ids(
         self, user: dict[str, Any] | None
@@ -42,12 +42,12 @@ class TenancyMixin:
         if self.is_admin(user):
             return None
         user_id = (user or {}).get("user_id")
-        team = await self.user_team(user)
+        teams = await self.user_teams(user)
         ids: set[int] = set()
         for a in await self.store.list_agents():
             access = a.access or {}
             if (user_id and user_id in (access.get("users") or [])) or (
-                team and team in (access.get("teams") or [])
+                teams & set(access.get("teams") or [])
             ):
                 ids.add(a.id)
         return ids
@@ -89,8 +89,8 @@ class TenancyMixin:
         user_id = (user or {}).get("user_id")
         if user_id and task.user_id == user_id:
             return True
-        team = await self.user_team(user)
-        return bool(team and task.team_id == team)
+        teams = await self.user_teams(user)
+        return bool(teams & set(task.team_ids or []))
 
     async def edge_can_access_task(self, auth: dict[str, Any] | None, task) -> bool:
         """Whether an edge identity may read/write ``task``.

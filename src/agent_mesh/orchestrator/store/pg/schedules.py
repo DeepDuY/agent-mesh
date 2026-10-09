@@ -17,6 +17,7 @@ def _row_to_schedule(row: dict[str, Any]) -> dict[str, Any]:
     data["enabled"] = bool(data.get("enabled"))
     data["constraints"] = _load_json(data.get("constraints")) or {}
     data["attachments"] = _load_json(data.get("attachments")) or []
+    data["team_ids"] = _load_json(data.get("team_ids")) or []
     for key in ("next_run_at", "last_run_at", "created_at", "updated_at"):
         data[key] = _iso_to_dt(data.get(key))
     return data
@@ -38,7 +39,7 @@ class ScheduleMixin(PostgresBase):
         constraints: dict[str, Any] | None = None,
         attachments: list[str] | None = None,
         user_id: str | None = None,
-        team_id: str | None = None,
+        team_ids: list[str] | None = None,
         created_by: str | None = None,
         next_run_at: datetime | None = None,
     ) -> int:
@@ -47,9 +48,9 @@ class ScheduleMixin(PostgresBase):
             """
             INSERT INTO schedules (
                 name, cron, timezone, enabled, agent_ref, mode, instruction,
-                constraints, attachments, user_id, team_id, created_by,
+                constraints, attachments, user_id, team_ids, created_by,
                 next_run_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?::jsonb, ?, ?, ?, ?)
             RETURNING id
             """,
             (
@@ -63,7 +64,7 @@ class ScheduleMixin(PostgresBase):
                 _dump_json(constraints or {}),
                 _dump_json(attachments or []),
                 user_id,
-                team_id,
+                _dump_json(team_ids or []),
                 created_by,
                 next_run_at,
                 now,
@@ -87,7 +88,7 @@ class ScheduleMixin(PostgresBase):
     async def update_schedule(self, schedule_id: int, **fields: Any) -> bool:
         allowed = {
             "name", "cron", "timezone", "enabled", "agent_ref", "mode",
-            "instruction", "constraints", "attachments", "user_id", "team_id",
+            "instruction", "constraints", "attachments", "user_id", "team_ids",
             "next_run_at", "last_run_at", "last_task_id", "last_status",
         }
         sets: list[str] = []
@@ -95,7 +96,7 @@ class ScheduleMixin(PostgresBase):
         for key, value in fields.items():
             if key not in allowed:
                 continue
-            if key in ("constraints", "attachments"):
+            if key in ("constraints", "attachments", "team_ids"):
                 sets.append(f"{key}=?::jsonb")
                 params.append(_dump_json(value))
             else:

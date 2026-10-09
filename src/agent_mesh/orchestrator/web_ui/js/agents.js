@@ -287,7 +287,7 @@ async function showAgentDetail(agentId) {
     return;
   }
   const a = (await res.json()).agent;
-  const lastSeen = a.last_seen ? new Date(a.last_seen).toLocaleString() : '-';
+  const lastSeen = toLocaleDateTime(a.last_seen);
   const tasks = a.tasks || [];
   const memPct = a.mem_percent != null ? a.mem_percent : null;
   const memInfo = (a.mem_used_mb != null && a.mem_total_mb != null)

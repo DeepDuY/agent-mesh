@@ -102,6 +102,7 @@
           </div>
           <div class="filter-bar">
             <input id="task-search" type="text" placeholder="搜索指令 / 任务ID / 节点" class="filter-input" onkeydown="if(event.key==='Enter')applyTaskFilters()">
+            <input id="task-run-filter" type="text" placeholder="批次 run_id（r-…）" class="filter-input" style="width:140px" onkeydown="if(event.key==='Enter')applyTaskFilters()">
             <button class="btn" onclick="applyTaskFilters()">搜索</button>
             <button class="btn btn-secondary" onclick="clearTaskFilters()">重置</button>
             <select id="task-status-filter" class="filter-select" onchange="applyTaskFilters()">
@@ -251,7 +252,7 @@
             <div class="form-row">
               <input id="new-user-username" type="text" placeholder="用户名（字母/数字/._-）" autocomplete="off">
               <input id="new-user-password" type="password" placeholder="密码（至少 6 位）" autocomplete="new-password">
-              <select id="new-user-team" title="新用户必须归属一个团队"></select>
+              <div id="new-user-team" class="checkbox-list" title="新用户至少归属一个团队（可多选）"></div>
               <select id="new-user-role">
                 <option value="user">普通用户</option>
                 <option value="admin">管理员</option>
@@ -464,7 +465,7 @@
         <input id="team-desc" type="text" placeholder="可选">
       </div>
       <div class="form-group">
-        <label>成员（一个用户至多属于一个团队；勾选会将其从原团队移入本团队）</label>
+        <label>成员（一个用户可属于多个团队，勾选即加入本团队）</label>
         <div id="team-members" class="checkbox-list"></div>
       </div>
       <div id="team-status" class="status-msg"></div>

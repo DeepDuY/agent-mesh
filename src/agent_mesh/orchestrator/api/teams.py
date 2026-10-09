@@ -39,7 +39,7 @@ def mount_team_routes(
     store: TaskStore,
     require_admin,
 ) -> None:
-    """Team/group management (admin-only). A user belongs to at most one team."""
+    """Team/group management (admin-only). A user may belong to several teams."""
 
     async def _public(team: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -117,8 +117,8 @@ def mount_team_routes(
             target = await _get_user_by_id(store, payload.user_id)
         if target is None:
             raise HTTPException(status_code=404, detail="user not found")
-        # A user belongs to at most one team: this moves them if already in one.
-        await store.store.set_user_team(target["user_id"], team_id)
+        # A user may belong to several teams: this only adds the membership.
+        await store.store.add_user_to_team(target["user_id"], team_id)
         return {"team": await _public(await store.store.get_team(team_id))}
 
     @router.delete("/teams/{team_id}/members/{user_id}")
@@ -131,9 +131,7 @@ def mount_team_routes(
         if target is None:
             target = await _get_user_by_id(store, user_id)
         if target is not None:
-            current = await store.store.get_user_team(target["user_id"])
-            if current == team_id:
-                await store.store.set_user_team(target["user_id"], None)
+            await store.store.remove_user_from_team(target["user_id"], team_id)
         return {"team": await _public(await store.store.get_team(team_id))}
 
     @router.put("/teams/{team_id}/nodes")

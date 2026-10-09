@@ -1,9 +1,7 @@
 let currentSchedules = [];
 
 function fmtLocal(iso) {
-  if (!iso) return '-';
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? escHtml(iso) : d.toLocaleString();
+  return toLocaleDateTime(iso);
 }
 
 async function loadSchedules() {

@@ -60,7 +60,7 @@ def _dispatch(client: TestClient, headers, instruction="echo hi"):
     )
 
 
-def test_team_crud_and_single_membership(client: TestClient):
+def test_team_crud_and_multi_membership(client: TestClient):
     uid_a, _ = _user(client, "alice")
     uid_b, _ = _user(client, "bob")
     team = client.post(
@@ -70,15 +70,40 @@ def test_team_crud_and_single_membership(client: TestClient):
     team_id = team.json()["team"]["team_id"]
 
     client.post(f"/api/teams/{team_id}/members", json={"user_id": uid_a}, headers=_admin())
-    teams = client.get("/api/teams", headers=_admin()).json()["teams"]
-    assert teams[0]["members"] == [uid_a]
 
-    # A user belongs to at most one team: adding to another moves them.
+    # A user may belong to several teams: adding to another keeps the first.
     team2 = client.post("/api/teams", json={"name": "dev"}, headers=_admin()).json()["team"]
     client.post(f"/api/teams/{team2['team_id']}/members", json={"user_id": uid_a}, headers=_admin())
-    assert client.get("/api/teams", headers=_admin()).json()["teams"]
-    # (bob never added)
-    _ = uid_b
+    by_name = {t["name"]: t for t in client.get("/api/teams", headers=_admin()).json()["teams"]}
+    assert uid_a in by_name["ops"]["members"]
+    assert uid_a in by_name["dev"]["members"]
+    assert uid_b in by_name["team-bob"]["members"]
+
+    # Removing from one team leaves the other membership intact.
+    client.delete(f"/api/teams/{team_id}/members/{uid_a}", headers=_admin())
+    by_name = {t["name"]: t for t in client.get("/api/teams", headers=_admin()).json()["teams"]}
+    assert uid_a not in by_name["ops"]["members"]
+    assert uid_a in by_name["dev"]["members"]
+
+
+def test_user_in_multiple_teams_gets_union(client: TestClient):
+    _poll(client)
+    team_a = _team_id(client, "team-a")
+    team_b = _team_id(client, "team-b")
+    uid, h = _user(client, "carol")
+    client.post(f"/api/teams/{team_a}/members", json={"user_id": uid}, headers=_admin())
+    client.post(f"/api/teams/{team_b}/members", json={"user_id": uid}, headers=_admin())
+    client.patch(
+        f"/api/agents/{DEVICE}/access",
+        json={"teams": [team_a, team_b]},
+        headers=_admin(),
+    )
+    # Access from either team is enough.
+    assert len(client.get("/api/agents", headers=h).json()["agents"]) == 1
+    tid = _dispatch(client, h).json()["task_id"]
+    task = client.get(f"/api/tasks/{tid}", headers=h).json()["task"]
+    # The task is owned by all of the dispatcher's teams.
+    assert set(task["team_ids"]) >= {team_a, team_b}
 
 
 def test_node_access_controls_listing_and_dispatch(client: TestClient):
@@ -310,10 +335,10 @@ def test_delete_user_and_team_cleanup(client: TestClient):
     assert uid in agent["metadata"]["allowed_users"]
     assert team_id in (agent["access"] or {}).get("teams", [])
 
-    # Delete the team: task detaches, node ACL loses the team.
+    # Delete the team: task detaches from it, node ACL loses the team.
     assert client.delete(f"/api/teams/{team_id}", headers=_admin()).status_code == 200
     task = client.get(f"/api/tasks/{task_id}", headers=_admin()).json()["task"]
-    assert task["team_id"] is None
+    assert team_id not in (task.get("team_ids") or [])
     agent = client.get(f"/api/agents/{DEVICE}/detail", headers=_admin()).json()["agent"]
     assert team_id not in ((agent["access"] or {}).get("teams") or [])
 
