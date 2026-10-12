@@ -10,6 +10,16 @@ const OV_STATUS_LABELS = {
 const OV_STATUS_ORDER = ['queued', 'pending_review', 'assigned', 'working', 'completed', 'failed', 'timed_out', 'cancelled', 'denied'];
 const OV_MODE_ORDER = ['llm', 'command'];
 const OV_MODE_LABELS = { llm: 'LLM', command: '命令' };
+// Heatmap palette: 5 discrete levels, light-yellow -> orange -> red.
+const OV_HEAT_COLORS = ['#fef9c3', '#fcd34d', '#fb923c', '#ea580c', '#dc2626'];
+
+// Map an intensity ratio (v/max, 0..1) to one of the 5 heat levels. sqrt keeps
+// low counts from saturating; v==0 is handled by the caller (neutral cell).
+function ovHeatColor(ratio) {
+  const t = Math.sqrt(Math.max(0, Math.min(1, ratio)));
+  const idx = Math.min(5, Math.max(1, Math.ceil(t * 5)));
+  return OV_HEAT_COLORS[idx - 1];
+}
 
 let ovRange = '7d';
 
@@ -170,13 +180,13 @@ function ovRenderHeatmap(el, heatmap, after, before) {
     html += `<div class="heat-rowlabel">${h % 3 === 0 ? ovPad(h) : ''}</div>`;
     for (const day of days) {
       const v = counts[`${day.key}#${h}`] || 0;
-      const alpha = v === 0 ? 0.04 : 0.18 + 0.82 * Math.sqrt(v / max);
-      html += `<div class="heat-cell" title="${day.label} ${ovPad(h)}:00 — ${v} 个任务" style="background:rgba(59,130,246,${alpha.toFixed(2)})"></div>`;
+      const bg = v > 0 ? ` style="background:${ovHeatColor(v / max)}"` : '';
+      html += `<div class="heat-cell" title="${day.label} ${ovPad(h)}:00 — ${v} 个任务"${bg}></div>`;
     }
   }
   html += '</div>';
   html += '<div class="heat-legend"><span>少</span>' +
-    [0.04, 0.28, 0.5, 0.72, 1].map(a => `<i style="background:rgba(59,130,246,${a})"></i>`).join('') +
+    OV_HEAT_COLORS.map(c => `<i style="background:${c}"></i>`).join('') +
     '<span>多</span></div>';
   setHtmlIfChanged(el, html);
 }
