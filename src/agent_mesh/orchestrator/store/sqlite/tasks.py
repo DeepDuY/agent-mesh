@@ -8,6 +8,32 @@ from agent_mesh.shared.constants import TaskStatus
 from agent_mesh.shared.schemas import ArtifactRef, Constraints, FileRef, Task, TaskResult
 
 
+def _tenancy_clause(
+    owner_user_id: str | None, owner_team_ids: list[str] | None
+) -> tuple[str, list[Any]]:
+    """SQL fragment restricting tasks to a user's own + their teams' rows.
+
+    Shared by :meth:`TaskMixin._tasks_where` and the dashboard aggregation so
+    the two never drift apart. Returns ``("", [])`` when no restriction applies
+    (admin), else a leading ``" AND (...)"`` clause plus its parameters.
+    """
+    clauses: list[str] = []
+    params: list[Any] = []
+    if owner_user_id is not None:
+        clauses.append("user_id = ?")
+        params.append(owner_user_id)
+    if owner_team_ids:
+        placeholders = ",".join("?" * len(owner_team_ids))
+        clauses.append(
+            "team_ids IS NOT NULL AND EXISTS ("
+            f"SELECT 1 FROM json_each(team_ids) WHERE value IN ({placeholders}))"
+        )
+        params.extend(owner_team_ids)
+    if not clauses:
+        return "", []
+    return " AND (" + " OR ".join(clauses) + ")", params
+
+
 class TaskMixin(SQLiteBase):
     def _row_to_task(self, row: dict[str, Any]) -> Task:
         constraints = Constraints(
@@ -153,19 +179,9 @@ class TaskMixin(SQLiteBase):
             where += " AND started_at <= ?"
             params.append(_dt_to_iso(started_before))
         # Tenancy: a non-admin sees their own tasks and their teams' tasks.
-        if owner_user_id is not None or owner_team_ids:
-            clauses = []
-            if owner_user_id is not None:
-                clauses.append("user_id = ?")
-                params.append(owner_user_id)
-            if owner_team_ids:
-                placeholders = ",".join("?" * len(owner_team_ids))
-                clauses.append(
-                    "team_ids IS NOT NULL AND EXISTS ("
-                    f"SELECT 1 FROM json_each(team_ids) WHERE value IN ({placeholders}))"
-                )
-                params.extend(owner_team_ids)
-            where += " AND (" + " OR ".join(clauses) + ")"
+        clause, cparams = _tenancy_clause(owner_user_id, owner_team_ids)
+        where += clause
+        params.extend(cparams)
         return where, params
 
     async def list_tasks(

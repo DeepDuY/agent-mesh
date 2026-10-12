@@ -208,7 +208,7 @@ function resumeRefresh() {
 
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
-  ['agents', 'tasks', 'files', 'skills', 'schedules', 'templates', 'users', 'teams', 'config'].forEach(n => {
+  ['agents', 'overview', 'tasks', 'files', 'skills', 'schedules', 'templates', 'users', 'teams', 'config'].forEach(n => {
     document.getElementById(`tab-${n}`).classList.toggle('hidden', n !== name);
   });
   // Load the config once on entry (the periodic refresh is paused here).
@@ -232,7 +232,7 @@ async function loadAll() {
   if (_loadAllInFlight) return;
   _loadAllInFlight = true;
   try {
-    await Promise.all([loadAgents(), loadTasks(), loadFiles(), loadSkills(), loadSchedules(), loadTemplates(), loadConfig(), loadProfile()]);
+    await Promise.all([loadOverview(), loadAgents(), loadTasks(), loadFiles(), loadSkills(), loadSchedules(), loadTemplates(), loadConfig(), loadProfile()]);
     if (isAdmin()) { await loadUsers(); await loadTeams(); }
   } finally {
     _loadAllInFlight = false;

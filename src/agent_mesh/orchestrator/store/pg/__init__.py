@@ -5,6 +5,7 @@ from agent_mesh.orchestrator.store.pg.logs import TaskLogMixin
 from agent_mesh.orchestrator.store.pg.settings import SettingsMixin
 from agent_mesh.orchestrator.store.pg.schedules import ScheduleMixin
 from agent_mesh.orchestrator.store.pg.skills import SkillsMixin
+from agent_mesh.orchestrator.store.pg.stats import StatsMixin
 from agent_mesh.orchestrator.store.pg.tasks import QueueMixin, TaskMixin
 from agent_mesh.orchestrator.store.pg.teams import TeamMixin
 from agent_mesh.orchestrator.store.pg.templates import TemplateMixin
@@ -24,5 +25,6 @@ class PostgresStore(
     TemplateMixin,
     TeamMixin,
     ScheduleMixin,
+    StatsMixin,
 ):
     pass

@@ -348,6 +348,62 @@ class AbstractStore(abc.ABC):
     ) -> dict[str, int]:
         """Count tasks in a run grouped by status (tenancy-filtered)."""
 
+    # ------------------------------------------------------------------
+    # Dashboard aggregation (multi-dimensional statistics)
+    # ------------------------------------------------------------------
+    @abc.abstractmethod
+    async def stats_task_counts(
+        self,
+        *,
+        created_after: datetime | None = None,
+        created_before: datetime | None = None,
+        owner_user_id: str | None = None,
+        owner_team_ids: list[str] | None = None,
+        group_by: str | None = None,
+        status_in: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Count tasks in a `created_at` window, optionally grouped.
+
+        ``group_by`` is a whitelisted dimension (``status`` / ``mode`` /
+        ``agent_id`` / ``dispatched_by``); ``None`` returns a single ``""`` key.
+        Rows are ``{"key": str, "n": int}``.
+        """
+
+    @abc.abstractmethod
+    async def stats_team_counts(
+        self,
+        *,
+        created_after: datetime | None = None,
+        created_before: datetime | None = None,
+        owner_user_id: str | None = None,
+        owner_team_ids: list[str] | None = None,
+        status_in: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Task counts per ``team_id`` (unnesting ``tasks.team_ids``)."""
+
+    @abc.abstractmethod
+    async def stats_trend(
+        self,
+        *,
+        bucket: str,
+        created_after: datetime | None = None,
+        created_before: datetime | None = None,
+        owner_user_id: str | None = None,
+        owner_team_ids: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """``{"bucket", "status", "n"}`` rows; ``bucket`` is ``hour``/``day``."""
+
+    @abc.abstractmethod
+    async def stats_avg_duration(
+        self,
+        *,
+        created_after: datetime | None = None,
+        created_before: datetime | None = None,
+        owner_user_id: str | None = None,
+        owner_team_ids: list[str] | None = None,
+    ) -> float | None:
+        """Mean ``duration_ms`` of finished tasks in the window (or None)."""
+
     @abc.abstractmethod
     async def get_idempotent_run(self, scope: str, key: str) -> str | None:
         """Return the run_id previously stored for (scope, key), else None."""

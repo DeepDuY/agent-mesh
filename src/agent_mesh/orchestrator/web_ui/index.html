@@ -44,7 +44,8 @@
       </div>
     </header>
     <div class="tabs">
-      <div class="tab active" data-tab="agents" onclick="switchTab('agents')">节点</div>
+      <div class="tab active" data-tab="overview" onclick="switchTab('overview')">概览</div>
+      <div class="tab" data-tab="agents" onclick="switchTab('agents')">节点</div>
       <div class="tab" data-tab="tasks" onclick="switchTab('tasks')">任务</div>
       <div class="tab" data-tab="files" onclick="switchTab('files')">文件</div>
       <div class="tab" data-tab="skills" onclick="switchTab('skills')">技能</div>
@@ -55,7 +56,68 @@
       <div class="tab admin-only hidden" data-tab="config" onclick="switchTab('config')">配置</div>
     </div>
     <div class="container">
-      <section id="tab-agents" class="tab-panel">
+      <section id="tab-overview" class="tab-panel">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>运行概览</h2>
+            <div class="ov-range">
+              <select id="ov-range" class="filter-select" onchange="onOverviewRangeChange()">
+                <option value="24h">近 24 小时</option>
+                <option value="7d" selected>近 7 天</option>
+                <option value="30d">近 30 天</option>
+                <option value="custom">自定义</option>
+              </select>
+              <input type="datetime-local" id="ov-from" class="filter-input" style="display:none" onchange="loadOverview(true)">
+              <span id="ov-sep" style="display:none">～</span>
+              <input type="datetime-local" id="ov-to" class="filter-input" style="display:none" onchange="loadOverview(true)">
+            </div>
+          </div>
+
+          <div class="kpi-grid" id="ov-kpis"></div>
+
+          <div class="ov-grid">
+            <div class="ov-card">
+              <h3>任务状态</h3>
+              <div id="ov-status" class="bar-list"></div>
+            </div>
+            <div class="ov-card">
+              <h3>执行模式</h3>
+              <div id="ov-mode" class="bar-list"></div>
+            </div>
+            <div class="ov-card">
+              <h3>节点在线</h3>
+              <div id="ov-agents" class="ov-agents"></div>
+            </div>
+          </div>
+
+          <div class="ov-card ov-wide">
+            <h3>时段热力图 <span class="help" data-tip="所选时间范围内，每天的每个小时各有几个任务；颜色越深任务越多（按本机时区）。">?</span></h3>
+            <div id="ov-hourly" class="heatmap"></div>
+          </div>
+
+          <div class="ov-card ov-wide">
+            <h3>任务趋势</h3>
+            <div id="ov-trend" class="trend"></div>
+          </div>
+
+          <div class="ov-grid">
+            <div class="ov-card">
+              <h3>节点任务量</h3>
+              <div id="ov-by-agent" class="bar-list"></div>
+            </div>
+            <div class="ov-card">
+              <h3>用户任务量</h3>
+              <div id="ov-by-user" class="bar-list"></div>
+            </div>
+            <div class="ov-card">
+              <h3>团队任务量</h3>
+              <div id="ov-by-team" class="bar-list"></div>
+            </div>
+          </div>
+          <p class="refresh-hint">每 5 秒自动刷新</p>
+        </div>
+      </section>
+      <section id="tab-agents" class="tab-panel hidden">
         <div class="panel">
           <div class="panel-header">
             <h2>节点列表</h2>
@@ -651,6 +713,7 @@
   </div>
 
   <script src="/static/js/app.js"></script>
+  <script src="/static/js/overview.js"></script>
   <script src="/static/js/auth.js"></script>
   <script src="/static/js/agents.js"></script>
   <script src="/static/js/tasks.js"></script>

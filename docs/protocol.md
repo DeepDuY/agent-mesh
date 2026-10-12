@@ -157,6 +157,7 @@ EdgeAgent.run()
 | GET | `/api/settings` | 全局配置。**`require_admin` + 必须携带 `X-Agent-Mesh-UI: 1`**（否则 404）；返回**白名单**键值（`public_url`/`llm_*`/`llm_models`/`default_permission`/`auto_upgrade`/限额等），不含 `session_secret`；admin 额外附带 `agent_mesh_token` |
 | PATCH | `/api/settings` | 更新全局配置（同样限 Web UI + admin） |
 | GET | `/api/realtime` | **SSE** 实时推送（`require_any_token`，走 `Authorization` 头；`fetch` 流式读取）。事件：`tasks_changed`/`task_log`/`agents_changed`；客户端断线时回落到 5s 轮询 |
+| GET | `/api/stats/overview` | 概览统计（用户 token，按团队隔离：普通用户仅统计自己及所在团队/可见节点）。查询 `?range=24h\|7d\|30d\|custom`、`created_after`/`created_before`、`top`；返回汇总指标 + 状态/模式/节点/用户/团队分布、按小时的时段数据（前端按本机时区渲染热力图）+ 节点概览（Web 看板「概览」页专用） |
 | GET/POST/PATCH/DELETE | `/api/teams*` | 团队/组织 CRUD 与成员（admin；一个用户可属多个团队）。含 `POST /api/teams/{team_id}/members`（追加成员）、`DELETE .../members/{user_id}`（仅移出该团队）、`PUT /api/teams/{team_id}/nodes`（全量替换团队可见节点） |
 | GET/POST/PATCH/DELETE | `/api/templates*` | 模板 CRUD（`require_ui_user`：**必须携带 `X-Agent-Mesh-UI: 1`**，否则一律 404；Web UI 专用，不对外开放） |
 | GET | `/api/bootstrap/install.sh` | 生成新节点安装命令脚本（内嵌 orchestrator `base_url`：优先 `public_url`，否则校验 `Host` 头；**不再内嵌 LLM 配置**，新节点注册后由心跳 config-sync 下发） |

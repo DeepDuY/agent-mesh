@@ -731,3 +731,91 @@ input[type="checkbox"] {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }
+
+/* ------------------------------------------------------------------ */
+/* Overview dashboard (概览)                                          */
+/* ------------------------------------------------------------------ */
+.muted { color: var(--muted); }
+
+.ov-range { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: .75rem;
+  margin: .25rem 0 1rem;
+}
+.kpi {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: .7rem .5rem;
+  text-align: center;
+}
+.kpi-value { font-size: 1.5rem; font-weight: 700; line-height: 1.1; }
+.kpi-label { color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .3px; margin-top: .3rem; }
+.kpi-ok .kpi-value { color: var(--ok); }
+.kpi-active .kpi-value { color: var(--primary); }
+.kpi-fail .kpi-value { color: var(--err); }
+
+.ov-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: .75rem;
+}
+.ov-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: .75rem .9rem;
+  margin-bottom: .75rem;
+}
+.ov-card h3 {
+  margin: 0 0 .6rem;
+  font-size: .78rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .3px;
+}
+
+.bar-list { display: flex; flex-direction: column; gap: .45rem; }
+.bar-row { display: grid; grid-template-columns: 96px 1fr 52px; align-items: center; gap: .5rem; font-size: .8rem; }
+.bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-track { background: rgba(255, 255, 255, .07); border-radius: 6px; height: 14px; overflow: hidden; }
+.bar-fill { position: relative; height: 100%; background: var(--primary); border-radius: 6px; overflow: hidden; transition: width .3s ease; }
+.bar-fill.bar-ok { background: var(--ok); }
+.bar-fill.bar-fail { background: var(--err); }
+.bar-fill-fail { position: absolute; top: 0; right: 0; height: 100%; background: var(--err); }
+.bar-val { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+
+.ov-agents { text-align: center; }
+.fleet-online { display: flex; align-items: baseline; justify-content: center; gap: .3rem; }
+.fleet-online .n { font-size: 2.2rem; font-weight: 700; color: var(--ok); line-height: 1.1; font-variant-numeric: tabular-nums; }
+.fleet-unit { color: var(--muted); font-size: .8rem; }
+.fleet-label { color: var(--muted); font-size: .75rem; margin-top: .15rem; }
+.ov-sub { color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .3px; margin: .7rem 0 .3rem; }
+.kv { display: flex; justify-content: space-between; font-size: .8rem; padding: .15rem 0; }
+
+.heat-cal {
+  display: grid;
+  grid-template-columns: 26px repeat(var(--cols), minmax(6px, 1fr));
+  gap: 2px;
+  align-items: center;
+}
+.heat-daylabel { font-size: .55rem; color: var(--muted); text-align: center; overflow: hidden; }
+.heat-rowlabel { font-size: .58rem; color: var(--muted); text-align: right; padding-right: 3px; }
+.heat-cell { min-height: 13px; border-radius: 3px; background: rgba(255, 255, 255, .04); }
+.heat-legend { display: flex; align-items: center; gap: .25rem; justify-content: flex-end; color: var(--muted); font-size: .62rem; margin-top: .45rem; }
+.heat-legend i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+
+.trend-svg { display: block; max-width: 100%; height: auto; }
+.trend-grid { stroke: rgba(255, 255, 255, .08); stroke-width: 1; }
+.trend-axis { fill: var(--muted); font-size: 11px; }
+.trend-area { fill: rgba(59, 130, 246, .16); }
+.trend-line-total { fill: none; stroke: var(--primary); stroke-width: 2; }
+.trend-line-failed { fill: none; stroke: var(--err); stroke-width: 2; stroke-dasharray: 4 3; }
+.trend-legend { display: flex; gap: 1rem; justify-content: flex-end; align-items: center; color: var(--muted); font-size: .72rem; margin-top: .3rem; }
+.trend-legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: .3rem; }
+.dot-total { background: var(--primary); }
+.dot-failed { background: var(--err); }

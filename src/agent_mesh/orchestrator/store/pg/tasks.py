@@ -20,6 +20,33 @@ from agent_mesh.shared.schemas import (
 )
 
 
+def _tenancy_clause(
+    owner_user_id: str | None, owner_team_ids: list[str] | None
+) -> tuple[str, list[Any]]:
+    """SQL fragment restricting tasks to a user's own + their teams' rows.
+
+    Shared by :meth:`TaskMixin._tasks_where` and the dashboard aggregation so
+    the two never drift apart. Returns ``("", [])`` when no restriction applies
+    (admin), else a leading ``" AND (...)"`` clause plus its parameters.
+    """
+    clauses: list[str] = []
+    params: list[Any] = []
+    if owner_user_id is not None:
+        clauses.append("user_id = ?")
+        params.append(owner_user_id)
+    if owner_team_ids:
+        placeholders = ",".join("?" * len(owner_team_ids))
+        clauses.append(
+            "team_ids IS NOT NULL AND EXISTS ("
+            "SELECT 1 FROM jsonb_array_elements_text(team_ids) AS t(v) "
+            f"WHERE t.v IN ({placeholders}))"
+        )
+        params.extend(owner_team_ids)
+    if not clauses:
+        return "", []
+    return " AND (" + " OR ".join(clauses) + ")", params
+
+
 class TaskMixin(PostgresBase):
     """Tasks table + task_results + audit events."""
 
@@ -160,19 +187,9 @@ class TaskMixin(PostgresBase):
             where += " AND started_at <= ?"
             params.append(started_before)
         if owner_user_id is not None or owner_team_ids:
-            clauses = []
-            if owner_user_id is not None:
-                clauses.append("user_id = ?")
-                params.append(owner_user_id)
-            if owner_team_ids:
-                placeholders = ",".join("?" * len(owner_team_ids))
-                clauses.append(
-                    "team_ids IS NOT NULL AND EXISTS ("
-                    "SELECT 1 FROM jsonb_array_elements_text(team_ids) AS t(v) "
-                    f"WHERE t.v IN ({placeholders}))"
-                )
-                params.extend(owner_team_ids)
-            where += " AND (" + " OR ".join(clauses) + ")"
+            clause, cparams = _tenancy_clause(owner_user_id, owner_team_ids)
+            where += clause
+            params.extend(cparams)
         return where, params
 
     async def list_tasks(

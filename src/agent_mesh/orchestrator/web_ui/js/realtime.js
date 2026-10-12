@@ -58,8 +58,8 @@ function handleSseFrame(frame) {
     if (!line.startsWith('data:')) continue; // ignore comments/keepalives
     let event;
     try { event = JSON.parse(line.slice(5).trim()); } catch (e) { continue; }
-    if (event.type === 'tasks_changed') scheduleRealtimeReload('tasks');
-    else if (event.type === 'agents_changed') scheduleRealtimeReload('agents');
+    if (event.type === 'tasks_changed') { scheduleRealtimeReload('tasks'); scheduleRealtimeReload('overview'); }
+    else if (event.type === 'agents_changed') { scheduleRealtimeReload('agents'); scheduleRealtimeReload('overview'); }
     else if (event.type === 'task_log') {
       // Only refresh the log stream if its task is currently open.
       if (typeof taskLogTaskId !== 'undefined' && taskLogTaskId === event.task_id) {
@@ -75,5 +75,6 @@ function scheduleRealtimeReload(key) {
     realtimeDebounce[key] = null;
     if (key === 'tasks') loadTasks();
     else if (key === 'agents') loadAgents();
+    else if (key === 'overview') loadOverview();
   }, 250);
 }

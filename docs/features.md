@@ -68,3 +68,13 @@
 - **批次操作**：`POST /api/runs/{run_id}/cancel` 终止整批；`/retry` 原子重排 `failed`/`timed_out` 任务回 `queued`。
 - **fan-out / fan-in**：`depends_on_run` 在派发时展开为该批次全部任务 id 追加到 `depends_on`，复用既有依赖门禁 + 级联取消实现「等全批完成再汇总」；`attachments_from` 把上游任务产物复制进文件库（md5 去重）作为下游附件，省去「下载再上传」。
 - **看板**：任务列表展示批次号并支持按 `run_id` 过滤，详情可「只看此批次」。
+
+## 9. 多维概览看板（Web「概览」页）
+
+- **接口**：`GET /api/stats/overview`（用户 token）。查询 `range`（`24h`/`7d`/`30d`/`custom`，默认 `7d`）、`created_after`/`created_before`（custom 用）、`top`（默认 10）。
+- **时间基准**：以任务 `created_at` 划窗（排队中/未开始的任务也计入）。
+- **返回**：`summary`（总数/完成/失败/拦截/排队/执行中/成功率/平均耗时）+ `by_status`、`by_mode`、`by_agent`、`by_user`、`by_team`（各含失败数）+ `heatmap`（按小时的时段数据）+ `agents`（在线/离线、版本与发行版分布）。
+- **隔离**：普通用户仅统计自己及所在团队的任务（与任务可见性一致），团队维度只回自己团队，节点概览只回可访问节点；admin 看全量。
+- **实现**：聚合查询在 store 层（`StatsMixin`，SQLite/PG 双后端；小时分桶 PG 用 `to_char`、SQLite 用 `substr`，团队维度 unnest `team_ids`）；前端按**本机时区**把小时桶聚合为「天 × 小时」热力图与每日趋势线、并按本地时区计算高峰时段，用本地 CSS + 内联 SVG 绘制（无外部图表库，内网可用）。页面每 5 秒自动刷新，并随 `tasks_changed`/`agents_changed` 事件即时刷新。
+
+
