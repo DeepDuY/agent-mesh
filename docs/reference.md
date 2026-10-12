@@ -156,6 +156,8 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/
 > **上传大小限制是运行时可调设置**（不是环境变量）：文件库单文件 `file_max_size_mb`、产物单文件 `artifact_max_size_mb`、单任务产物总量 `artifact_task_total_mb`、产物全库总量 `artifact_total_mb`、超出全库时回收最旧 `artifact_evict_oldest`、产物传输超时 `artifact_timeout_s`。在「配置 → 上传大小限制」或 `PATCH /api/settings` 调整；默认 100/100/100/200/开/300s。其中 `artifact_timeout_s` 随心跳下发给探针（探针上传用），页面下载产物也按此超时。
 >
 > `max_concurrent`（每节点并发任务数，默认 2）同样不是环境变量，而是运行时可调设置（配置页或 `PATCH /api/settings`），随心跳下发到在线节点。
+
+> **AI 任务审核**（可选）由运行时设置 `review_policy`（JSON）控制，配置页「任务审核」或 `PATCH /api/settings` 调整：`enabled`（总开关）、`threshold`（默认 60，分数越高越安全，低于阈值拦截）、`human_review`（低分进人工审核队列 vs 直接拦截）、`model`（审核模型，空则用 `llm_model`）、`api_style`（`auto`/`anthropic`/`openai`，自动按地址与模型判断；Anthropic 走 `{base}/v1/messages` 且模型去掉 `anthropic/` 前缀，OpenAI 走 `{base}/chat/completions`）、`rubric`（评分基准提示词）、`agents`/`teams`/`users`（生效范围，留空=全部）、`bypass_admin`、`expire_s`（人工审核超时）、`fail_mode`（审核不可用时 `deny`）。关闭时完全维持现有模板权限策略。
 >
 > `schedule_timezone`（定时任务 cron 求值所用时区，IANA 名，默认空 = 系统时区）也是运行时可调设置；定时任务可在自身 `timezone` 字段覆盖。
 
@@ -204,6 +206,10 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/
 | GET | `/api/tasks/{task_id}` | 查询任务详情 |
 | GET | `/api/tasks/{task_id}/status` | 查询任务状态 |
 | POST | `/api/tasks/{task_id}/cancel` | 终止任务 |
+| POST | `/api/tasks/{task_id}/approve` | 审核通过（`pending_review` → 排队执行；admin 或任务所有者） |
+| POST | `/api/tasks/{task_id}/reject` | 审核拒绝（`pending_review` → `denied`，可选 `{reason}`） |
+| GET | `/api/tasks/{task_id}/reviews` | 某任务的审核记录 |
+| GET | `/api/reviews` | 审核记录（**admin**；`?action=`/`task_id`/`search`（任务ID/节点/说明/处理人模糊）/分页，返回 `total`） |
 | GET | `/api/tasks/{task_id}/logs` | 任务实时执行输出（增量，`?after_id=`、`?limit=`） |
 | GET | `/api/tasks` | 任务列表（支持 `limit`/`offset` 分页、`status`/`mode`/`run_id` 过滤、`search` 模糊、`started_after`/`started_before` 开始时间区间，返回 `total` 总数） |
 | GET | `/api/runs/{run_id}` | **批次聚合**：`counts` 各状态数量 + 每任务一行紧凑摘要；`?status=`/`?include_tasks=false`/`?wait=30` 长轮询 |

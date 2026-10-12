@@ -26,6 +26,8 @@ class SweeperMixin:
         asyncio.create_task(self._sweep_offline())
         # Cron schedules (SchedulerMixin); single-process only.
         asyncio.create_task(self._sweep_schedules())
+        # Expire unreviewed tasks held by the AI review gate.
+        asyncio.create_task(self._sweep_reviews())
 
     async def stop_sweepers(self) -> None:
         self._stop_event.set()
@@ -147,3 +149,33 @@ class SweeperMixin:
                 if agent.online:
                     await self.store.set_agent_online(agent.device_id or agent.agent_id, False)
                     logger.info("agent %s marked offline", agent.agent_id)
+
+    async def _sweep_reviews(self) -> None:
+        """Auto-deny ``pending_review`` tasks left unhandled past ``expire_s``."""
+        while not self._stop_event.is_set():
+            try:
+                await asyncio.wait_for(
+                    self._stop_event.wait(), timeout=self._sweep_interval_s
+                )
+            except asyncio.TimeoutError:
+                pass
+            if self._stop_event.is_set():
+                break
+            try:
+                from agent_mesh.orchestrator import review as review_mod
+
+                policy = await review_mod.get_policy(self)
+                if not policy.enabled or policy.expire_s <= 0:
+                    continue
+                now = datetime.now(timezone.utc)
+                stale = await self.store.list_tasks(
+                    status=TaskStatus.PENDING_REVIEW.value, limit=1000
+                )
+                for task in stale:
+                    if not task.created_at:
+                        continue
+                    if now - task.created_at < timedelta(seconds=policy.expire_s):
+                        continue
+                    await self.expire_reviewed_task(task.task_id)
+            except Exception:  # never let one bad sweep kill the loop
+                logger.exception("review sweep failed")

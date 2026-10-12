@@ -130,10 +130,14 @@ EdgeAgent.run()
 | GET | `/api/tasks/{task_id}/logs` | 任务实时执行输出（`?after_id=&limit=`，增量；v1.4.0） |
 | GET | `/api/tasks/{task_id}/events` | 任务审计事件时间线（`?limit=`；`dispatched`/`cancelled`/`permission_denied` 等） |
 | POST | `/api/tasks/{task_id}/cancel` | 终止任务（`{accepted}`） |
+| POST | `/api/tasks/{task_id}/approve` | **审核通过**：`pending_review` → `queued` 并入队（admin 或任务所有者） |
+| POST | `/api/tasks/{task_id}/reject` | **审核拒绝**：`pending_review` → `denied`（可选 `{reason}`，admin 或任务所有者） |
+| GET | `/api/tasks/{task_id}/reviews` | 某任务的审核记录 |
+| GET | `/api/reviews` | 审核记录（admin；`?action=&task_id=&search=&limit=&offset=`，返回 `{reviews,total,limit,offset}`） |
 | DELETE | `/api/tasks/{task_id}` | 删除单个任务（含 queue/results/artifacts 关联行） |
 | POST | `/api/tasks/batch-delete` | 批量删除：`{task_ids: [...]}` 按 id，或 `{all_matching: true, status?, mode?, search?, started_after?, started_before?, agent_id?}` 删除匹配筛选的全部任务 |
-| POST | `/api/tasks/dispatch` | 派发任务（REST 版）。`command` 模式被权限策略拦截时返回 403，并落一条终态 `denied` 任务（摘要=拒绝原因）便于追溯。可选 `depends_on: [task_id]`：依赖全部 `completed` 后才派发（未就绪保持排队，不占并发）；依赖失败/终止则本任务级联 `cancelled`；非法/成环依赖返回 400。另有 `run_id?`(批次号)、`depends_on_run?`(展开为该批次全部任务 id)、`attachments_from?`(上游任务产物转附件) |
-| POST | `/api/tasks/dispatch-batch` | **批量派发**：`{targets: [agent_ref...], mode, instruction, 其余同 dispatch, run_id?, depends_on_run?, attachments_from?, idempotency_key?}`；逐目标独立校验，返回 `{run_id, queued, task_ids, denied:[{target,reason,task_id?}]}`；`Idempotency-Key` 头幂等；受 `max_batch_fanout`/`max_run_per_node` 护栏 |
+| POST | `/api/tasks/dispatch` | 派发任务（REST 版）。`command` 模式被权限策略拦截时返回 403，并落一条终态 `denied` 任务（摘要=拒绝原因）便于追溯。**AI 审核开启**且命中范围时先评分：低分且开启人工审核 → 返回 `{task_id,status:"pending_review"}`（不入队）；低分关闭人工审核或审核不可用 → 403 + `denied`。可选 `depends_on: [task_id]`：依赖全部 `completed` 后才派发（未就绪保持排队，不占并发）；依赖失败/终止则本任务级联 `cancelled`；非法/成环依赖返回 400。另有 `run_id?`(批次号)、`depends_on_run?`(展开为该批次全部任务 id)、`attachments_from?`(上游任务产物转附件) |
+| POST | `/api/tasks/dispatch-batch` | **批量派发**：`{targets: [agent_ref...], mode, instruction, 其余同 dispatch, run_id?, depends_on_run?, attachments_from?, idempotency_key?}`；逐目标独立校验，返回 `{run_id, queued, task_ids, pending_review:[{target,task_id,score}], denied:[{target,reason,task_id?}]}`；`Idempotency-Key` 头幂等；受 `max_batch_fanout`/`max_run_per_node` 护栏 |
 | GET | `/api/runs/{run_id}` | **批次聚合**：`{run_id,total,counts,active,tasks:[紧凑行]}`；`status?`/`include_tasks?`；`wait`(≤30s) 长轮询直到状态变化或结束 |
 | POST | `/api/runs/{run_id}/cancel` | 终止整批（`{total,cancelled,skipped}`） |
 | POST | `/api/runs/{run_id}/retry` | 重跑批内 `failed`/`timed_out`（`{total,retried,skipped}`） |

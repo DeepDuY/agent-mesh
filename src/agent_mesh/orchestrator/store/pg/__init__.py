@@ -2,6 +2,7 @@ from agent_mesh.orchestrator.store.pg.agents import AgentMixin
 from agent_mesh.orchestrator.store.pg.artifacts import ArtifactMixin
 from agent_mesh.orchestrator.store.pg.files import FileMixin
 from agent_mesh.orchestrator.store.pg.logs import TaskLogMixin
+from agent_mesh.orchestrator.store.pg.reviews import ReviewMixin
 from agent_mesh.orchestrator.store.pg.settings import SettingsMixin
 from agent_mesh.orchestrator.store.pg.schedules import ScheduleMixin
 from agent_mesh.orchestrator.store.pg.skills import SkillsMixin
@@ -26,5 +27,6 @@ class PostgresStore(
     TeamMixin,
     ScheduleMixin,
     StatsMixin,
+    ReviewMixin,
 ):
     pass

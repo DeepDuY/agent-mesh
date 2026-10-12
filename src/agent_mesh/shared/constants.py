@@ -28,3 +28,6 @@ class TaskStatus(str, enum.Enum):
     TIMED_OUT = "timed_out"
     CANCELLED = "cancelled"
     DENIED = "denied"
+    # Held by the AI review gate awaiting a human approve/reject decision. Not
+    # enqueued, so an edge node never sees it.
+    PENDING_REVIEW = "pending_review"

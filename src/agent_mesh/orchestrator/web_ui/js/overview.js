@@ -5,8 +5,9 @@
 const OV_STATUS_LABELS = {
   queued: '排队', assigned: '已分配', working: '执行中', completed: '完成',
   failed: '失败', timed_out: '超时', cancelled: '已终止', denied: '已拦截',
+  pending_review: '待审核',
 };
-const OV_STATUS_ORDER = ['queued', 'assigned', 'working', 'completed', 'failed', 'timed_out', 'cancelled', 'denied'];
+const OV_STATUS_ORDER = ['queued', 'pending_review', 'assigned', 'working', 'completed', 'failed', 'timed_out', 'cancelled', 'denied'];
 const OV_MODE_ORDER = ['llm', 'command'];
 const OV_MODE_LABELS = { llm: 'LLM', command: '命令' };
 
@@ -79,6 +80,7 @@ function ovRenderKpis(el, s) {
     { label: '成功率', value: ovPct(s.success_rate), cls: 'kpi-ok' },
     { label: '执行中', value: s.active, cls: 'kpi-active' },
     { label: '排队中', value: s.queued, cls: '' },
+    { label: '待审核', value: s.pending_review || 0, cls: 'kpi-review' },
     { label: '失败', value: s.failed + s.denied, cls: 'kpi-fail' },
     { label: '平均耗时', value: s.avg_duration_ms != null ? fmtDuration(s.avg_duration_ms) : '-', cls: '' },
     { label: '高峰时段', value: s.peak_hour != null ? `${ovPad(s.peak_hour)}:00` : '-', cls: '' },

@@ -208,15 +208,17 @@ function resumeRefresh() {
 
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
-  ['agents', 'overview', 'tasks', 'files', 'skills', 'schedules', 'templates', 'users', 'teams', 'config'].forEach(n => {
-    document.getElementById(`tab-${n}`).classList.toggle('hidden', n !== name);
+  ['agents', 'overview', 'tasks', 'files', 'skills', 'schedules', 'templates', 'users', 'teams', 'reviews', 'config'].forEach(n => {
+    const el = document.getElementById(`tab-${n}`);
+    if (el) el.classList.toggle('hidden', n !== name);
   });
   // Load the config once on entry (the periodic refresh is paused here).
   if (name === 'config') loadConfig();
+  if (name === 'reviews' && typeof loadReviews === 'function') loadReviews();
 }
 
 function badge(status) {
-  const labels = { queued: '排队', assigned: '已分配', working: '执行中', completed: '完成', failed: '失败', timed_out: '超时', cancelled: '已终止', denied: '已拦截' };
+  const labels = { queued: '排队', assigned: '已分配', working: '执行中', completed: '完成', failed: '失败', timed_out: '超时', cancelled: '已终止', denied: '已拦截', pending_review: '待审核' };
   return `<span class="badge status-${status}">${labels[status] || status}</span>`;
 }
 
@@ -234,6 +236,7 @@ async function loadAll() {
   try {
     await Promise.all([loadOverview(), loadAgents(), loadTasks(), loadFiles(), loadSkills(), loadSchedules(), loadTemplates(), loadConfig(), loadProfile()]);
     if (isAdmin()) { await loadUsers(); await loadTeams(); }
+    if (isAdmin() && typeof loadReviews === 'function') await loadReviews();
   } finally {
     _loadAllInFlight = false;
   }

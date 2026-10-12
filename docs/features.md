@@ -77,4 +77,16 @@
 - **隔离**：普通用户仅统计自己及所在团队的任务（与任务可见性一致），团队维度只回自己团队，节点概览只回可访问节点；admin 看全量。
 - **实现**：聚合查询在 store 层（`StatsMixin`，SQLite/PG 双后端；小时分桶 PG 用 `to_char`、SQLite 用 `substr`，团队维度 unnest `team_ids`）；前端按**本机时区**把小时桶聚合为「天 × 小时」热力图与每日趋势线、并按本地时区计算高峰时段，用本地 CSS + 内联 SVG 绘制（无外部图表库，内网可用）。页面每 5 秒自动刷新，并随 `tasks_changed`/`agents_changed` 事件即时刷新。
 
+## 10. AI 任务审核（可选）
+
+- **总开关**：`settings.review_policy`（JSON，配置页「任务审核」）。关闭时完全维持现有模板权限策略、不发任何 AI 请求。
+- **范围**：命中 `agents`（节点）/`teams`（团队）/`users`（个人）任一即审核；三者都留空 = 审核全部；`bypass_admin` 可让管理员发起的任务跳过。
+- **评分**：命中后，在派发前把「任务指令/提示词 + 节点描述 + 模板 + 有效权限档案」交给审核模型（`model`，空则用默认 `llm_model`），按可编辑的**评分基准**（`rubric`）返回 JSON：`{"score": 0-100, "reason": "...", "violations": []}`，分数越高越安全。
+- **处置**：`score >= threshold`（默认 60）→ 正常入队；低于阈值时 `human_review=true` → 新建状态 **`pending_review`**（不入队，节点看不到）待人工在「审核」页通过/拒绝，超 `expire_s` 自动拦截；`human_review=false` → 直接 `denied`。审核服务不可用/超时/解析失败 → **一律拦截**（fail-deny）。
+- **审计**：每次决策写 `task_reviews`（含评分、说明、违规点、模型、来源、处理人），并把最新评分/说明冗余到任务的 `review_score`/`review_reason`。
+- **并发与延迟**：审核在**派发请求内同步完成**（单条派发会等待审核模型返回，故派发变慢）；**批量派发时各目标并发审核**（`asyncio.gather`，网关侧并发上限 5）。相同「指令 + 节点 + 权限档案」的结论有 **5 分钟内存缓存**，重试/重复派发不再调用模型；审核失败（超时/不可解析）不缓存，按 fail-deny 处理。审核调用与节点 LLM 共用同一网关，建议给审核单独配 `model`（必要时单独的 key）以免与节点任务抢并发。
+- **接口风格**：`api_style` 自动按 `base_url`/模型名判断；Anthropic 走 `{base}/v1/messages`（模型去掉 `anthropic/` 前缀，兼容 reasoning 模型只输出 thinking 的情况），OpenAI 走 `{base}/chat/completions`。
+- **局限**：审的是**指令文本**；`llm` 模式下节点现场生成的命令看不到，真正的命令级拦截需在 edge 侧加钩子（后续）。
+
+
 

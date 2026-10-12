@@ -91,6 +91,12 @@ function modeBadge(mode) {
   return `<span class="badge-mode mode-${mode || 'llm'}">${label}</span>`;
 }
 
+function reviewScoreCell(score) {
+  if (score == null) return '<span class="muted">-</span>';
+  const low = score < 60;
+  return `<span class="review-score ${low ? 'review-low' : 'review-ok'}">${score}</span>`;
+}
+
 function formatTime(iso) {
   return formatDateTime(iso);
 }
@@ -130,6 +136,12 @@ async function loadTasks() {
   const rows = tasks.map(t => {
     const cancellable = ['queued', 'assigned', 'working'].includes(t.status);
     const checked = selectAllPages || selectedTasks.has(t.task_id);
+    let actionCell = '';
+    if (t.status === 'pending_review') {
+      actionCell = `<span class="actions"><button class="btn btn-success" onclick="event.stopPropagation();approveReviewedTask('${t.task_id}')">通过</button><button class="btn btn-danger" onclick="event.stopPropagation();rejectReviewedTask('${t.task_id}')">拒绝</button></span>`;
+    } else if (cancellable) {
+      actionCell = `<span class="actions"><button class="btn btn-danger" onclick="event.stopPropagation();cancelTask('${t.task_id}')">终止</button></span>`;
+    }
     return `
     <tr style="cursor:pointer" onclick="showTaskDetail('${t.task_id}')">
       <td class="col-select" onclick="event.stopPropagation()">
@@ -141,11 +153,12 @@ async function loadTasks() {
       <td title="${escHtml(t.instruction)}">${escHtml(t.instruction.slice(0, 60))}${t.instruction.length > 60 ? '...' : ''}</td>
       <td>${modeBadge(t.mode)}</td>
       <td>${badge(t.status)}</td>
+      <td>${reviewScoreCell(t.review_score)}</td>
       <td>${formatTime(t.started_at)}</td>
       <td>${t.result ? fmtDuration(t.result.duration_ms) : '-'}</td>
-      <td>${cancellable ? `<span class="actions"><button class="btn btn-danger" onclick="event.stopPropagation();cancelTask('${t.task_id}')">终止</button></span>` : ''}</td>
+      <td>${actionCell}</td>
     </tr>
-  `}).join('') || '<tr><td colspan="10" class="empty">暂无任务</td></tr>';
+  `}).join('') || '<tr><td colspan="11" class="empty">暂无任务</td></tr>';
 
   setHtmlIfChanged(document.getElementById('tasks-body'), rows);
   setTextIfChanged(

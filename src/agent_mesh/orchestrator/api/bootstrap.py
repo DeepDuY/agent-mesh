@@ -87,6 +87,7 @@ _PUBLIC_SETTINGS_KEYS = frozenset(
         "llm_base_url",
         "llm_model",
         "llm_models",
+        "review_policy",
         "bootstrap_download_base",
         "probe_release_repo",
         "probe_release_token",

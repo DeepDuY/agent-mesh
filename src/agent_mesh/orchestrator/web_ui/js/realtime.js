@@ -58,7 +58,7 @@ function handleSseFrame(frame) {
     if (!line.startsWith('data:')) continue; // ignore comments/keepalives
     let event;
     try { event = JSON.parse(line.slice(5).trim()); } catch (e) { continue; }
-    if (event.type === 'tasks_changed') { scheduleRealtimeReload('tasks'); scheduleRealtimeReload('overview'); }
+    if (event.type === 'tasks_changed') { scheduleRealtimeReload('tasks'); scheduleRealtimeReload('overview'); if (isAdmin()) scheduleRealtimeReload('reviews'); }
     else if (event.type === 'agents_changed') { scheduleRealtimeReload('agents'); scheduleRealtimeReload('overview'); }
     else if (event.type === 'task_log') {
       // Only refresh the log stream if its task is currently open.
@@ -76,5 +76,6 @@ function scheduleRealtimeReload(key) {
     if (key === 'tasks') loadTasks();
     else if (key === 'agents') loadAgents();
     else if (key === 'overview') loadOverview();
+    else if (key === 'reviews' && typeof loadReviews === 'function') loadReviews();
   }, 250);
 }

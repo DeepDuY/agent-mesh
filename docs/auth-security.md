@@ -56,6 +56,7 @@
 
 - 模板级 `permission`（OpenCode `permission` 规格）+ edge 共享匹配器（llm 与 command 共用）；内置 `build`/`plan`/`readonly`，默认 `readonly`。**匹配器只防误操作，不是安全边界**；生产建议低权限账号/容器。
 - 拒绝与关键动作写入 `task_events` 审计（`GET /api/tasks/{id}/events`）。
+- **AI 任务审核（可选）**：`review_policy` 开启后，命中范围的任务在派发前由审核模型按 `rubric` 打分（0-100），低于 `threshold` 时拦截或挂起待人工审核（`pending_review`）。这是模板权限之上的**纵深防御**，同样**不是安全边界**：它审的是**指令文本**，`llm` 模式下节点现场生成的命令不在其可见范围内（命令级拦截需在 edge 侧加钩子，尚未实现）；审核服务不可用时按 fail-deny 拦截。审核决策写入 `task_reviews` 审计。
 - `delete_agent` 下发自毁命令属于高风险操作，Web 端需二次确认。
 
 ## 7. Agent 独立 token 与设备-用户关联

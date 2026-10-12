@@ -232,6 +232,7 @@ class TaskStatus(str, enum.Enum):
     COMPLETED="completed"; FAILED="failed"; TIMED_OUT="timed_out"
     CANCELLED="cancelled"          # 人为终止（终态）
     DENIED="denied"                # 派发被权限策略拦截、从未执行（终态）
+    PENDING_REVIEW="pending_review" # AI 审核低分且开启人工审核：挂起待人工通过/拒绝（不入队）
 ```
 
 ## 3. 持久化层与迁移
@@ -279,7 +280,8 @@ store/
     ├── 021_probe_release.sql       # settings 探针分发项（bootstrap_download_base 等）
     ├── 022_schedules.sql           # schedules 表（cron 定时任务）
     ├── 023_task_runs.sql           # tasks.run_id + idempotency_keys（批量派发/批次）
-    └── 024_multi_team.sql          # 删除 team_members.user_id 唯一索引 + tasks/schedules.team_ids、templates.owner_team_ids（多团队归属，回填旧单值列）
+    ├── 024_multi_team.sql          # 删除 team_members.user_id 唯一索引 + tasks/schedules.team_ids、templates.owner_team_ids（多团队归属，回填旧单值列）
+    └── 025_task_reviews.sql        # tasks.review_score/review_reason + task_reviews 表 + settings.review_policy（AI 审核）
 ```
 
 ### 3.2 迁移机制
@@ -294,8 +296,9 @@ store/
 | `users` | 账号（`username` 唯一、`token_hash` 唯一，**不含明文 token**） | 含 `disabled/created_by/last_login_at/token_created_at/token_expires_at`（`NULL`=永久，迁移 019）；默认 admin |
 | `agents` | 节点注册表（`id` 自增、`device_id` UNIQUE） | 含 `llm_api_key/base_url/model` 列（节点级 LLM 覆盖，随心跳 config-sync 下发，见 auth-security.md §9）、`distro`、`ip_address`、`access`(ACL)、`template_id` |
 | `agent_users` | 设备-用户关联（多对多；操作者审计） | 迁移 008；节点注册时自动关联 |
-| `tasks` | 任务（**无外键**，`agent_id` 存稳定键） | 含 `run_id`（批次分组，迁移 023） |
+| `tasks` | 任务（**无外键**，`agent_id` 存稳定键） | 含 `run_id`（批次分组，迁移 023）、`review_score`/`review_reason`（最新 AI 审核结论，迁移 025） |
 | `idempotency_keys` | 批量派发幂等键（`(scope,key)` 主键 → `run_id`） | 迁移 023；见 §2.1 |
+| `task_reviews` | AI 审核记录（每决策一行：评分/阈值/结论/动作/说明/违规/模型/来源/处理人） | 迁移 025；`ReviewMixin` 读写 |
 | `task_queue` | 队列（`task_id` UNIQUE，外键级联删除） | |
 | `task_results` | 结果（`task_id` UNIQUE） | |
 | `artifacts` | 产物元数据 | `storage_path` 落盘路径 |
@@ -305,4 +308,4 @@ store/
 | `task_events` | 事件审计表 | 写入方 `append_task_event`（`dispatched`/`cancelled`/`permission_denied`）；`GET /api/tasks/{id}/events` 读取 |
 | `templates` | 节点模板（`system_prompt`/`llm_model`/`permission`/`node_description`；`owner_user_id`/`owner_team_ids`，旧 `owner_team_id` 保留兼容） | 内置 `build`/`plan`/`readonly` 幂等 seed |
 | `teams` / `team_members` | 团队/组织与成员（一个用户可属于多个团队） | `team_members` 主键 `(team_id,user_id)`；不再有 `user_id` 唯一索引（迁移 024 删除） |
-| `settings` | 全局配置 | `public_url`/`llm_*`/`llm_models`/`default_permission`/`auto_upgrade`/`config_version`/`session_secret` |
+| `settings` | 全局配置 | `public_url`/`llm_*`/`llm_models`/`default_permission`/`auto_upgrade`/`config_version`/`session_secret`/`review_policy` |

@@ -109,6 +109,8 @@ class Task(BaseModel):
     attachments: list[FileRef] = Field(default_factory=list)
     depends_on: list[str] = Field(default_factory=list)
     run_id: str | None = None
+    review_score: int | None = None
+    review_reason: str | None = None
 
     def model_dump_json_safe(self) -> dict[str, Any]:
         return {
@@ -132,6 +134,8 @@ class Task(BaseModel):
             "attachments": [a.model_dump() for a in self.attachments],
             "depends_on": list(self.depends_on),
             "run_id": self.run_id,
+            "review_score": self.review_score,
+            "review_reason": self.review_reason,
         }
 
 

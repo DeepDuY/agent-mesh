@@ -156,6 +156,8 @@ async def ensure_task_schema_upgrade(conn: Any) -> None:
         "team_id": "ALTER TABLE tasks ADD COLUMN team_id TEXT",
         "team_ids": "ALTER TABLE tasks ADD COLUMN team_ids JSONB",
         "run_id": "ALTER TABLE tasks ADD COLUMN run_id TEXT",
+        "review_score": "ALTER TABLE tasks ADD COLUMN review_score INTEGER",
+        "review_reason": "ALTER TABLE tasks ADD COLUMN review_reason TEXT",
     }.items():
         if col not in cols:
             await conn.execute(sql)
@@ -218,4 +220,30 @@ async def ensure_task_schema_upgrade(conn: Any) -> None:
     """)
     await conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_task_events_task_id ON task_events(task_id, event_id)"
+    )
+
+    # AI review gate: verdict denormalised onto tasks + a full audit trail.
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS task_reviews (
+            id SERIAL PRIMARY KEY,
+            task_id TEXT NOT NULL,
+            agent_id TEXT,
+            mode TEXT,
+            score INTEGER,
+            threshold INTEGER,
+            verdict TEXT,
+            action TEXT,
+            reason TEXT,
+            violations JSONB,
+            model TEXT,
+            source TEXT,
+            actor TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    """)
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_reviews_task ON task_reviews(task_id, id)"
+    )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_reviews_created ON task_reviews(created_at)"
     )

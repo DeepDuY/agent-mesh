@@ -82,6 +82,8 @@ class TaskMixin(PostgresBase):
             attachments=attachments,
             depends_on=_load_json(row.get("depends_on")) or [],
             run_id=row.get("run_id"),
+            review_score=row.get("review_score"),
+            review_reason=row.get("review_reason"),
         )
 
     async def _load_result(self, task_id: str) -> TaskResult | None:
@@ -115,8 +117,8 @@ class TaskMixin(PostgresBase):
                 output_limit, status, max_retries, retry_count,
                 created_at, assigned_at, started_at, finished_at, depends_on,
                 dispatched_by, user_id, team_ids, metadata, session_id, skills, attachments,
-                run_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?::jsonb, ?::jsonb, ?)
+                run_id, review_score, review_reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?::jsonb, ?::jsonb, ?, ?, ?)
             """,
             (
                 task.task_id, task.agent_id, task.mode, task.instruction,
@@ -139,6 +141,8 @@ class TaskMixin(PostgresBase):
                 _dump_json(task.constraints.skills),
                 _dump_json([a.model_dump() for a in task.attachments]),
                 task.run_id,
+                task.review_score,
+                task.review_reason,
             ),
         )
 

@@ -29,6 +29,7 @@ agent-mesh 让**你（主 Agent）**把工作委派给远程**边缘节点**执�
 | 「那台机器最近跑了什么」 | 查看节点详情与最近任务 | [references/nodes.md](references/nodes.md) |
 | 「任务跑到哪了」「把输出实时给我看」 | 轮询任务状态、增量拉取实时日志 | [references/tasks.md](references/tasks.md) |
 | 「把那个任务停了」 | 取消排队中/执行中的任务（杀掉远程进程组） | [references/tasks.md](references/tasks.md) |
+| 「任务怎么没跑 / 说要人工审核 / 被拦截了」 | 说明 `pending_review`（等待人工审核）或 `denied`（被权限/AI 审核拦截）的原因并等待/转人工 | [references/troubleshooting.md](references/troubleshooting.md) |
 | 「查一下之前那个任务」「看看谁在什么时候改过」 | 任务列表/搜索/审计事件 | [references/tasks.md](references/tasks.md) |
 | 「每天/每小时自动跑一次」「定时巡检/日报」 | 建 cron 定时任务，到点自动派发（命令或 LLM） | [references/schedules.md](references/schedules.md) |
 | 「按某规范/流程让远程 LLM 干活」「用那个技能」 | 先 `GET /skills` 看可用技能，再在 `llm` 任务的 `instruction` 里点名 | [references/skills.md](references/skills.md) |
@@ -60,6 +61,7 @@ set -a; . ./.env; set +a      # 在本 SKILL 目录下执行
    - **要发给多台/一批**：改用 `POST /tasks/dispatch-batch`，拿 `run_id`，再用 `GET /runs/{run_id}`（可 `?wait=30`）一次看整批。
 4. 需要进度：`GET /tasks/{task_id}/logs?after_id=<next_id>` 增量看输出。
 5. 每 2–3 秒 `GET /tasks/{task_id}/status` 直到终态；用户要停就 `POST /tasks/{task_id}/cancel`。
+   - 若状态停在 **`pending_review`**：任务被 AI 审核判定为低分、等待人工在 Web「审核」页通过/拒绝，**不是卡死**。向用户说明并等待（或请管理员处理），**不要无限轮询**；通过后会变成 `queued`/`assigned` 继续，拒绝或超时会变 `denied`。
 6. 读 `task.result`；有 `artifacts` 就下载给用户。
 
 ## 参考文档

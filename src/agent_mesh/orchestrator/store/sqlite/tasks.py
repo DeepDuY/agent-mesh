@@ -69,6 +69,8 @@ class TaskMixin(SQLiteBase):
             attachments=attachments,
             depends_on=_load_json(row["depends_on"]) if "depends_on" in row.keys() else [],
             run_id=row["run_id"] if "run_id" in row.keys() else None,
+            review_score=row["review_score"] if "review_score" in row.keys() else None,
+            review_reason=row["review_reason"] if "review_reason" in row.keys() else None,
         )
 
     async def _load_result(self, task_id: str) -> TaskResult | None:
@@ -105,8 +107,8 @@ class TaskMixin(SQLiteBase):
                 output_limit, status, max_retries, retry_count,
                 created_at, assigned_at, started_at, finished_at, depends_on,
                 dispatched_by, user_id, team_ids, metadata, session_id, skills, attachments,
-                run_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                run_id, review_score, review_reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task.task_id, task.agent_id, task.mode, task.instruction,
@@ -129,6 +131,8 @@ class TaskMixin(SQLiteBase):
                 _dump_json(task.constraints.skills),
                 _dump_json([a.model_dump() for a in task.attachments]),
                 task.run_id,
+                task.review_score,
+                task.review_reason,
             ),
         )
 

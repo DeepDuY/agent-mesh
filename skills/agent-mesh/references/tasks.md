@@ -28,6 +28,7 @@ curl -s -X POST "$AGENT_MESH_BASE_URL/tasks/dispatch" \
 
 - `agent_id` 用 [nodes.md](nodes.md) 里查到的数字 `id`（也接受 device_id / 显示名）。
 - 派发前服务端会校验：节点存在、你有权访问、模型命中可用列表、command 权限策略。被拒时返回 `403`（detail 说明原因）；该次尝试仍会以 `denied`（**已拦截**）状态出现在任务列表里，摘要即拒绝原因，便于追溯。
+- **AI 审核开启**且任务命中范围时：低分任务可能返回 `{"task_id":"t-...","status":"pending_review"}`（挂起待人工在 Web「审核」页通过/拒绝，**不入队**）；审核不可用或关闭人工审核则直接 `403` + `denied`。遇到 `pending_review` 请向用户说明并等待，**不要当作卡死无限轮询**。
 
 ### 常用可选参数
 
@@ -49,7 +50,7 @@ curl -s -X POST "$AGENT_MESH_BASE_URL/tasks/dispatch" \
 
 ## 监控
 
-状态机：`queued → assigned → working → completed / failed / timed_out`，另有 `cancelled`（人为终止）与 `denied`（派发被权限策略拦截，从未执行）。
+状态机：`queued → assigned → working → completed / failed / timed_out`，另有 `cancelled`（人为终止）、`denied`（派发被权限策略/AI 审核拦截，从未执行）与 `pending_review`（AI 审核低分、等待人工通过/拒绝；非终态，不入队）。
 
 ```bash
 curl -s -H "Authorization: Bearer $AGENT_MESH_TOKEN" "$AGENT_MESH_BASE_URL/tasks/t-xxxxx/status"
@@ -83,7 +84,7 @@ curl -s -X POST "$AGENT_MESH_BASE_URL/tasks/dispatch-batch" \
         "timeout_s":120,
         "max_retries":1
       }'
-# => {"run_id":"r-9f3a","queued":3,"task_ids":["t-...","t-...","t-..."],"denied":[]}
+# => {"run_id":"r-9f3a","queued":3,"task_ids":["t-...","t-...","t-..."],"pending_review":[],"denied":[]}
 ```
 
 - `targets`：节点引用数组（数字 id / device_id / 显示名都可），会**去重**。整批有扇出上限（默认 200），单节点也有每批上限（默认 50）——超限的目标进 `denied`。
@@ -132,7 +133,7 @@ curl -s -H "Authorization: Bearer $AGENT_MESH_TOKEN" \
   "$AGENT_MESH_BASE_URL/tasks?status=working&mode=llm&search=hello&limit=50"
 # 单任务详情
 curl -s -H "Authorization: Bearer $AGENT_MESH_TOKEN" "$AGENT_MESH_BASE_URL/tasks/t-xxxxx"
-# 审计事件（dispatched / cancelled / permission_denied）
+# 审计事件（dispatched / cancelled / permission_denied / ai_review）
 curl -s -H "Authorization: Bearer $AGENT_MESH_TOKEN" "$AGENT_MESH_BASE_URL/tasks/t-xxxxx/events"
 # 批量删除（按 id 或按条件）
 curl -s -X POST -H "Authorization: Bearer $AGENT_MESH_TOKEN" -H "Content-Type: application/json" \
@@ -141,6 +142,7 @@ curl -s -X POST -H "Authorization: Bearer $AGENT_MESH_TOKEN" -H "Content-Type: a
 
 - `search` 匹配指令/任务 id/节点/派发者用户名；`started_after` / `started_before` 为 ISO 时间。
 - 任务对象含 `dispatched_by`（派发者用户名）与 `user_id`/`team_ids`（并保留 `team_id`=第一个团队），可用于区分多用户来源。
+- 若节点开启了 AI 审核，任务对象还会带 **`review_score`**（0-100，越高越安全）与 **`review_reason`**（审计说明）；`ai_review` 事件里有 `action`（allowed/pending_review/denied）、`score`、`threshold`、`reason`、`violations`、`model`。
 - 只能看到/操作自己（或所属团队）的任务；无权的任务返回 404。
 
 ## 完整流程（推荐节奏）

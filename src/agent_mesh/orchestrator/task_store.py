@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -26,6 +27,17 @@ from agent_mesh.shared.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class GatedDispatch:
+    """Result of :meth:`TaskStore.dispatch_gated`."""
+
+    task_id: str
+    status: str  # "queued" | "pending_review" | "denied"
+    score: int | None = None
+    reason: str | None = None
+    reviewed: bool = False
 
 
 class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin, SchedulerMixin):
@@ -277,6 +289,429 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin, SchedulerMixin):
         )
         logger.info("recorded denied dispatch %s for agent=%s", task.task_id, queue_key)
         return task.task_id
+
+    async def dispatch_pending_review(
+        self,
+        *,
+        agent_id: str,
+        instruction: str,
+        mode: str,
+        score: int | None,
+        reason: str | None,
+        constraints: Constraints | None = None,
+        attachments: list[FileRef] | None = None,
+        depends_on: list[str] | None = None,
+        max_retries: int = 0,
+        dispatched_by: str | None = None,
+        user_id: str | None = None,
+        team_ids: list[str] | None = None,
+        run_id: str | None = None,
+    ) -> str:
+        """Create a task held by the AI review gate.
+
+        The task is **not** enqueued, so no edge node can claim it while it waits
+        for a human approve/reject decision in the Web console. The full dispatch
+        context (constraints/attachments/dependencies) is stored so approval can
+        run it unchanged.
+        """
+        target = await self._resolve_agent(agent_id)
+        queue_key = (target.device_id or target.agent_id) if target else agent_id
+        task = Task(
+            task_id=_new_task_id(),
+            agent_id=queue_key,
+            mode=mode,  # type: ignore[arg-type]
+            instruction=instruction,
+            constraints=constraints or Constraints(),
+            status=TaskStatus.PENDING_REVIEW,
+            max_retries=max_retries,
+            attachments=list(attachments or []),
+            depends_on=list(depends_on or []),
+            user_id=user_id,
+            team_ids=list(team_ids or []),
+            run_id=run_id,
+            review_score=score,
+            review_reason=reason,
+        )
+        await self.store.create_task(
+            task, dispatched_by=dispatched_by, user_id=user_id, team_ids=list(team_ids or [])
+        )
+        logger.info(
+            "task %s held for review (score=%s) agent=%s", task.task_id, score, queue_key
+        )
+        publish("tasks_changed")
+        return task.task_id
+
+    async def record_review(
+        self,
+        *,
+        task_id: str,
+        agent_id: str | None,
+        mode: str | None,
+        score: int | None,
+        threshold: int | None,
+        action: str,
+        reason: str | None,
+        violations: list[Any] | None,
+        model: str | None,
+        source: str,
+        actor: str | None,
+    ) -> None:
+        """Persist a review decision (audit row + denormalised task columns)."""
+        await self.store.create_task_review(
+            task_id=task_id,
+            agent_id=agent_id,
+            mode=mode,
+            score=score,
+            threshold=threshold,
+            verdict="allow" if action == "allowed" else "block",
+            action=action,
+            reason=reason,
+            violations=violations,
+            model=model,
+            source=source,
+            actor=actor,
+        )
+        if score is not None or reason is not None:
+            await self.store.set_task_review(task_id, score, reason)
+
+    async def review_permission(self, agent: AgentStatus | None) -> dict[str, Any]:
+        """Effective permission profile governing ``agent`` (template > global)."""
+        template = (
+            await self.store.get_template(agent.template_id)
+            if agent is not None and agent.template_id
+            else None
+        )
+        return await self.effective_permission(agent, template)
+
+    async def review_outcome(
+        self,
+        *,
+        agent: AgentStatus | None,
+        agent_id: str,
+        instruction: str,
+        mode: str,
+        user: dict[str, Any],
+        team_ids: list[str] | None = None,
+    ) -> Any:
+        """Run the AI review gate for one task, or ``None`` when out of scope.
+
+        Separated from dispatch so a batch can run all reviews concurrently
+        (the reviewer round-trip is the slow part) before enqueueing.
+        """
+        from agent_mesh.orchestrator import review as review_mod
+
+        policy = await review_mod.get_policy(self)
+        if agent is None or not review_mod.scope_matches(
+            policy, agent=agent, team_ids=team_ids, user=user
+        ):
+            return None
+        # Fill display fields so the reviewer sees the node's description.
+        await self.describe_agents([agent])
+        permission = await self.review_permission(agent)
+        return await review_mod.review_task(
+            self,
+            policy,
+            instruction=instruction,
+            mode=mode,
+            agent=agent,
+            permission=permission,
+        )
+
+    async def _finalize_gated(
+        self,
+        *,
+        agent_id: str,
+        instruction: str,
+        mode: str,
+        constraints: Constraints,
+        outcome: Any,
+        user: dict[str, Any],
+        dispatched_by: str | None = None,
+        max_retries: int = 0,
+        depends_on: list[str] | None = None,
+        attachments: list[FileRef] | None = None,
+        team_ids: list[str] | None = None,
+        run_id: str | None = None,
+    ) -> GatedDispatch:
+        """Apply a (possibly pre-computed) review outcome to a dispatch."""
+        user_id = user.get("user_id")
+
+        async def _dispatch() -> str:
+            return await self.dispatch(
+                agent_id=agent_id,
+                instruction=instruction,
+                mode=mode,
+                constraints=constraints,
+                max_retries=max_retries,
+                depends_on=depends_on,
+                dispatched_by=dispatched_by,
+                attachments=attachments,
+                user_id=user_id,
+                team_ids=team_ids,
+                run_id=run_id,
+            )
+
+        async def _audit(task_id: str, action: str) -> None:
+            # Recording the audit trail must never break the dispatch itself:
+            # the gate decision (allow/deny/pending) is already applied above.
+            try:
+                await self.record_review(
+                    task_id=task_id,
+                    agent_id=agent_id,
+                    mode=mode,
+                    score=outcome.score if outcome else None,
+                    threshold=outcome.threshold if outcome else None,
+                    action=action,
+                    reason=outcome.reason if outcome else None,
+                    violations=outcome.violations if outcome else None,
+                    model=outcome.model if outcome else None,
+                    source="dispatch",
+                    actor="ai",
+                )
+                await self.store.append_task_event(
+                    task_id=task_id,
+                    event_type="ai_review",
+                    agent_id=agent_id,
+                    user_id=user_id,
+                    details={
+                        "action": action,
+                        "score": outcome.score if outcome else None,
+                        "threshold": outcome.threshold if outcome else None,
+                        "reason": outcome.reason if outcome else None,
+                        "violations": outcome.violations if outcome else [],
+                        "model": outcome.model if outcome else None,
+                    },
+                )
+            except Exception:
+                logger.exception("failed to record AI review audit for task=%s", task_id)
+
+        if outcome is None:
+            return GatedDispatch(await _dispatch(), TaskStatus.QUEUED.value)
+
+        if outcome.action == "allow":
+            task_id = await _dispatch()
+            await _audit(task_id, "allowed")
+            return GatedDispatch(
+                task_id, TaskStatus.QUEUED.value, outcome.score, outcome.reason, True
+            )
+
+        if outcome.action == "pending":
+            task_id = await self.dispatch_pending_review(
+                agent_id=agent_id,
+                instruction=instruction,
+                mode=mode,
+                score=outcome.score,
+                reason=outcome.reason,
+                constraints=constraints,
+                attachments=attachments,
+                depends_on=depends_on,
+                max_retries=max_retries,
+                dispatched_by=dispatched_by,
+                user_id=user_id,
+                team_ids=team_ids,
+                run_id=run_id,
+            )
+            await _audit(task_id, "pending_review")
+            return GatedDispatch(
+                task_id, TaskStatus.PENDING_REVIEW.value, outcome.score, outcome.reason, True
+            )
+
+        # outcome.action == "deny"
+        task_id = await self.dispatch_denied(
+            agent_id=agent_id,
+            instruction=instruction,
+            mode=mode,
+            reason=outcome.reason,
+            dispatched_by=dispatched_by,
+            user_id=user_id,
+            team_ids=team_ids,
+        )
+        await _audit(task_id, "denied")
+        logger.warning(
+            "dispatch denied by AI review task=%s agent=%s user=%s score=%s reason=%s",
+            task_id, agent_id, user_id, outcome.score, outcome.reason,
+        )
+        return GatedDispatch(
+            task_id, TaskStatus.DENIED.value, outcome.score, outcome.reason, True
+        )
+
+    async def dispatch_gated(
+        self,
+        *,
+        agent_id: str,
+        instruction: str,
+        mode: str,
+        constraints: Constraints,
+        user: dict[str, Any],
+        dispatched_by: str | None = None,
+        max_retries: int = 0,
+        depends_on: list[str] | None = None,
+        attachments: list[FileRef] | None = None,
+        team_ids: list[str] | None = None,
+        run_id: str | None = None,
+    ) -> GatedDispatch:
+        """Dispatch a task, first passing it through the optional AI review gate.
+
+        Returns a :class:`GatedDispatch` describing whether it was queued,
+        held as ``pending_review``, or denied. The gate is skipped entirely when
+        the review policy is disabled or the task is out of scope.
+        """
+        target = await self._resolve_agent(agent_id)
+        outcome = await self.review_outcome(
+            agent=target,
+            agent_id=agent_id,
+            instruction=instruction,
+            mode=mode,
+            user=user,
+            team_ids=team_ids,
+        )
+        return await self._finalize_gated(
+            agent_id=agent_id,
+            instruction=instruction,
+            mode=mode,
+            constraints=constraints,
+            outcome=outcome,
+            user=user,
+            dispatched_by=dispatched_by,
+            max_retries=max_retries,
+            depends_on=depends_on,
+            attachments=attachments,
+            team_ids=team_ids,
+            run_id=run_id,
+        )
+
+    async def approve_reviewed_task(self, task_id: str, *, actor: str | None) -> bool:
+        """Approve a held task: move it to the queue so a node can claim it."""
+        task = await self.get_task(task_id)
+        if task is None or task.status != TaskStatus.PENDING_REVIEW:
+            return False
+        ok = await self.store.update_task_status(
+            task_id=task_id,
+            status=TaskStatus.QUEUED.value,
+            expected_status=TaskStatus.PENDING_REVIEW.value,
+        )
+        if not ok:
+            return False
+        await self.store.enqueue(task_id, task.agent_id)
+        await self.record_review(
+            task_id=task_id,
+            agent_id=task.agent_id,
+            mode=task.mode,
+            score=task.review_score,
+            threshold=None,
+            action="allowed",
+            reason=task.review_reason,
+            violations=None,
+            model=None,
+            source="approve",
+            actor=actor,
+        )
+        await self.store.append_task_event(
+            task_id=task_id,
+            event_type="review_approved",
+            details={"actor": actor, "previous_score": task.review_score},
+        )
+        logger.info("task %s approved by %s", task_id, actor)
+        publish("tasks_changed")
+        return True
+
+    async def reject_reviewed_task(
+        self, task_id: str, *, actor: str | None, reason: str | None = None
+    ) -> bool:
+        """Reject a held task: mark it denied with the reviewer's reason."""
+        task = await self.get_task(task_id)
+        if task is None or task.status != TaskStatus.PENDING_REVIEW:
+            return False
+        now = datetime.now(timezone.utc)
+        ok = await self.store.update_task_status(
+            task_id=task_id,
+            status=TaskStatus.DENIED.value,
+            finished_at=now,
+            expected_status=TaskStatus.PENDING_REVIEW.value,
+        )
+        if not ok:
+            return False
+        final_reason = reason or task.review_reason or "人工审核拒绝"
+        await self.store.set_task_result(
+            task_id,
+            TaskResult(
+                status="denied",
+                mode=task.mode,  # type: ignore[arg-type]
+                exit_code=0,
+                stdout_tail="",
+                stderr_tail="",
+                duration_ms=0,
+                summary=final_reason,
+            ),
+        )
+        await self.record_review(
+            task_id=task_id,
+            agent_id=task.agent_id,
+            mode=task.mode,
+            score=task.review_score,
+            threshold=None,
+            action="denied",
+            reason=final_reason,
+            violations=None,
+            model=None,
+            source="reject",
+            actor=actor,
+        )
+        await self.store.append_task_event(
+            task_id=task_id,
+            event_type="review_rejected",
+            details={"actor": actor, "reason": final_reason},
+        )
+        logger.info("task %s rejected by %s: %s", task_id, actor, final_reason)
+        publish("tasks_changed")
+        return True
+
+    async def expire_reviewed_task(self, task_id: str) -> bool:
+        """Auto-deny a `pending_review` task that no one handled in time."""
+        task = await self.get_task(task_id)
+        if task is None or task.status != TaskStatus.PENDING_REVIEW:
+            return False
+        reason = "审核超时未处理，已自动拦截"
+        now = datetime.now(timezone.utc)
+        ok = await self.store.update_task_status(
+            task_id=task_id,
+            status=TaskStatus.DENIED.value,
+            finished_at=now,
+            expected_status=TaskStatus.PENDING_REVIEW.value,
+        )
+        if not ok:
+            return False
+        await self.store.set_task_result(
+            task_id,
+            TaskResult(
+                status="denied",
+                mode=task.mode,  # type: ignore[arg-type]
+                exit_code=0,
+                stdout_tail="",
+                stderr_tail="",
+                duration_ms=0,
+                summary=reason,
+            ),
+        )
+        await self.record_review(
+            task_id=task_id,
+            agent_id=task.agent_id,
+            mode=task.mode,
+            score=task.review_score,
+            threshold=None,
+            action="denied",
+            reason=reason,
+            violations=None,
+            model=None,
+            source="expire",
+            actor="system",
+        )
+        await self.store.append_task_event(
+            task_id=task_id, event_type="review_expired", details={"reason": reason}
+        )
+        logger.info("task %s review expired -> denied", task_id)
+        publish("tasks_changed")
+        return True
 
     async def _resolve_agent(self, agent_ref: str) -> AgentStatus | None:
         """Resolve an agent reference: numeric id, device_id (machine-id), or agent_id string."""

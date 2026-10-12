@@ -21,7 +21,12 @@ from agent_mesh.shared.schemas import Constraints, FileRef
 
 logger = logging.getLogger(__name__)
 
-_ACTIVE_STATUSES = {TaskStatus.QUEUED, TaskStatus.ASSIGNED, TaskStatus.WORKING}
+_ACTIVE_STATUSES = {
+    TaskStatus.QUEUED,
+    TaskStatus.ASSIGNED,
+    TaskStatus.WORKING,
+    TaskStatus.PENDING_REVIEW,
+}
 
 
 class SchedulerMixin:
@@ -179,30 +184,49 @@ class SchedulerMixin:
             if model_error:
                 raise ValueError(model_error)
 
-        task_id = await self.dispatch(
+        user = {
+            "user_id": user_id,
+            "username": dispatched_by,
+            "role": "user",
+        }
+        result = await self.dispatch_gated(
             agent_id=agent_ref,
             instruction=schedule["instruction"],
             mode=mode,
             constraints=constraints,
+            user=user,
             dispatched_by=dispatched_by,
             attachments=attachments,
-            user_id=user_id,
             team_ids=team_ids,
         )
+        if result.status == TaskStatus.DENIED.value:
+            await self.store.append_task_event(
+                task_id=result.task_id,
+                event_type="permission_denied",
+                details={
+                    "reason": result.reason,
+                    "review_score": result.score,
+                    "schedule_id": schedule["id"],
+                    "trigger": trigger,
+                },
+            )
+            return result.task_id
         await self.store.append_task_event(
-            task_id=task_id,
+            task_id=result.task_id,
             event_type="scheduled",
             user_id=user_id,
             details={
                 "schedule_id": schedule["id"],
                 "schedule_name": schedule["name"],
                 "trigger": trigger,
+                "status": result.status,
             },
         )
         logger.info(
-            "schedule %s (%s) dispatched task %s", schedule.get("name"), trigger, task_id
+            "schedule %s (%s) dispatched task %s (status=%s)",
+            schedule.get("name"), trigger, result.task_id, result.status,
         )
-        return task_id
+        return result.task_id
 
     async def _resolve_schedule_attachments(self, file_ids: list[str]) -> list[FileRef]:
         if not file_ids:

@@ -96,7 +96,9 @@ async def create_schema(conn: Any) -> None:
             session_id TEXT,
             skills JSONB,
             attachments JSONB,
-            run_id TEXT
+            run_id TEXT,
+            review_score INTEGER,
+            review_reason TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_tasks_agent_id ON tasks(agent_id);
         CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
@@ -110,6 +112,25 @@ async def create_schema(conn: Any) -> None:
             created_at TIMESTAMP DEFAULT NOW(),
             PRIMARY KEY (scope, key)
         );
+
+        CREATE TABLE IF NOT EXISTS task_reviews (
+            id SERIAL PRIMARY KEY,
+            task_id TEXT NOT NULL,
+            agent_id TEXT,
+            mode TEXT,
+            score INTEGER,
+            threshold INTEGER,
+            verdict TEXT,
+            action TEXT,
+            reason TEXT,
+            violations JSONB,
+            model TEXT,
+            source TEXT,
+            actor TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_task_reviews_task ON task_reviews(task_id, id);
+        CREATE INDEX IF NOT EXISTS idx_task_reviews_created ON task_reviews(created_at);
 
         CREATE TABLE IF NOT EXISTS task_queue (
             id SERIAL PRIMARY KEY,
@@ -226,6 +247,8 @@ async def ensure_settings(conn: Any) -> None:
         ("probe_release_token", ""),
         # Scheduled-task timezone (empty = system timezone).
         ("schedule_timezone", ""),
+        # Optional AI review gate (JSON; see orchestrator/review.py).
+        ("review_policy", ""),
     ):
         await conn.execute(
             "INSERT INTO settings (key, value) VALUES ($1, $2) "

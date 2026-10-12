@@ -207,6 +207,7 @@ tbody tr:last-child td { border-bottom: none; }
 .status-failed, .status-timed_out { background: rgba(239, 68, 68, .16); color: #fca5a5; }
 .status-cancelled { background: rgba(120, 113, 108, .25); color: #d6d3d1; }
 .status-denied { background: rgba(244, 114, 182, .16); color: #f9a8d4; }
+.status-pending_review { background: rgba(251, 191, 36, .18); color: #fcd34d; }
 
 .online { color: var(--ok); font-weight: 600; }
 .offline { color: var(--err); font-weight: 600; }
@@ -876,6 +877,13 @@ input[type="checkbox"] {
 .kpi-ok .kpi-value { color: var(--ok); }
 .kpi-active .kpi-value { color: var(--primary); }
 .kpi-fail .kpi-value { color: var(--err); }
+.kpi-review .kpi-value { color: var(--warn); }
+
+.review-score { font-weight: 600; font-variant-numeric: tabular-nums; }
+.review-score.review-low { color: var(--err); }
+.review-score.review-ok { color: var(--ok); }
+.link { color: var(--primary); text-decoration: none; }
+.link:hover { text-decoration: underline; }
 
 .ov-grid {
   display: grid;

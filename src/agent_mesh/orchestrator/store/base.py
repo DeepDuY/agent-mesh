@@ -515,6 +515,53 @@ class AbstractStore(abc.ABC):
     async def delete_task_logs(self, task_id: str) -> None: ...
 
     # ------------------------------------------------------------------
+    # AI review gate (task_reviews)
+    # ------------------------------------------------------------------
+    @abc.abstractmethod
+    async def create_task_review(
+        self,
+        *,
+        task_id: str,
+        agent_id: str | None = None,
+        mode: str | None = None,
+        score: int | None = None,
+        threshold: int | None = None,
+        verdict: str | None = None,
+        action: str | None = None,
+        reason: str | None = None,
+        violations: list[Any] | None = None,
+        model: str | None = None,
+        source: str | None = None,
+        actor: str | None = None,
+    ) -> int: ...
+
+    @abc.abstractmethod
+    async def set_task_review(
+        self, task_id: str, score: int | None, reason: str | None
+    ) -> None:
+        """Denormalise the latest verdict onto the task row."""
+
+    @abc.abstractmethod
+    async def list_task_reviews(
+        self,
+        task_id: str | None = None,
+        *,
+        action: str | None = None,
+        search: str | None = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]: ...
+
+    @abc.abstractmethod
+    async def count_task_reviews(
+        self,
+        task_id: str | None = None,
+        *,
+        action: str | None = None,
+        search: str | None = None,
+    ) -> int: ...
+
+    # ------------------------------------------------------------------
     # File library
     # ------------------------------------------------------------------
     @abc.abstractmethod

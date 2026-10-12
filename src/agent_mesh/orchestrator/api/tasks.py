@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import mimetypes
 import time
@@ -420,30 +421,48 @@ def mount_task_routes(
             raise HTTPException(status_code=400, detail=str(e))
         team_ids = sorted(await store.user_teams(user))
         try:
-            task_id = await store.dispatch(
+            result = await store.dispatch_gated(
                 agent_id=body.get("agent_id", ""),
                 instruction=body.get("instruction", ""),
                 mode=mode,
                 constraints=constraints,
+                user=user,
                 max_retries=body.get("max_retries", 0),
                 depends_on=deps,
                 dispatched_by=user["username"],
                 attachments=attachments,
-                user_id=user.get("user_id"),
                 team_ids=team_ids,
                 run_id=body.get("run_id"),
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
-        logger.info("REST dispatched task %s by %s", task_id, user["username"])
+        if result.status == TaskStatus.DENIED.value:
+            await store.store.append_task_event(
+                task_id=result.task_id,
+                event_type="permission_denied",
+                agent_id=body.get("agent_id"),
+                user_id=user.get("user_id"),
+                details={"reason": result.reason, "review_score": result.score},
+            )
+            raise HTTPException(
+                status_code=403, detail=result.reason or "denied by AI review"
+            )
+        logger.info(
+            "REST dispatched task %s by %s (status=%s)",
+            result.task_id, user["username"], result.status,
+        )
         await store.store.append_task_event(
-            task_id=task_id,
+            task_id=result.task_id,
             event_type="dispatched",
             agent_id=body.get("agent_id"),
             user_id=user.get("user_id"),
-            details={"mode": mode, "run_id": body.get("run_id")},
+            details={"mode": mode, "run_id": body.get("run_id"), "status": result.status},
         )
-        return {"task_id": task_id, "status": TaskStatus.QUEUED.value}
+        return {
+            "task_id": result.task_id,
+            "status": result.status,
+            "review_score": result.score,
+        }
 
     @router.post("/tasks/dispatch-batch")
     async def rest_dispatch_batch(
@@ -523,8 +542,11 @@ def mount_task_routes(
         team_ids = sorted(await store.user_teams(user))
         task_ids: list[str] = []
         denied: list[dict[str, Any]] = []
+        pending: list[dict[str, Any]] = []
         per_node: dict[str, int] = {}
 
+        # Phase 1: cheap per-target validation (no reviewer calls yet).
+        candidates: list[dict[str, Any]] = []
         for raw in targets:
             ref = str(raw)
             target = await store.resolve_agent(ref)
@@ -533,15 +555,6 @@ def mount_task_routes(
                 continue
             if not await store.can_access_agent(user, target):
                 denied.append({"target": raw, "reason": "no access to this node"})
-                continue
-            queue_key = target.device_id or target.agent_id
-            if per_node.get(queue_key, 0) >= max_per_node:
-                denied.append(
-                    {
-                        "target": raw,
-                        "reason": f"per-node fan-out limit {max_per_node} exceeded",
-                    }
-                )
                 continue
             model_error = await store.validate_llm_model(ref, payload.mode, payload.model)
             if model_error:
@@ -561,27 +574,74 @@ def mount_task_routes(
                     )
                     denied.append({"target": raw, "reason": denial, "task_id": denied_id})
                     continue
+            candidates.append({"raw": raw, "ref": ref, "target": target})
+
+        # Phase 2: run the AI review gate for all candidates concurrently (the
+        # reviewer round-trip dominates; a per-target await would serialize it).
+        async def _review(c: dict[str, Any]):
             try:
-                tid = await store.dispatch(
+                return await store.review_outcome(
+                    agent=c["target"],
+                    agent_id=c["ref"],
+                    instruction=payload.instruction,
+                    mode=payload.mode,
+                    user=user,
+                    team_ids=team_ids,
+                )
+            except Exception:
+                logger.exception("batch review failed for target=%s", c["ref"])
+                return None
+
+        if candidates:
+            outcomes = await asyncio.gather(*(_review(c) for c in candidates))
+        else:
+            outcomes = []
+
+        # Phase 3: enqueue sequentially (fast); the per-node fan-out limit only
+        # counts tasks that actually get queued.
+        for c, outcome in zip(candidates, outcomes):
+            ref = c["ref"]
+            target = c["target"]
+            queue_key = target.device_id or target.agent_id
+            will_queue = outcome is None or outcome.action == "allow"
+            if will_queue and per_node.get(queue_key, 0) >= max_per_node:
+                denied.append(
+                    {
+                        "target": c["raw"],
+                        "reason": f"per-node fan-out limit {max_per_node} exceeded",
+                    }
+                )
+                continue
+            try:
+                result = await store._finalize_gated(
                     agent_id=ref,
                     instruction=payload.instruction,
                     mode=payload.mode,
                     constraints=constraints,
+                    outcome=outcome,
+                    user=user,
                     max_retries=payload.max_retries,
                     depends_on=base_deps,
                     dispatched_by=user["username"],
                     attachments=base_attachments,
-                    user_id=user.get("user_id"),
                     team_ids=team_ids,
                     run_id=run_id,
                 )
             except ValueError as e:
-                denied.append({"target": raw, "reason": str(e)})
+                denied.append({"target": c["raw"], "reason": str(e)})
+                continue
+            if result.status == TaskStatus.DENIED.value:
+                denied.append(
+                    {"target": c["raw"], "reason": result.reason or "denied", "task_id": result.task_id}
+                )
+                continue
+            if result.status == TaskStatus.PENDING_REVIEW.value:
+                pending.append({"target": c["raw"], "task_id": result.task_id, "score": result.score})
                 continue
             per_node[queue_key] = per_node.get(queue_key, 0) + 1
-            task_ids.append(tid)
+            task_ids.append(result.task_id)
             await store.store.append_task_event(
-                task_id=tid,
+                task_id=result.task_id,
                 event_type="dispatched",
                 agent_id=ref,
                 user_id=user.get("user_id"),
@@ -592,13 +652,14 @@ def mount_task_routes(
             await store.store.set_idempotent_run(idem_scope, idem_key, run_id)
 
         logger.info(
-            "REST batch-dispatched run=%s queued=%d denied=%d by %s",
-            run_id, len(task_ids), len(denied), user["username"],
+            "REST batch-dispatched run=%s queued=%d pending=%d denied=%d by %s",
+            run_id, len(task_ids), len(pending), len(denied), user["username"],
         )
         return {
             "run_id": run_id,
             "queued": len(task_ids),
             "task_ids": task_ids,
+            "pending_review": pending,
             "denied": denied,
         }
 
@@ -738,6 +799,75 @@ def mount_task_routes(
             details={},
         )
         return {"accepted": True, "task_id": task_id, "status": TaskStatus.CANCELLED.value}
+
+    @router.post("/tasks/{task_id}/approve")
+    async def rest_approve_task(
+        task_id: str,
+        user: dict[str, Any] = Depends(require_user_token),
+    ) -> dict[str, Any]:
+        """Approve a task held by the AI review gate, moving it to the queue."""
+        task = await _require_task(task_id, user)
+        if task.status != TaskStatus.PENDING_REVIEW:
+            raise HTTPException(status_code=409, detail="task is not awaiting review")
+        if not await store.approve_reviewed_task(task_id, actor=user.get("username")):
+            raise HTTPException(status_code=409, detail="task is not awaiting review")
+        logger.info("REST approved reviewed task %s by %s", task_id, user["username"])
+        return {"approved": True, "task_id": task_id, "status": TaskStatus.QUEUED.value}
+
+    @router.post("/tasks/{task_id}/reject")
+    async def rest_reject_task(
+        task_id: str,
+        request: Request,
+        user: dict[str, Any] = Depends(require_user_token),
+    ) -> dict[str, Any]:
+        """Reject a task held by the AI review gate (marks it denied)."""
+        task = await _require_task(task_id, user)
+        if task.status != TaskStatus.PENDING_REVIEW:
+            raise HTTPException(status_code=409, detail="task is not awaiting review")
+        body: dict[str, Any] = {}
+        try:
+            raw = await request.body()
+            if raw:
+                body = json.loads(raw)
+        except (ValueError, TypeError):
+            body = {}
+        reason = body.get("reason")
+        if not await store.reject_reviewed_task(
+            task_id, actor=user.get("username"), reason=reason
+        ):
+            raise HTTPException(status_code=409, detail="task is not awaiting review")
+        logger.info("REST rejected reviewed task %s by %s", task_id, user["username"])
+        return {"rejected": True, "task_id": task_id, "status": TaskStatus.DENIED.value}
+
+    @router.get("/reviews")
+    async def rest_list_reviews(
+        action: str | None = None,
+        task_id: str | None = None,
+        search: str | None = None,
+        limit: int = Query(20, ge=1, le=1000),
+        offset: int = Query(0, ge=0),
+        user: dict[str, Any] = Depends(require_user_token),
+    ) -> dict[str, Any]:
+        """Review audit history (admin only), fuzzy-searchable + paginated."""
+        if not store.is_admin(user):
+            raise HTTPException(status_code=403, detail="admin only")
+        reviews = await store.store.list_task_reviews(
+            task_id=task_id, action=action, search=search or None,
+            limit=limit, offset=offset,
+        )
+        total = await store.store.count_task_reviews(
+            task_id=task_id, action=action, search=search or None
+        )
+        return {"reviews": reviews, "total": total, "limit": limit, "offset": offset}
+
+    @router.get("/tasks/{task_id}/reviews")
+    async def rest_task_reviews(
+        task_id: str,
+        user: dict[str, Any] = Depends(require_user_token),
+    ) -> dict[str, Any]:
+        await _require_task(task_id, user)
+        reviews = await store.store.list_task_reviews(task_id=task_id, limit=200)
+        return {"task_id": task_id, "reviews": reviews}
 
     @router.delete("/tasks/{task_id}")
     async def rest_delete_task(

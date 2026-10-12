@@ -63,6 +63,8 @@ async function loadConfig() {
     const prt = document.getElementById('probe-release-token');
     if (prt && document.activeElement !== prt) prt.value = settings.probe_release_token || '';
 
+    if (typeof loadReviewPolicy === 'function') loadReviewPolicy(settings.review_policy || '');
+
     loadVersionInfo();
   } catch (e) {
     console.error('load config failed', e);

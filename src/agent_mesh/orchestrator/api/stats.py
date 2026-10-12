@@ -86,6 +86,7 @@ def mount_stats_routes(router: APIRouter, store: TaskStore, require_user_token) 
         failed = sum(by_status.get(s, 0) for s in _FAILED_STATUSES)
         denied = by_status.get(TaskStatus.DENIED.value, 0)
         queued = by_status.get(TaskStatus.QUEUED.value, 0)
+        pending_review = by_status.get(TaskStatus.PENDING_REVIEW.value, 0)
         active = sum(by_status.get(s, 0) for s in _ACTIVE_STATUSES)
         terminal = completed + failed
         success_rate = round(completed / terminal, 4) if terminal else None
@@ -182,6 +183,7 @@ def mount_stats_routes(router: APIRouter, store: TaskStore, require_user_token) 
                 "failed": failed,
                 "denied": denied,
                 "queued": queued,
+                "pending_review": pending_review,
                 "active": active,
                 "success_rate": success_rate,
                 "avg_duration_ms": avg_duration_ms,
