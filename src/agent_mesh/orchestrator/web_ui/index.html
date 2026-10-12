@@ -85,7 +85,7 @@
               <div id="ov-mode" class="bar-list"></div>
             </div>
             <div class="ov-card">
-              <h3>节点在线</h3>
+              <h3>节点状态</h3>
               <div id="ov-agents" class="ov-agents"></div>
             </div>
           </div>
@@ -314,12 +314,15 @@
             <div class="form-row">
               <input id="new-user-username" type="text" placeholder="用户名（字母/数字/._-）" autocomplete="off">
               <input id="new-user-password" type="password" placeholder="密码（至少 6 位）" autocomplete="new-password">
-              <div id="new-user-team" class="checkbox-list" title="新用户至少归属一个团队（可多选）"></div>
               <select id="new-user-role">
                 <option value="user">普通用户</option>
                 <option value="admin">管理员</option>
               </select>
               <button class="btn btn-success" onclick="createUser()">创建</button>
+            </div>
+            <div class="form-group">
+              <label>所属团队（新用户至少归属一个团队，可搜索多选）</label>
+              <div id="new-user-team" title="新用户至少归属一个团队（可多选）"></div>
             </div>
             <div id="create-user-status" class="status-msg"></div>
             <div id="new-user-token-box" class="hidden">
@@ -527,8 +530,8 @@
         <input id="team-desc" type="text" placeholder="可选">
       </div>
       <div class="form-group">
-        <label>成员（一个用户可属于多个团队，勾选即加入本团队）</label>
-        <div id="team-members" class="checkbox-list"></div>
+        <label>成员（一个用户可属于多个团队，选中即加入本团队，可搜索多选）</label>
+        <div id="team-members"></div>
       </div>
       <div id="team-status" class="status-msg"></div>
       <div class="sub-actions">
@@ -713,6 +716,7 @@
   </div>
 
   <script src="/static/js/app.js"></script>
+  <script src="/static/js/multiselect.js"></script>
   <script src="/static/js/overview.js"></script>
   <script src="/static/js/auth.js"></script>
   <script src="/static/js/agents.js"></script>

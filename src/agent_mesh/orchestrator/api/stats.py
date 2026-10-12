@@ -164,17 +164,10 @@ def mount_stats_routes(router: APIRouter, store: TaskStore, require_user_token) 
         allowed_ids = await store.accessible_agent_ids(user)
         if allowed_ids is not None:
             agents = [a for a in agents if a.id in allowed_ids]
-        versions: dict[str, int] = {}
-        distros: dict[str, int] = {}
-        for a in agents:
-            versions[a.version or "未知"] = versions.get(a.version or "未知", 0) + 1
-            distros[a.distro or a.os or "未知"] = distros.get(a.distro or a.os or "未知", 0) + 1
         agent_summary = {
             "total": len(agents),
             "online": sum(1 for a in agents if a.online),
             "offline": sum(1 for a in agents if not a.online),
-            "versions": versions,
-            "distros": distros,
         }
 
         return {

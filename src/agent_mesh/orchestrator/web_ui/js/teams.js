@@ -15,12 +15,13 @@ async function loadTeams() {
 function renderUserTeamOptions() {
   const el = document.getElementById('new-user-team');
   if (!el) return;
-  // Preserve any in-progress selection across background refreshes.
-  const checked = new Set(Array.from(el.querySelectorAll('input:checked')).map(c => c.value));
-  const html = (currentTeams || []).map(t =>
-    `<label style="display:inline-block;margin:2px 10px 2px 0"><input type="checkbox" value="${escHtml(t.team_id)}" ${checked.has(t.team_id) ? 'checked' : ''}> ${escHtml(t.name)}</label>`
-  ).join('') || '<span class="muted">（请先创建团队）</span>';
-  setHtmlIfChanged(el, html);
+  // Preserve any in-progress selection across background refreshes:
+  // setOptions() keeps values that still exist among the new options.
+  const inst = msInstances['new-user-team'] || msCreate(el, {
+    placeholder: '选择团队（可多选）',
+    searchThreshold: 6,
+  });
+  inst.setOptions((currentTeams || []).map(t => ({ value: t.team_id, label: t.name })));
 }
 
 function teamNodeCount(teamId) {
@@ -103,12 +104,13 @@ function openTeamModal(teamId) {
   document.getElementById('team-id').value = t ? t.team_id : '';
   document.getElementById('team-name').value = t ? (t.name || '') : '';
   document.getElementById('team-desc').value = t ? (t.description || '') : '';
-  const selected = new Set(t ? (t.members || []) : []);
-  document.getElementById('team-members').innerHTML = (currentUsers || []).map(u => {
-    return `<label style="display:block;margin:2px 0">
-      <input type="checkbox" value="${escHtml(u.user_id)}" ${selected.has(u.user_id) ? 'checked' : ''}> ${escHtml(u.username)}
-    </label>`;
-  }).join('') || '<span class="muted">暂无用户</span>';
+  const el = document.getElementById('team-members');
+  const inst = msInstances['team-members'] || msCreate(el, {
+    placeholder: '选择成员（可多选）',
+    searchThreshold: 6,
+  });
+  inst.setOptions((currentUsers || []).map(u => ({ value: u.user_id, label: u.username })));
+  inst.setSelected(t ? (t.members || []) : []);
   document.getElementById('team-status').textContent = '';
   const modal = document.getElementById('team-modal');
   modal.classList.remove('hidden');
@@ -155,8 +157,8 @@ async function saveTeam() {
       teamId = data.team.team_id;
     }
     // Sync membership (add newly checked, remove unchecked).
-    const checked = new Set(Array.from(
-      document.querySelectorAll('#team-members input:checked')).map(c => c.value));
+    const memberSel = msInstances['team-members'];
+    const checked = new Set(memberSel ? memberSel.getSelected() : []);
     const before = new Set((currentTeams.find(t => t.team_id === teamId) || {}).members || []);
     for (const uid of checked) {
       if (!before.has(uid)) {

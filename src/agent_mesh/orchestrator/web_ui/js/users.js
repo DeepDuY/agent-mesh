@@ -56,8 +56,8 @@ async function createUser() {
   const username = document.getElementById('new-user-username').value.trim();
   const password = document.getElementById('new-user-password').value;
   const role = document.getElementById('new-user-role').value;
-  const teamIds = Array.from(
-    document.querySelectorAll('#new-user-team input:checked')).map(c => c.value);
+  const teamSel = msInstances['new-user-team'];
+  const teamIds = teamSel ? teamSel.getSelected() : [];
   if (!username || !password) {
     statusEl.textContent = '请填写用户名和密码';
     statusEl.style.color = 'var(--danger)';

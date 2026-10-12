@@ -73,7 +73,7 @@
 
 - **接口**：`GET /api/stats/overview`（用户 token）。查询 `range`（`24h`/`7d`/`30d`/`custom`，默认 `7d`）、`created_after`/`created_before`（custom 用）、`top`（默认 10）。
 - **时间基准**：以任务 `created_at` 划窗（排队中/未开始的任务也计入）。
-- **返回**：`summary`（总数/完成/失败/拦截/排队/执行中/成功率/平均耗时）+ `by_status`、`by_mode`、`by_agent`、`by_user`、`by_team`（各含失败数）+ `heatmap`（按小时的时段数据）+ `agents`（在线/离线、版本与发行版分布）。
+- **返回**：`summary`（总数/完成/失败/拦截/排队/执行中/成功率/平均耗时）+ `by_status`、`by_mode`、`by_agent`、`by_user`、`by_team`（各含失败数）+ `heatmap`（按小时的时段数据）+ `agents`（在线/离线节点数）。
 - **隔离**：普通用户仅统计自己及所在团队的任务（与任务可见性一致），团队维度只回自己团队，节点概览只回可访问节点；admin 看全量。
 - **实现**：聚合查询在 store 层（`StatsMixin`，SQLite/PG 双后端；小时分桶 PG 用 `to_char`、SQLite 用 `substr`，团队维度 unnest `team_ids`）；前端按**本机时区**把小时桶聚合为「天 × 小时」热力图与每日趋势线、并按本地时区计算高峰时段，用本地 CSS + 内联 SVG 绘制（无外部图表库，内网可用）。页面每 5 秒自动刷新，并随 `tasks_changed`/`agents_changed` 事件即时刷新。
 

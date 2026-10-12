@@ -56,7 +56,7 @@ function ovLocalBucket(bucket) {
   };
 }
 
-function barList(el, items) {
+function ovBarList(el, items) {
   if (!items.length) { setHtmlIfChanged(el, '<p class="muted">暂无数据</p>'); return; }
   const max = Math.max(...items.map(i => i.total), 1);
   const html = items.map(i => {
@@ -73,7 +73,7 @@ function barList(el, items) {
   setHtmlIfChanged(el, html);
 }
 
-function renderKpis(el, s) {
+function ovRenderKpis(el, s) {
   const cards = [
     { label: '任务总数', value: s.total, cls: '' },
     { label: '成功率', value: ovPct(s.success_rate), cls: 'kpi-ok' },
@@ -102,7 +102,7 @@ function ovDailySeries(heatmap) {
   return Object.keys(byDay).sort().map(k => ({ bucket: k, total: byDay[k].total, failed: byDay[k].failed }));
 }
 
-function renderTrend(el, data) {
+function ovRenderTrend(el, data) {
   if (!data.length) { setHtmlIfChanged(el, '<p class="muted">暂无数据</p>'); return; }
   const W = Math.max(el.clientWidth || 720, 320), H = 190, PADL = 34, PADR = 14, PADT = 12, PADB = 26;
   const max = Math.max(...data.map(d => d.total), 1);
@@ -137,7 +137,7 @@ function renderTrend(el, data) {
 
 // Day (columns) x hour (rows, local) calendar heatmap built from the hourly
 // buckets, covering every day in the selected range.
-function renderHeatmap(el, heatmap, after, before) {
+function ovRenderHeatmap(el, heatmap, after, before) {
   const counts = {};
   let max = 1;
   for (const row of heatmap) {
@@ -179,16 +179,18 @@ function renderHeatmap(el, heatmap, after, before) {
   setHtmlIfChanged(el, html);
 }
 
-function renderAgents(el, a) {
-  const versions = Object.entries(a.versions || {}).sort((x, y) => y[1] - x[1]);
-  const extra = versions.length
-    ? '<div class="ov-sub">版本分布</div>' + versions.map(([v, n]) =>
-        `<div class="kv"><span class="mono">${escHtml(v)}</span><span>${n}</span></div>`).join('')
-    : '';
-  setHtmlIfChanged(el, `
-    <div class="fleet-online"><span class="n">${a.online}</span><span class="fleet-unit">在线</span></div>
-    <div class="fleet-label">共 ${a.total} 台 · 离线 ${a.offline} 台</div>
-    ${extra}`);
+function ovRenderAgents(el, a) {
+  if (!a.total) { setHtmlIfChanged(el, '<p class="muted">暂无可见节点</p>'); return; }
+  const pct = Math.round((a.online / a.total) * 100);
+  setHtmlIfChanged(el, `<div class="ns">
+    <div class="ns-big"><span class="ns-on">${a.online}</span><span class="ns-slash">/</span><span class="ns-total">${a.total}</span></div>
+    <div class="ns-cap">节点在线 <span class="ns-pct">${pct}%</span></div>
+    <div class="ns-bar"><div class="ns-bar-on" style="width:${pct}%"></div></div>
+    <div class="ns-legend">
+      <span class="ns-li"><i class="ns-dot on"></i>在线 ${a.online}</span>
+      <span class="ns-li"><i class="ns-dot off"></i>离线 ${a.offline}</span>
+    </div>
+  </div>`);
 }
 
 async function loadOverview(force) {
@@ -216,22 +218,25 @@ async function loadOverview(force) {
   const peakHour = hourTotals.some(v => v > 0)
     ? hourTotals.indexOf(Math.max(...hourTotals)) : null;
 
-  renderKpis(document.getElementById('ov-kpis'), { ...(data.summary || {}), peak_hour: peakHour });
-  barList(document.getElementById('ov-status'),
+  ovRenderKpis(document.getElementById('ov-kpis'), { ...(data.summary || {}), peak_hour: peakHour });
+  const byTotal = (a, b) => b.total - a.total;
+  ovBarList(document.getElementById('ov-status'),
     OV_STATUS_ORDER.filter(s => data.by_status[s]).map(s => ({
       label: OV_STATUS_LABELS[s] || s, total: data.by_status[s],
       cls: s === 'completed' ? 'bar-ok' : (['failed', 'timed_out', 'denied'].includes(s) ? 'bar-fail' : ''),
-    })));
-  barList(document.getElementById('ov-mode'),
-    OV_MODE_ORDER.filter(m => data.by_mode[m]).map(m => ({ label: OV_MODE_LABELS[m], total: data.by_mode[m] })));
-  renderAgents(document.getElementById('ov-agents'), data.agents || { total: 0, online: 0, offline: 0 });
-  renderHeatmap(document.getElementById('ov-hourly'), heatmap, data.range.created_after, data.range.created_before);
-  renderTrend(document.getElementById('ov-trend'), daily);
+    })).sort(byTotal));
+  ovBarList(document.getElementById('ov-mode'),
+    OV_MODE_ORDER.filter(m => data.by_mode[m]).map(m => ({
+      label: OV_MODE_LABELS[m], total: data.by_mode[m],
+    })).sort(byTotal));
+  ovRenderAgents(document.getElementById('ov-agents'), data.agents || { total: 0, online: 0, offline: 0 });
+  ovRenderHeatmap(document.getElementById('ov-hourly'), heatmap, data.range.created_after, data.range.created_before);
+  ovRenderTrend(document.getElementById('ov-trend'), daily);
 
   const withFail = (rows, labelKey) => rows.map(r => ({
     label: labelKey(r), total: r.total, failed: r.failed || 0,
   }));
-  barList(document.getElementById('ov-by-agent'), withFail(data.by_agent || [], r => agentDisplayName(r.agent_id)));
-  barList(document.getElementById('ov-by-user'), withFail(data.by_user || [], r => r.user));
-  barList(document.getElementById('ov-by-team'), withFail(data.by_team || [], r => r.name));
+  ovBarList(document.getElementById('ov-by-agent'), withFail(data.by_agent || [], r => agentDisplayName(r.agent_id)));
+  ovBarList(document.getElementById('ov-by-user'), withFail(data.by_user || [], r => r.user));
+  ovBarList(document.getElementById('ov-by-team'), withFail(data.by_team || [], r => r.name));
 }
