@@ -1,11 +1,13 @@
-# agent-mesh orchestrator — container deployment (PostgreSQL).
+# agent-mesh orchestrator + PostgreSQL (container deployment).
 #
-#   cp .env.example .env        # set AGENT_MESH_TOKEN (+ POSTGRES_PASSWORD)
-#   ./deploy/docker-build.sh    # or: docker compose build
-#   docker compose up -d
+#   cp docker/.env.example docker/.env    # set AGENT_MESH_TOKEN (+ POSTGRES_PASSWORD)
+#   docker compose -f docker/docker-compose.yml up -d
+#   # or, from inside docker/:  docker compose up -d
 #
-# The Web UI + REST API are served on ${AGENT_MESH_PORT:-8000}. For a quick
-# SQLite-only run instead, see deploy/docker-run.sh.
+# The build context is the repository root (context: ..) and uses the same
+# Dockerfile as docker/build.sh. For a quick SQLite-only run, see docker/run.sh.
+# Docker only reads .dockerignore from the build-context root, so it stays at the
+# repository root.
 
 name: agent-mesh
 
@@ -28,8 +30,8 @@ services:
   orchestrator:
     image: ${AGENT_MESH_IMAGE:-agent-mesh:local}
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
     restart: unless-stopped
     depends_on:
       postgres:
@@ -41,7 +43,7 @@ services:
       AGENT_MESH_PG_USER: ${POSTGRES_USER:-agent_mesh}
       AGENT_MESH_PG_PASSWORD: ${POSTGRES_PASSWORD:-agent_mesh}
       AGENT_MESH_PG_DATABASE: ${POSTGRES_DB:-agent_mesh}
-      AGENT_MESH_TOKEN: ${AGENT_MESH_TOKEN:?set AGENT_MESH_TOKEN in .env}
+      AGENT_MESH_TOKEN: ${AGENT_MESH_TOKEN:?set AGENT_MESH_TOKEN in docker/.env}
       AGENT_MESH_HOST: 0.0.0.0
       AGENT_MESH_PORT: "8000"
       # db_path is unused for storage in PG mode but anchors <dir>/bootstrap.

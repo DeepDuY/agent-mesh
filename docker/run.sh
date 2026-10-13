@@ -3,7 +3,7 @@
 # For a production-style deployment with PostgreSQL, use docker-compose.yml.
 #
 # Usage:
-#   ./deploy/docker-run.sh
+#   ./docker/run.sh
 # Env:
 #   AGENT_MESH_IMAGE  image tag           (default agent-mesh:local)
 #   CONTAINER_NAME    container name      (default agent-mesh)
@@ -24,7 +24,7 @@ command -v docker >/dev/null 2>&1 || {
 }
 
 if ! docker image inspect "${IMAGE}" >/dev/null 2>&1; then
-    echo "ERROR: image ${IMAGE} not found. Build it first: ./deploy/docker-build.sh" >&2
+    echo "ERROR: image ${IMAGE} not found. Build it first: ./docker/build.sh" >&2
     exit 1
 fi
 
@@ -40,7 +40,7 @@ docker run -d --name "${NAME}" \
     -v "${VOLUME}:/data" \
     -e AGENT_MESH_TOKEN="${TOKEN}" \
     --restart unless-stopped \
-    "${IMAGE}"
+    "${IMAGE}" >/dev/null
 
 echo "==> ${NAME} started."
 echo "    Dashboard: http://<host>:${PORT}/"

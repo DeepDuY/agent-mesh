@@ -1,12 +1,17 @@
-# agent-mesh orchestrator (server). Builds a self-contained image that serves
-# the REST API + bundled Web UI. Data (SQLite DB, artifacts, bootstrap package)
-# lives under /data, so mount a volume there.
-#
-# Build:  docker build -t agent-mesh:local .
-#   or:   ./deploy/docker-build.sh
-# Run:    see docker-compose.yml (PostgreSQL) or deploy/docker-run.sh (SQLite).
-#
 # syntax=docker/dockerfile:1
+# agent-mesh orchestrator (server) container image.
+#
+# The build context is the REPOSITORY ROOT (the image needs pyproject.toml and
+# src/); the Dockerfile itself lives here. Build with the helper so the
+# context/paths are always correct:
+#
+#   ./docker/build.sh                                  # -> agent-mesh:local
+#   docker compose -f docker/docker-compose.yml up -d  # PostgreSQL deployment
+#   ./docker/run.sh                                    # single container, SQLite
+#
+# Runtime data (SQLite DB, artifacts, bootstrap package) lives under /data, so
+# mount a volume there.
+
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
