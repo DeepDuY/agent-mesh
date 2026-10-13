@@ -50,6 +50,9 @@ docker compose -f docker/docker-compose.external-pg.yml up -d
 - 使用 host 网络：容器直接用 `127.0.0.1:5432` 连库、并直接占用宿主 `AGENT_MESH_PORT`（无需 ports 映射）。
 - `AGENT_MESH_DATA_DIR`（默认 `/opt/agent-mesh/data`）bind 到容器 `/data`，沿用旧的 artifacts/files/skills/bootstrap。
 - 默认以 root 运行（兼容 root 属主的数据目录）；可用 `AGENT_MESH_CONTAINER_USER` 覆盖。
+- **生产运行时文件不放项目目录**：把 compose + `.env` 放到安装目录（如 `/opt/agent-mesh/docker-compose.yml` +
+  `/opt/agent-mesh/.env`）并在那里 `docker compose ... up -d`；本目录的 `docker-compose.external-pg.yml` 作为可复用模板。
+  镜像仍由本目录 `build.sh` 从源码构建。
 
 ### 从 systemd 平滑迁移（停机 ≈ 启动时间）
 
