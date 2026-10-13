@@ -11,10 +11,26 @@ from fastapi.staticfiles import StaticFiles
 from agent_mesh.orchestrator.api import create_query_router
 from agent_mesh.orchestrator.artifact_store import ArtifactStore
 from agent_mesh.orchestrator.config import OrchestratorConfig
+from agent_mesh.orchestrator.store.connection.verify import verify_schema
 from agent_mesh.orchestrator.task_store import TaskStore
 from agent_mesh.shared.constants import SERVER_VERSION
 
 logger = logging.getLogger(__name__)
+
+
+async def _verify_and_record(
+    store: TaskStore, store_backend: Any, config: OrchestratorConfig
+) -> None:
+    """Verify the DB schema after migrations and stash the result on the store.
+
+    The status is surfaced via ``GET /api/healthz`` so deploy scripts can tell
+    "service up" from "service up with a broken/partial schema". A failure
+    raises so the process refuses to start (fail fast) rather than serving 500s.
+    """
+    status = await verify_schema(store_backend, config.db_type)
+    store.schema_status = status
+    if not status["ok"]:
+        raise RuntimeError(f"database schema verification failed: {status}")
 
 
 def create_app(
@@ -43,6 +59,12 @@ def create_app(
         logger.info("starting orchestrator")
         if init_backend:
             await store_backend.initialize()
+        # Always verify inside the running (uvicorn) event loop: for PG the
+        # verification acquires a pooled connection, which must be bound to the
+        # loop that will actually serve requests. Verifying earlier (e.g. in a
+        # throwaway asyncio.run loop) would create the pool on a loop that is
+        # closed by the time the server starts -> "Event loop is closed" 500s.
+        await _verify_and_record(store, store_backend, config)
         if start_sweepers:
             await store.start_sweepers()
         try:
@@ -153,6 +175,8 @@ def main() -> None:
     store, store_backend = _build_store(config)
 
     async def _init():
+        # Schema creation only; the pool-creating verification step runs later
+        # inside the app lifespan (on the serving event loop). See create_app.
         await store_backend.initialize()
 
     asyncio.run(_init())

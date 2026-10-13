@@ -65,3 +65,60 @@ ensure_venv() {
     echo "    - ensure curl/wget can reach https://bootstrap.pypa.io/get-pip.py" >&2
     return 1
 }
+
+# ---------------------------------------------------------------------------
+# Orchestrator listen-port helpers.
+#
+# Used by redeploy.sh / install.sh to confirm the service actually stopped
+# (port freed) and actually started (port bound) before declaring success. A
+# stale non-systemd process holding the port is the classic "upgrade says ok but
+# the old process keeps serving" failure. All helpers degrade gracefully when
+# ss/lsof/curl are unavailable.
+# ---------------------------------------------------------------------------
+
+# Resolve the orchestrator port: $AGENT_MESH_PORT > install env file > 8000.
+orch_port() {
+    local install_dir="$1"
+    local port="${AGENT_MESH_PORT:-}"
+    if [ -z "${port}" ] && [ -f "${install_dir}/etc/orchestrator.env" ]; then
+        port="$(sed -n 's/^AGENT_MESH_PORT=//p' "${install_dir}/etc/orchestrator.env" | tail -1)"
+    fi
+    echo "${port:-8000}"
+}
+
+can_check_port() { command -v ss >/dev/null 2>&1 || command -v lsof >/dev/null 2>&1; }
+can_http() { command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; }
+
+# 0 if something is listening on the TCP port.
+port_listening() {
+    local p="$1"
+    if command -v ss >/dev/null 2>&1; then
+        ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${p}\$"
+    elif command -v lsof >/dev/null 2>&1; then
+        [ -n "$(lsof -nP -iTCP:"${p}" -sTCP:LISTEN 2>/dev/null)" ]
+    else
+        return 1
+    fi
+}
+
+# Print the listener(s) on the port (for diagnostics).
+port_holders() {
+    local p="$1"
+    if command -v ss >/dev/null 2>&1; then
+        ss -ltnp 2>/dev/null | awk -v pat="[:.]${p}\$" '$4 ~ pat'
+    elif command -v lsof >/dev/null 2>&1; then
+        lsof -nP -iTCP:"${p}" -sTCP:LISTEN 2>/dev/null
+    fi
+}
+
+# 0 if the URL returns 2xx.
+http_ok() {
+    local url="$1"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsS --max-time 5 "$url" >/dev/null 2>&1
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -O /dev/null --timeout=5 "$url" 2>/dev/null
+    else
+        return 1
+    fi
+}

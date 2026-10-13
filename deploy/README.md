@@ -57,6 +57,30 @@ BUILD_PROBE=1 ./deploy/redeploy.sh   # 同时重新构建探针包（需 opencod
 - `redeploy.sh` 不改 `orchestrator.env`（token/配置保留）。
 - 若 repo 的 `data/bootstrap/` 里有探针包，会同步发布到服务端；否则提示如何构建。
 
+## 容器部署（Docker / Compose）
+
+镜像把 orchestrator（REST API + 内置 Web UI）打包进去，数据（SQLite 库 / 产物 / 探针包）落在容器 `/data` 卷。
+
+```bash
+# 1) 构建镜像（= build 模式）
+./deploy/docker-build.sh                 # 打 agent-mesh:local（并额外打 agent-mesh:<git-sha>）
+# 或： docker build -t agent-mesh:local .
+
+# 2) 部署模式 A：PostgreSQL（推荐，compose 一并起 postgres）
+cp .env.example .env                     # 设置 AGENT_MESH_TOKEN / POSTGRES_PASSWORD
+docker compose up -d                     # 端口默认 8000，可用 AGENT_MESH_PORT 覆盖
+docker compose logs -f orchestrator
+
+# 3) 部署模式 B：单容器 SQLite（快速本地/开发）
+./deploy/docker-run.sh                   # 未设 AGENT_MESH_TOKEN 时会生成并打印
+```
+
+- 健康检查：`GET /api/healthz` 返回 `{"status":"ok","version":...,"db":"ok"}`；`db` 字段来自启动时的数据库 schema 自检，`db != ok` 说明迁移/升级未完整应用（服务会拒绝启动，详见 `docs/orchestrator.md`）。
+- 镜像内置 `HEALTHCHECK`，`docker inspect --format '{{.State.Health.Status}}' <容器>` 可看状态。
+- 卷：compose 使用 `pgdata`（PostgreSQL 数据）与 `meshdata`（`/data`）；`docker-run.sh` 使用命名卷 `agent-mesh-data`。
+- 覆盖配置用环境变量（`AGENT_MESH_*`，见 `config.py`）；`.env` 已被 `.gitignore` 忽略。
+- 探针包：把成品包放进挂载的 `/data/bootstrap/`（或通过看板 / `POST /api/bootstrap/sync`），节点即可安装/升级。
+
 ## 单独构建探针包
 
 在 **`agent-mesh-edge` 仓库**中构建（本仓库不含构建脚本）：

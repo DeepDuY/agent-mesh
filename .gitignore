@@ -27,6 +27,9 @@ backup-*.tar.gz
 .env
 etc/
 
+# Local docker overrides
+docker-compose.override.yml
+
 # OS
 .DS_Store
 

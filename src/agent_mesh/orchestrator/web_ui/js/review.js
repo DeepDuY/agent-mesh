@@ -20,6 +20,27 @@ function reviewSourceLabel(source) {
   }[source] || source || '-';
 }
 
+// Review records store the agent reference the caller supplied, which may be a
+// numeric id, a device_id or an agent_id (and differ between the dispatch and
+// the decision rows of the same task). Resolve it to the agent so both审核
+// tables can show a consistent {id, hostname} pair.
+function reviewNodeInfo(key) {
+  const k = key == null ? '' : String(key);
+  const agents = currentAgents || [];
+  const a = agents.find(x => x.device_id && x.device_id === k) ||
+    agents.find(x => String(x.id) === k) ||
+    agents.find(x => x.agent_id === k);
+  if (!a) {
+    // Numeric fallback id only when the key really is a number; otherwise the
+    // key is an opaque identifier and belongs in the id column verbatim.
+    return { id: k || '-', hostname: '-' };
+  }
+  return {
+    id: a.id != null ? String(a.id) : '-',
+    hostname: hostLabel(a),
+  };
+}
+
 function openReviewTask(taskId) {
   if (typeof switchTab === 'function') switchTab('tasks');
   if (typeof showTaskDetail === 'function') showTaskDetail(taskId);
@@ -90,10 +111,13 @@ function nextReviewPage() {
 }
 
 function renderReviewPending(tasks) {
-  const rows = tasks.map(t => `
+  const rows = tasks.map(t => {
+    const node = reviewNodeInfo(t.agent_id);
+    return `
     <tr>
       <td class="mono"><a href="#" class="link" onclick="event.preventDefault();openReviewTask('${escHtml(t.task_id)}')">${escHtml(t.task_id)}</a></td>
-      <td>${escHtml(agentDisplayName(t.agent_id))}</td>
+      <td class="mono">${escHtml(node.id)}</td>
+      <td>${escHtml(node.hostname)}</td>
       <td>${modeBadge(t.mode)}</td>
       <td>${reviewScoreCell(t.review_score)}</td>
       <td title="${escHtml(t.review_reason || '')}">${escHtml((t.review_reason || '').slice(0, 60))}${(t.review_reason || '').length > 60 ? '...' : ''}</td>
@@ -106,24 +130,29 @@ function renderReviewPending(tasks) {
         </span>
       </td>
     </tr>
-  `).join('') || '<tr><td colspan="8" class="empty">暂无待审核任务</td></tr>';
+  `;
+  }).join('') || '<tr><td colspan="9" class="empty">暂无待审核任务</td></tr>';
   setHtmlIfChanged(document.getElementById('review-pending-body'), rows);
 }
 
 function renderReviewHistory(reviews) {
   currentReviews = reviews;
-  const rows = reviews.map(r => `
+  const rows = reviews.map(r => {
+    const node = reviewNodeInfo(r.agent_id);
+    return `
     <tr>
       <td class="mono">${formatTime(r.created_at)}</td>
       <td class="mono"><a href="#" class="link" onclick="event.preventDefault();openReviewTask('${escHtml(r.task_id)}')">${escHtml(r.task_id)}</a></td>
-      <td>${escHtml(agentDisplayName(r.agent_id))}</td>
+      <td class="mono">${escHtml(node.id)}</td>
+      <td>${escHtml(node.hostname)}</td>
       <td>${escHtml(reviewActionLabel(r.action))}</td>
       <td>${reviewScoreCell(r.score)}</td>
       <td title="${escHtml(r.reason || '')}">${escHtml((r.reason || '').slice(0, 60))}${(r.reason || '').length > 60 ? '...' : ''}</td>
       <td>${escHtml(reviewSourceLabel(r.source))}</td>
       <td>${escHtml(r.actor || '-')}</td>
     </tr>
-  `).join('') || '<tr><td colspan="8" class="empty">暂无审核记录</td></tr>';
+  `;
+  }).join('') || '<tr><td colspan="9" class="empty">暂无审核记录</td></tr>';
   setHtmlIfChanged(document.getElementById('review-history-body'), rows);
 }
 

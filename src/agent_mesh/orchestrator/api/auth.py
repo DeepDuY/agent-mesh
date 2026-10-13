@@ -140,8 +140,17 @@ def mount_auth_routes(
         return _user_public(user, await _teams_of(user["user_id"]))
 
     @router.get("/healthz")
-    async def healthz() -> dict[str, str]:
-        return {"status": "ok", "version": SERVER_VERSION}
+    async def healthz() -> dict[str, Any]:
+        # ``db``/``schema_version`` come from the startup schema self-check
+        # (main._verify_and_record) so deploy scripts can distinguish "service
+        # up" from "service up but the DB upgrade did not fully apply".
+        out: dict[str, Any] = {"status": "ok", "version": SERVER_VERSION}
+        info = getattr(store, "schema_status", None)
+        if isinstance(info, dict):
+            out["db"] = "ok" if info.get("ok") else "error"
+            if info.get("schema_version") is not None:
+                out["schema_version"] = info["schema_version"]
+        return out
 
     # ------------------------------------------------------------------
     # Admin-only user management

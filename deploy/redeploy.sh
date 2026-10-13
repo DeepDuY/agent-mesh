@@ -16,6 +16,8 @@ BUILD_PROBE="${BUILD_PROBE:-0}"
 
 source "${REPO_DIR}/deploy/common.sh"
 
+PORT="$(orch_port "${INSTALL_DIR}")"
+
 # Edge probe repository (separate from this server repo).
 find_edge_repo() {
     if [ -n "${EDGE_REPO_DIR:-}" ] && [ -f "${EDGE_REPO_DIR}/scripts/build-agent-bootstrap.py" ]; then
@@ -34,7 +36,32 @@ find_edge_repo() {
 
 echo "==> Redeploying agent-mesh source"
 
+echo "==> Stopping agent-mesh-orchestrator (port ${PORT})"
 systemctl stop agent-mesh-orchestrator 2>/dev/null || true
+
+# Confirm the service really stopped. A non-systemd / stale orchestrator can
+# keep holding the port; deploying on top of it silently leaves the old process
+# serving (the new one then dies with EADDRINUSE). Refuse to proceed.
+if can_check_port; then
+    for _ in $(seq 1 15); do
+        port_listening "${PORT}" || break
+        sleep 1
+    done
+    if port_listening "${PORT}"; then
+        echo "" >&2
+        echo "ERROR: port ${PORT} is still in use after 'systemctl stop'." >&2
+        echo "       The service was NOT stopped successfully; refusing to redeploy." >&2
+        echo "       Listener(s) on ${PORT}:" >&2
+        port_holders "${PORT}" >&2 || true
+        echo "       Suspect process(es):" >&2
+        pgrep -af "agent_mesh.orchestrator.main" >&2 || true
+        echo "       Stop it (kill/pkill) and re-run this script." >&2
+        echo "" >&2
+        exit 1
+    fi
+else
+    echo "WARNING: neither 'ss' nor 'lsof' found; cannot confirm port ${PORT} was freed." >&2
+fi
 
 rsync -a --delete \
     --exclude='.venv' \
@@ -82,6 +109,59 @@ else
     echo "    Build one: BUILD_PROBE=1 ./deploy/redeploy.sh   (needs the edge repo)"
 fi
 
+# ------------------------------------------------------------------
+# Back up the SQLite DB before the service (re)applies migrations.
+# ------------------------------------------------------------------
+DB_TYPE="$(sed -n 's/^AGENT_MESH_DB_TYPE=//p' "${INSTALL_DIR}/etc/orchestrator.env" 2>/dev/null | tail -1)"
+DB_TYPE="${DB_TYPE:-sqlite}"
+DB_PATH="$(sed -n 's/^AGENT_MESH_DB_PATH=//p' "${INSTALL_DIR}/etc/orchestrator.env" 2>/dev/null | tail -1)"
+DB_PATH="${DB_PATH:-${INSTALL_DIR}/data/agent-mesh.db}"
+
+if [ "${DB_TYPE}" = "sqlite" ] && [ -f "${DB_PATH}" ]; then
+    BACKUP="${DB_PATH}.bak-$(date +%Y%m%d-%H%M%S)"
+    if command -v sqlite3 >/dev/null 2>&1; then
+        if sqlite3 "${DB_PATH}" ".backup '${BACKUP}'" 2>/dev/null; then
+            echo "==> Backed up SQLite DB to ${BACKUP}"
+        else
+            echo "WARNING: SQLite backup failed; continuing." >&2
+        fi
+    else
+        if cp -p "${DB_PATH}" "${BACKUP}"; then
+            [ -f "${DB_PATH}-wal" ] && cp -p "${DB_PATH}-wal" "${BACKUP}-wal" 2>/dev/null || true
+            [ -f "${DB_PATH}-shm" ] && cp -p "${DB_PATH}-shm" "${BACKUP}-shm" 2>/dev/null || true
+            echo "==> Backed up SQLite DB to ${BACKUP} (cp; sqlite3 not found)"
+        else
+            echo "WARNING: SQLite backup failed; continuing." >&2
+        fi
+    fi
+    # Keep only the 10 most recent backups.
+    { ls -1t "${DB_PATH}".bak-* 2>/dev/null || true; } | tail -n +11 | xargs -r rm -f || true
+fi
+
+# ------------------------------------------------------------------
+# Start + confirm it actually came up (bound the port, healthz ok).
+# ------------------------------------------------------------------
+systemctl reset-failed agent-mesh-orchestrator 2>/dev/null || true
+echo "==> Starting agent-mesh-orchestrator (port ${PORT})"
 systemctl start agent-mesh-orchestrator
+
+up=0
+for _ in $(seq 1 20); do
+    if systemctl is-active --quiet agent-mesh-orchestrator \
+        && { ! can_check_port || port_listening "${PORT}"; } \
+        && { ! can_http || http_ok "http://127.0.0.1:${PORT}/api/healthz"; }; then
+        up=1
+        break
+    fi
+    sleep 1
+done
+
+if [ "${up}" -ne 1 ]; then
+    echo "" >&2
+    echo "ERROR: orchestrator did not come up on port ${PORT}." >&2
+    echo "       Recent service log:" >&2
+    journalctl -u agent-mesh-orchestrator -n 50 --no-pager >&2 2>/dev/null || true
+    exit 1
+fi
 
 echo "==> Redeploy complete"

@@ -302,7 +302,24 @@ async def ensure_admin_user(conn: Any) -> None:
         "SELECT password_hash, token_hash FROM users WHERE username = 'admin'"
     )
     if not row:
-        return
+        # Fresh PostgreSQL deployment: seed the built-in admin (admin/admin),
+        # mirroring the SQLite migration (001_initial.sql). Without this a new
+        # PG database has no users and nobody can log in. The password must be
+        # changed in production.
+        await conn.execute(
+            "INSERT INTO users (user_id, username, password_hash, token_hash, role) "
+            "VALUES ('u-admin', 'admin', $1, NULL, 'admin') "
+            "ON CONFLICT (username) DO NOTHING",
+            hash_password("admin"),
+        )
+        row = await conn.fetchrow(
+            "SELECT password_hash, token_hash FROM users WHERE username = 'admin'"
+        )
+        if not row:
+            return
+        logger.warning(
+            "seeded default admin user (admin/admin) — change the password in production"
+        )
     current_hash = row["password_hash"]
     # Reset only the placeholder/invalid hash, never a password the operator changed.
     if not current_hash or current_hash.startswith("$2b$12$placeholder"):
@@ -320,7 +337,8 @@ async def ensure_admin_user(conn: Any) -> None:
             "UPDATE users SET token_hash = $1, token_created_at = $2 "
             "WHERE username = 'admin'",
             hash_token(new_token),
-            datetime.now(timezone.utc),
+            # timestamp column (without tz): asyncpg rejects an aware datetime.
+            datetime.now(timezone.utc).replace(tzinfo=None),
         )
         logger.warning(
             "generated a new admin API token (shown once): %s", new_token
