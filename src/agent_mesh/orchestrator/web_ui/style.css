@@ -522,6 +522,9 @@ pre {
   pointer-events: none;
 }
 .help:hover::after { opacity: 1; visibility: visible; }
+/* Inside the review-settings modal the first fields sit near the top edge, so
+   open their tooltips downward instead of clipping against the modal header. */
+#review-settings-modal .help::after { top: 140%; bottom: auto; }
 
 .settings { display: flex; flex-direction: column; gap: .6rem; }
 .setting {

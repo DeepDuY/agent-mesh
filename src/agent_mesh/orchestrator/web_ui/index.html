@@ -296,7 +296,10 @@
         <div class="panel">
           <div class="panel-header">
             <h2>AI 审核</h2>
-            <button class="btn btn-secondary" onclick="loadReviews()">刷新</button>
+            <span class="actions">
+              <button class="btn btn-secondary" onclick="openReviewSettings()">⚙ 审核设置</button>
+              <button class="btn btn-secondary" onclick="loadReviews()">刷新</button>
+            </span>
           </div>
           <div class="card">
             <h3>待审核任务 <span class="help" data-tip="AI 评审分数低于阈值、且开启了人工审核的任务；通过后进入排队执行，拒绝则标记为已拦截。">?</span></h3>
@@ -446,61 +449,6 @@
                 <div class="sub-actions">
                   <button class="btn" onclick="saveDefaultPermission()">保存默认权限</button>
                   <span id="default-permission-status" class="status-msg"></span>
-                </div>
-              </div>
-            </div>
-
-            <div class="setting setting-lg">
-              <div class="setting-label">任务审核 <span class="help" data-tip="开启后，命中范围的任务在派发前由 AI 评分（0-100，越高越安全）；低于阈值则按「人工审核」开关处理。关闭则维持现有模板权限策略。">?</span></div>
-              <div class="setting-control">
-                <div class="sub-field">
-                  <label class="toggle-line"><input type="checkbox" id="review-enabled"> 开启审核模式</label>
-                </div>
-                <div class="sub-field">
-                  <label class="toggle-line"><input type="checkbox" id="review-human"> 低分任务进入人工审核（关闭 = 直接拦截）</label>
-                </div>
-                <div class="sub-field">
-                  <label class="toggle-line"><input type="checkbox" id="review-bypass-admin"> 管理员发起的任务跳过审核</label>
-                </div>
-                <div class="sub-field">
-                  <label>拦截阈值（低于此分拦截，0-100）</label>
-                  <input id="review-threshold" type="number" min="0" max="100" value="60">
-                </div>
-                <div class="sub-field">
-                  <label>审核模型（留空 = 用默认 LLM 模型）</label>
-                  <input id="review-model" type="text" placeholder="anthropic/deepseek-v4-flash">
-                </div>
-                <div class="sub-field">
-                  <label>接口风格 <span class="help" data-tip="网关的调用格式：自动按地址/模型判断，Anthropic 走 /v1/messages、OpenAI 走 /chat/completions。">?</span></label>
-                  <select id="review-api-style">
-                    <option value="auto">自动</option>
-                    <option value="anthropic">Anthropic（/v1/messages）</option>
-                    <option value="openai">OpenAI（/chat/completions）</option>
-                  </select>
-                </div>
-                <div class="sub-field">
-                  <label>人工审核超时（秒，0 = 不超时；超时自动拦截）</label>
-                  <input id="review-expire" type="number" min="0" max="86400" value="1800">
-                </div>
-                <div class="sub-field">
-                  <label>生效范围：节点（留空 = 全部节点）</label>
-                  <div id="review-scope-agents"></div>
-                </div>
-                <div class="sub-field">
-                  <label>生效范围：团队（留空 = 全部团队）</label>
-                  <div id="review-scope-teams"></div>
-                </div>
-                <div class="sub-field">
-                  <label>生效范围：个人（留空 = 全部用户）</label>
-                  <div id="review-scope-users"></div>
-                </div>
-                <div class="sub-field">
-                  <label>评分基准（AI 评审提示词，可编辑）</label>
-                  <textarea id="review-rubric" rows="6" placeholder="留空使用内置评分基准"></textarea>
-                </div>
-                <div class="sub-actions">
-                  <button class="btn" onclick="saveReviewPolicy()">保存审核设置</button>
-                  <span id="review-status" class="status-msg"></span>
                 </div>
               </div>
             </div>
@@ -682,6 +630,75 @@
       <div class="sub-actions">
         <button class="btn" onclick="saveTemplate()">保存</button>
         <button class="btn btn-secondary" onclick="closeTemplateModal()">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="review-settings-modal" class="modal hidden" onclick="onReviewSettingsBackdrop(event)">
+    <div class="modal-content" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h2>审核设置</h2>
+        <span class="close" onclick="closeReviewSettings()">&times;</span>
+      </div>
+      <div class="settings">
+        <div class="setting setting-lg">
+          <div class="setting-label">任务审核 <span class="help" data-tip="开启后，命中范围的任务在派发前由 AI 评分（0-100，越高越安全）；低于阈值则按「人工审核」开关处理。关闭则维持现有模板权限策略。">?</span></div>
+          <div class="setting-control">
+            <div class="sub-field">
+              <label class="toggle-line"><input type="checkbox" id="review-enabled"> 开启审核模式</label>
+              <span class="help" data-tip="关闭时完全维持现有模板权限策略，不发起任何 AI 审核请求。">?</span>
+            </div>
+            <div class="sub-field">
+              <label class="toggle-line"><input type="checkbox" id="review-human"> 低分任务进入人工审核</label>
+              <span class="help" data-tip="关闭 = 直接拦截（低分任务不进入人工审核队列）。">?</span>
+            </div>
+            <div class="sub-field">
+              <label class="toggle-line"><input type="checkbox" id="review-bypass-admin"> 管理员发起的任务跳过审核</label>
+              <span class="help" data-tip="开启后，管理员发起的任务不经 AI 评审直接派发。">?</span>
+            </div>
+            <div class="sub-field">
+              <label>拦截阈值 <span class="help" data-tip="AI 评分范围 0-100；低于此分将被拦截或进入人工审核。">?</span></label>
+              <input id="review-threshold" type="number" min="0" max="100" value="60">
+            </div>
+            <div class="sub-field">
+              <label>审核模型 <span class="help" data-tip="留空 = 使用全局默认 LLM 模型。">?</span></label>
+              <input id="review-model" type="text" placeholder="anthropic/deepseek-v4-flash">
+            </div>
+            <div class="sub-field">
+              <label>接口风格 <span class="help" data-tip="网关的调用格式：自动按地址/模型判断，Anthropic 走 /v1/messages、OpenAI 走 /chat/completions。">?</span></label>
+              <select id="review-api-style">
+                <option value="auto">自动</option>
+                <option value="anthropic">Anthropic（/v1/messages）</option>
+                <option value="openai">OpenAI（/chat/completions）</option>
+              </select>
+            </div>
+            <div class="sub-field">
+              <label>人工审核超时 <span class="help" data-tip="单位秒；0 = 不超时，超时自动拦截。">?</span></label>
+              <input id="review-expire" type="number" min="0" max="86400" value="1800">
+            </div>
+            <div class="sub-field">
+              <label>生效范围：节点 <span class="help" data-tip="留空 = 审核全部节点；可多选。">?</span></label>
+              <div id="review-scope-agents"></div>
+            </div>
+            <div class="sub-field">
+              <label>生效范围：团队 <span class="help" data-tip="留空 = 审核全部团队；可多选。">?</span></label>
+              <div id="review-scope-teams"></div>
+            </div>
+            <div class="sub-field">
+              <label>生效范围：个人 <span class="help" data-tip="留空 = 审核全部用户；可多选。">?</span></label>
+              <div id="review-scope-users"></div>
+            </div>
+            <div class="sub-field">
+              <label>评分基准 <span class="help" data-tip="AI 评审提示词，可编辑；留空使用内置评分基准。">?</span></label>
+              <textarea id="review-rubric" rows="6" placeholder="留空使用内置评分基准"></textarea>
+            </div>
+            <div class="sub-actions">
+              <button class="btn" onclick="saveReviewPolicy()">保存审核设置</button>
+              <button class="btn btn-secondary" onclick="closeReviewSettings()">关闭</button>
+              <span id="review-status" class="status-msg"></span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>

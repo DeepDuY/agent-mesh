@@ -193,12 +193,44 @@ function reviewScopeInstance(id) {
   return msInstances[id] || msCreate(el, { placeholder: '不限制（全部）', searchThreshold: 5 });
 }
 
+// Node scope labels combine the node id (as shown in the 节点 module), the
+// hostname and the IP so same-named hosts (e.g. several "localhost") stay
+// distinguishable. ip_address falls back to alias for nodes that report no IP.
+function reviewAgentLabel(a) {
+  const id = a.id != null ? a.id : '-';
+  const ip = a.ip_address || a.alias || '-';
+  return `${id} · ${hostLabel(a)} · ${ip}`;
+}
+
+function openReviewSettings() {
+  if (typeof pauseRefresh === 'function') pauseRefresh();
+  if (typeof loadConfig === 'function') loadConfig();
+  const modal = document.getElementById('review-settings-modal');
+  if (modal) {
+    modal.classList.remove('hidden');
+    modal.style.display = 'flex';
+  }
+}
+
+function closeReviewSettings() {
+  const modal = document.getElementById('review-settings-modal');
+  if (modal) {
+    modal.classList.add('hidden');
+    modal.style.display = 'none';
+  }
+  if (typeof resumeRefresh === 'function') resumeRefresh();
+}
+
+function onReviewSettingsBackdrop(e) {
+  if (e.target.id === 'review-settings-modal') closeReviewSettings();
+}
+
 function renderReviewScopeOptions() {
   const a = reviewScopeInstance('review-scope-agents');
   if (a) {
     a.setOptions((currentAgents || []).map(x => ({
       value: x.device_id || x.agent_id || String(x.id),
-      label: hostLabel(x),
+      label: reviewAgentLabel(x),
     })));
     a.setSelected(reviewScopeSelection.agents);
   }
