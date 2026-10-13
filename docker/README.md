@@ -38,6 +38,36 @@ docker compose -f docker/docker-compose.yml logs -f orchestrator
 ./docker/run.sh     # 未设 AGENT_MESH_TOKEN 时会生成并打印
 ```
 
+## 部署模式 C：容器化既有部署（外部 PostgreSQL）
+
+已有 PostgreSQL（例如一个在跑的 `agent-mesh-pg` 容器 / 主机 / 远程库）时，只用容器跑 orchestrator，**不动数据库**：
+
+```bash
+cp docker/.env.external-pg.example docker/.env    # 填 AGENT_MESH_PG_DSN + 同一个 AGENT_MESH_TOKEN
+docker compose -f docker/docker-compose.external-pg.yml up -d
+```
+
+- 使用 host 网络：容器直接用 `127.0.0.1:5432` 连库、并直接占用宿主 `AGENT_MESH_PORT`（无需 ports 映射）。
+- `AGENT_MESH_DATA_DIR`（默认 `/opt/agent-mesh/data`）bind 到容器 `/data`，沿用旧的 artifacts/files/skills/bootstrap。
+- 默认以 root 运行（兼容 root 属主的数据目录）；可用 `AGENT_MESH_CONTAINER_USER` 覆盖。
+
+### 从 systemd 平滑迁移（停机 ≈ 启动时间）
+
+```bash
+./docker/build.sh                                             # 先构建（不停机）
+systemctl stop agent-mesh-orchestrator                        # 停机开始
+systemctl disable agent-mesh-orchestrator                     # 避免与容器抢端口/开机自启
+docker compose -f docker/docker-compose.external-pg.yml up -d
+until curl -fsS localhost:8000/api/healthz | grep -q '"db":"ok"'; do sleep 1; done   # 等就绪
+```
+
+回滚：
+
+```bash
+docker compose -f docker/docker-compose.external-pg.yml down
+systemctl enable --now agent-mesh-orchestrator
+```
+
 ## 说明
 
 - 健康检查：`GET /api/healthz` 返回 `{"status":"ok","version":...,"db":"ok"}`；`db` 字段来自启动时的数据库

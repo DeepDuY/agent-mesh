@@ -1,0 +1,36 @@
+# Orchestrator ONLY, against an EXTERNAL PostgreSQL (an existing container or a
+# host/remote database). This file does NOT manage Postgres — use it to convert
+# an existing deployment (systemd) to a container without moving/loosing the DB.
+#
+#   cp docker/.env.external-pg.example docker/.env   # set AGENT_MESH_PG_DSN + TOKEN
+#   docker compose -f docker/docker-compose.external-pg.yml up -d
+#
+# Host networking is used so the app can reach a DB on 127.0.0.1:5432 and bind
+# the host port directly (no ports mapping). Data on disk (artifacts / files /
+# skills / bootstrap) is bind-mounted from the host, so existing data is reused;
+# the PostgreSQL database itself is untouched.
+
+name: agent-mesh
+
+services:
+  orchestrator:
+    image: ${AGENT_MESH_IMAGE:-agent-mesh:local}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    network_mode: host
+    # Default to root: the host data dir is typically root-owned (as the old
+    # systemd service ran). Override with AGENT_MESH_CONTAINER_USER if needed.
+    user: "${AGENT_MESH_CONTAINER_USER:-0:0}"
+    environment:
+      AGENT_MESH_DB_TYPE: pg
+      AGENT_MESH_PG_DSN: ${AGENT_MESH_PG_DSN:?set AGENT_MESH_PG_DSN in docker/.env}
+      AGENT_MESH_TOKEN: ${AGENT_MESH_TOKEN:?set AGENT_MESH_TOKEN in docker/.env}
+      AGENT_MESH_HOST: 0.0.0.0
+      AGENT_MESH_PORT: ${AGENT_MESH_PORT:-8000}
+      # db_path anchors <dir>/{files,skills,bootstrap}; all under the mount below.
+      AGENT_MESH_DB_PATH: /data/agent-mesh.db
+      AGENT_MESH_ARTIFACT_DIR: /data/artifacts
+    volumes:
+      - ${AGENT_MESH_DATA_DIR:-/opt/agent-mesh/data}:/data
