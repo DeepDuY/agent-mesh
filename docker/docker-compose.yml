@@ -1,23 +1,22 @@
 # agent-mesh orchestrator + PostgreSQL (container deployment).
 #
-#   cp docker/.env.example docker/.env    # set AGENT_MESH_TOKEN (+ POSTGRES_PASSWORD)
+#   docker volume create agent-mesh-pg-data   # once, for a new installation
+#   cp docker/.env.example docker/.env         # set token and PostgreSQL password
+#   ./docker/build.sh
 #   docker compose -f docker/docker-compose.yml up -d
-#   # or, from inside docker/:  docker compose up -d
 #
-# The build context is the repository root (context: ..) and uses the same
-# Dockerfile as docker/build.sh. For a quick SQLite-only run, see docker/run.sh.
-# Docker only reads .dockerignore from the build-context root, so it stays at the
-# repository root.
+# Production copies this file and its private .env to /opt/agent-mesh. The
+# postgres volume can be an existing PG16 volume; only one postgres may mount it.
 
 name: agent-mesh
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: ${AGENT_MESH_POSTGRES_IMAGE:-postgres:16}
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-agent_mesh}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agent_mesh}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-agent_mesh}
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -29,10 +28,9 @@ services:
 
   orchestrator:
     image: ${AGENT_MESH_IMAGE:-agent-mesh:local}
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
     restart: unless-stopped
+    # Existing /opt/agent-mesh/data is usually owned by root (systemd layout).
+    user: "${AGENT_MESH_CONTAINER_USER:-0:0}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -41,9 +39,9 @@ services:
       AGENT_MESH_PG_HOST: postgres
       AGENT_MESH_PG_PORT: "5432"
       AGENT_MESH_PG_USER: ${POSTGRES_USER:-agent_mesh}
-      AGENT_MESH_PG_PASSWORD: ${POSTGRES_PASSWORD:-agent_mesh}
+      AGENT_MESH_PG_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       AGENT_MESH_PG_DATABASE: ${POSTGRES_DB:-agent_mesh}
-      AGENT_MESH_TOKEN: ${AGENT_MESH_TOKEN:?set AGENT_MESH_TOKEN in docker/.env}
+      AGENT_MESH_TOKEN: ${AGENT_MESH_TOKEN:?set AGENT_MESH_TOKEN in .env}
       AGENT_MESH_HOST: 0.0.0.0
       AGENT_MESH_PORT: "8000"
       # db_path is unused for storage in PG mode but anchors <dir>/bootstrap.
@@ -52,8 +50,9 @@ services:
     ports:
       - "${AGENT_MESH_PORT:-8000}:8000"
     volumes:
-      - meshdata:/data
+      - ${AGENT_MESH_DATA_DIR:-/opt/agent-mesh/data}:/data
 
 volumes:
   pgdata:
-  meshdata:
+    external: true
+    name: ${AGENT_MESH_PG_VOLUME:-agent-mesh-pg-data}

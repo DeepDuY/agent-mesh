@@ -18,7 +18,7 @@ backup-*.tar.gz
 etc/
 tests/
 docs/
-skills/
+skills/**/.env*
 AGENTS.md
 代码审核报告.md
 代码审核整改计划.md

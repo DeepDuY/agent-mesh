@@ -91,6 +91,10 @@ agent-mesh/
 │   ├── install.sh                 # systemd 部署 orchestrator（edge 探针单独 bootstrap 安装）
 │   ├── redeploy.sh  status.sh  uninstall.sh  common.sh
 │   └── README.md
+├── docker/                         # 容器构建、Compose 和升级
+│   ├── Dockerfile  build.sh  run.sh  redeploy.sh
+│   ├── docker-compose.yml  docker-compose.external-pg.yml
+│   └── README.md
 ├── skills/agent-mesh/             # OpenCode skill（REST 用法索引 + references/）
 │   ├── SKILL.md                   # 使用范围、连接方式与按需求选取的参考页
 │   └── references/                # auth / nodes / tasks / runs / schedules / files / skills / troubleshooting（.md）

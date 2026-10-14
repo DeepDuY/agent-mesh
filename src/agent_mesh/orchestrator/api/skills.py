@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import re
 import zipfile
 from pathlib import Path
@@ -410,7 +411,10 @@ def mount_skill_routes(
         own ``AGENT_MESH_BASE_URL`` / ``AGENT_MESH_TOKEN``. The token is never
         written into the Markdown itself.
         """
-        pack_dir = Path(__file__).resolve().parents[4] / "skills" / "agent-mesh"
+        pack_dir = Path(
+            os.environ.get("AGENT_MESH_SKILL_PACK_DIR")
+            or Path(__file__).resolve().parents[4] / "skills" / "agent-mesh"
+        )
         skill_md = pack_dir / "SKILL.md"
         if not skill_md.exists():
             raise HTTPException(status_code=404, detail="skill pack not found")

@@ -24,6 +24,8 @@ WORKDIR /app
 # Install the package (its dependencies + code + bundled web_ui).
 COPY pyproject.toml README.md ./
 COPY src ./src
+# The profile-page skill-pack download reads these files at request time.
+COPY skills/agent-mesh ./skills/agent-mesh
 RUN pip install --upgrade pip && pip install .
 
 # Runtime state lives here (SQLite DB + artifacts + bootstrap). Owned by the
@@ -35,7 +37,8 @@ RUN useradd --system --uid 10001 --home-dir /app --shell /usr/sbin/nologin agent
 ENV AGENT_MESH_HOST=0.0.0.0 \
     AGENT_MESH_PORT=8000 \
     AGENT_MESH_DB_PATH=/data/agent-mesh.db \
-    AGENT_MESH_ARTIFACT_DIR=/data/artifacts
+    AGENT_MESH_ARTIFACT_DIR=/data/artifacts \
+    AGENT_MESH_SKILL_PACK_DIR=/app/skills/agent-mesh
 
 USER agentmesh
 EXPOSE 8000

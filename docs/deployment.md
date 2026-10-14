@@ -158,7 +158,9 @@ EDGE_AGENT_ID=client EDGE_ORCHESTRATOR_URL=http://127.0.0.1:8000 \
   uv run python -m agent_mesh.edge.agent
 ```
 
-**生产部署**：`deploy/install.sh` 只安装 **orchestrator** 到 `/opt/agent-mesh`（systemd 管理 `agent-mesh-orchestrator`）。⚠️ 服务日志走 systemd journal（`journalctl -u agent-mesh-orchestrator`；`./deploy/status.sh` 已改从 journal 读取），**不会**写入 `log/orchestrator.log`。**edge 探针不经此脚本安装**——单独在目标机器上用 bootstrap（`GET /api/bootstrap/install.sh`）安装到 `/opt/agent-mesh-agent`。
+**systemd 生产部署**：`deploy/install.sh` 只安装 **orchestrator** 到 `/opt/agent-mesh`（systemd 管理 `agent-mesh-orchestrator`）。⚠️ 服务日志走 systemd journal（`journalctl -u agent-mesh-orchestrator`；`./deploy/status.sh` 已改从 journal 读取），**不会**写入 `log/orchestrator.log`。**edge 探针不经此脚本安装**——单独在目标机器上用 bootstrap（`GET /api/bootstrap/install.sh`）安装到 `/opt/agent-mesh-agent`。
+
+**容器化生产升级**：一体 PostgreSQL Compose 在 `/opt/agent-mesh/docker-compose.yml` 与 `.env` 保留配置，镜像由当前源码 checkout 构建。执行 `./docker/redeploy.sh` 会先做 PG custom dump，再保留旧镜像、构建新镜像、仅重建 orchestrator 并检查健康；`./docker/redeploy.sh --rollback <升级前备份.dump>` 同时恢复旧镜像与数据库。单容器 SQLite (`docker/run.sh`) 也支持该脚本，使用 Python 在线快照，旧容器保留为 `agent-mesh-previous`。详细迁移、参数和回滚步骤见 [docker/README.md](../docker/README.md#标准升级与回滚)。PostgreSQL 不提供 SQLite 的 `schema_version` 健康字段。
 
 **Web 看板**：`http://<host>:8000/`
 

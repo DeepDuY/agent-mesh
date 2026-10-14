@@ -216,6 +216,22 @@ def test_skill_pack_requires_user_token(client: TestClient):
     assert resp.status_code == 401
 
 
+def test_skill_pack_download_from_bundled_directory(client: TestClient, tmp_path, monkeypatch):
+    """Installed images ship the pack separately from the Python source tree."""
+    pack = tmp_path / "bundled-skill"
+    (pack / "references").mkdir(parents=True)
+    (pack / "SKILL.md").write_text("# agent-mesh 编排器控制\n")
+    (pack / "references" / "example.md").write_text("See http://<host>:8000/api\n")
+    monkeypatch.setenv("AGENT_MESH_SKILL_PACK_DIR", str(pack))
+
+    resp = client.get("/api/skill-packs/agent-mesh", headers=_admin_headers())
+    assert resp.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(resp.content)) as archive:
+        assert "agent-mesh/SKILL.md" in archive.namelist()
+        assert "agent-mesh/references/example.md" in archive.namelist()
+        assert "AGENT_MESH_TOKEN=admin-api-token-123" in archive.read("agent-mesh/.env").decode()
+
+
 # ----------------------------------------------------------------------
 # SQLite round-trip: attachments persist through create_task/get_task.
 # ----------------------------------------------------------------------

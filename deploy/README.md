@@ -56,6 +56,7 @@ BUILD_PROBE=1 ./deploy/redeploy.sh   # 同时重新构建探针包（需 opencod
 
 - `redeploy.sh` 不改 `orchestrator.env`（token/配置保留）。
 - 若 repo 的 `data/bootstrap/` 里有探针包，会同步发布到服务端；否则提示如何构建。
+- **容器部署**请使用 [`../docker/redeploy.sh`](../docker/redeploy.sh)，它在升级前备份数据库并校验新容器；生产一体 PostgreSQL Compose 的迁移、回滚操作见 [`../docker/README.md`](../docker/README.md#标准升级与回滚)。不要对运行中的容器部署执行本目录的 systemd 脚本。
 
 ## 容器部署（Docker / Compose）
 
