@@ -17,6 +17,7 @@
 | [known-issues.md](./known-issues.md) | 已知问题与后续演进 |
 | [standards/edge-reporting.md](./standards/edge-reporting.md) | **标准**：边沿 Agent 上报接口规范与字段治理（新增字段流程） |
 | [standards/ui-copy.md](./standards/ui-copy.md) | **标准**：Web 看板文案规范（禁止在前端展示功能设计/内部机制） |
+| [standards/api-conventions.md](./standards/api-conventions.md) | **标准**：控制面 REST 资源、动作及批量操作命名 |
 
 ## 概览
 
@@ -39,7 +40,7 @@
 必须同步更新：
 
 1. `skills/agent-mesh/SKILL.md` 及其 `references/*.md` —— 主 Agent 使用指南（索引、场景速查、端点表、派发参数、示例）；
-2. 本文档体系：`protocol.md`（接口清单）→ `features.md`（功能说明）→ `orchestrator.md`（数据模型/迁移）→ `reference.md`（环境变量与接口参考）；
+2. 按 [接口规范](./standards/api-conventions.md) 命名，更新 `protocol.md`（接口清单）→ `features.md`（功能说明）→ `orchestrator.md`（数据模型/迁移）→ `reference.md`（环境变量与接口参考）；
 3. 涉及边沿上报字段时按 [standards/edge-reporting.md §5](./standards/edge-reporting.md#5-新增上报字段标准-7-步流程) 走注册表流程；
 4. 涉及探针行为（如附件下载/校验）时同步更新 `task-and-execution.md`。
 
@@ -51,7 +52,7 @@
 
 1. **在 edge 仓库修改并升版本**：递增 `agent-mesh-edge` 仓库根 `VERSION`（升级判定基准，见 [auth-security.md §8](./auth-security.md#8-agent-自升级)）；
 2. **在该仓库重建安装包**：`scripts/build-agent-bootstrap.py`（本地或用其 CI：push 触发 `build-probe`，产出 `probe-v<VERSION>` Release）；
-3. **同步到服务端**：`POST /api/bootstrap/sync`（或 `python scripts/sync_probe_release.py`）把成品包拉到 `data/bootstrap/`；在线节点在**空闲时自动升级**（或看板「升级」手动触发）；
+3. **同步到服务端**：`POST /api/bootstrap:sync`（或 `python scripts/sync_probe_release.py`）把成品包拉到 `data/bootstrap/`；在线节点在**空闲时自动升级**（或看板「升级」手动触发）；
 4. 若改动涉及探针上报字段，另按 [standards/edge-reporting.md §5](./standards/edge-reporting.md#5-新增上报字段标准-7-步流程) 走注册表 + 迁移流程。
 
 > 本地开发目录与构建命令见根目录 `AGENTS.md`（机器相关的本地说明，未纳入版本控制）。
@@ -85,4 +86,3 @@
 - **存储与接口一律 UTC**：PG 会话时区为 `Etc/UTC`，列用 `TIMESTAMP`（无时区）；写入前经 `_pg_param` 把 aware datetime 转成 naive UTC。
 - **接口输出必须带时区偏移**：对外序列化的 datetime 要经过 `_iso_to_dt`（naive 视为 UTC）或用 `_utcnow()`，使其 `isoformat()` 输出 `+00:00`。**不要直接把 asyncpg 返回的 naive datetime 透传**（用户的 `users`/`files` 等 dict 返回路径曾漏掉，导致前端把 UTC 当本地时间显示）。
 - **前端显示**：统一用 `app.js` 的 `parseServerTime()` / `formatDateTime()` / `toLocaleDateTime()`——缺时区偏移时按 UTC 处理，再换算到浏览器本地时区；**禁止**用 `.replace('T',' ').slice(0,19)` 之类原样截断（会显示 UTC 而非本地时间）。
-

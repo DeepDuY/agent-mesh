@@ -100,7 +100,7 @@ async function batchDeleteFiles() {
   if (!count) return;
   if (!confirm(`确认删除选中的 ${count} 个文件？\n被任务引用的文件删除后，相关任务执行时会因下载失败而标记失败。`)) return;
   try {
-    const res = await fetch('/api/files/batch-delete', {
+    const res = await fetch('/api/files:batch_delete', {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
       body: JSON.stringify({ file_ids: Array.from(selectedFiles) }),
@@ -123,7 +123,7 @@ async function batchDownloadFiles() {
   const count = selectedFiles.size;
   if (!count) return;
   try {
-    const res = await fetch('/api/files/batch-download', {
+    const res = await fetch('/api/files:batch_download', {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
       body: JSON.stringify({ file_ids: Array.from(selectedFiles) }),

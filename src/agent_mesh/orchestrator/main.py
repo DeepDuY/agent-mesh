@@ -4,7 +4,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.routing import APIRoute
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -81,6 +82,14 @@ def create_app(
         redirect_slashes=False,
         lifespan=lifespan,
     )
+
+    @app.middleware("http")
+    async def mark_legacy_routes(request: Request, call_next):
+        response = await call_next(request)
+        route = request.scope.get("route")
+        if isinstance(route, APIRoute) and not route.include_in_schema:
+            response.headers["Deprecation"] = "true"
+        return response
 
     query_router = create_query_router(config, store, artifact_store)
     app.include_router(query_router)

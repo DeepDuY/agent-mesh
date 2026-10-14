@@ -396,7 +396,8 @@ def mount_skill_routes(
             raise HTTPException(status_code=404, detail="skill file not found")
         return FileResponse(skill_file, filename=f"{name}.zip", media_type="application/zip")
 
-    @router.get("/skill-pack/agent-mesh")
+    @router.get("/skill-pack/agent-mesh", include_in_schema=False)
+    @router.get("/skill-packs/agent-mesh")
     async def download_agent_mesh_skill_pack(
         request: Request,
         _user: dict[str, Any] = Depends(require_user_token),

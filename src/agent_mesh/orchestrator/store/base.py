@@ -465,9 +465,6 @@ class AbstractStore(abc.ABC):
     async def enqueue(self, task_id: str, agent_id: str) -> None: ...
 
     @abc.abstractmethod
-    async def dequeue(self, agent_id: str) -> str | None: ...
-
-    @abc.abstractmethod
     async def peek_queue(self, agent_id: str, limit: int = 100) -> list[str]:
         """Queued task ids for ``agent_id`` in FIFO order, without removing them."""
 

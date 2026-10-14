@@ -27,7 +27,7 @@ def mount_agent_config_routes(
     require_admin,
     require_ui_user,
 ) -> None:
-    @router.patch("/agents/{agent_id}/system_prompt")
+    @router.patch("/agents/{agent_id}/system_prompt", include_in_schema=False)
     async def patch_agent_system_prompt(
         agent_id: str,
         payload: SystemPromptPayload,
@@ -42,7 +42,7 @@ def mount_agent_config_routes(
         await store.bump_config_version()
         return {"agent": agent.model_dump_json_safe()}
 
-    @router.patch("/agents/{agent_id}/llm_config")
+    @router.patch("/agents/{agent_id}/llm_config", include_in_schema=False)
     async def patch_agent_llm_config(
         agent_id: str,
         payload: LlmConfigPayload,
@@ -63,7 +63,7 @@ def mount_agent_config_routes(
         logger.info("updated llm_config for agent %s", agent.id)
         return {"agent": agent.model_dump_json_safe()}
 
-    @router.patch("/agents/{agent_id}/template")
+    @router.patch("/agents/{agent_id}/template", include_in_schema=False)
     async def patch_agent_template(
         agent_id: str,
         payload: TemplatePayload,
@@ -80,7 +80,7 @@ def mount_agent_config_routes(
         )
         return {"agent": agent.model_dump_json_safe()}
 
-    @router.post("/agents/batch/template")
+    @router.post("/agents/batch/template", include_in_schema=False)
     async def batch_apply_template(
         payload: BatchTemplatePayload,
         user: dict[str, Any] = Depends(require_ui_user),

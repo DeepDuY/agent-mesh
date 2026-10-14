@@ -3,7 +3,7 @@ async function login() {
   const password = document.getElementById('password').value;
   const err = document.getElementById('login-error');
   try {
-    const res = await fetch('/api/auth/login', {
+    const res = await fetch('/api/auth:login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password })
@@ -73,7 +73,7 @@ async function submitChangePassword() {
     return;
   }
   try {
-    const res = await fetch('/api/auth/change-password', {
+    const res = await fetch('/api/me:change_password', {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
       body: JSON.stringify({ old_password: oldPwd, new_password: newPwd }),

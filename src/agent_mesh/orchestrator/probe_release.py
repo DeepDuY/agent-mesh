@@ -6,7 +6,7 @@ downloads those assets (via api.github.com, which works even where github.com
 itself is blocked) so the orchestrator can keep serving installs/upgrades from
 its own ``data/bootstrap/`` cache.
 
-Used by ``POST /api/bootstrap/sync`` and ``scripts/sync_probe_release.py``.
+Used by ``POST /api/bootstrap:sync`` and ``scripts/sync_probe_release.py``.
 """
 
 from __future__ import annotations

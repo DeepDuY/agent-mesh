@@ -203,7 +203,8 @@ def mount_file_routes(
             raise HTTPException(status_code=404, detail="file not found")
         return {"deleted": deleted}
 
-    @router.post("/files/batch-delete")
+    @router.post("/files/batch-delete", include_in_schema=False)
+    @router.post("/files:batch_delete")
     async def batch_delete_files(
         payload: _BatchFilesPayload,
         user: dict[str, Any] = Depends(require_user_token),
@@ -219,7 +220,8 @@ def mount_file_routes(
         )
         return {"deleted": deleted, "total": len(payload.file_ids)}
 
-    @router.post("/files/batch-download")
+    @router.post("/files/batch-download", include_in_schema=False)
+    @router.post("/files:batch_download")
     async def batch_download_files(
         payload: _BatchFilesPayload,
         user: dict[str, Any] = Depends(require_user_token),

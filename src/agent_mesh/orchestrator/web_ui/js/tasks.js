@@ -217,7 +217,7 @@ async function batchDeleteTasks() {
       }
     : { task_ids: Array.from(selectedTasks) };
   try {
-    const res = await fetch('/api/tasks/batch-delete', {
+    const res = await fetch('/api/tasks:batch_delete', {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -367,7 +367,7 @@ async function downloadArtifact(taskId, artifactId, filename) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutS * 1000);
   try {
-    const res = await fetch(`/api/artifacts/${taskId}/${artifactId}`, {
+    const res = await fetch(`/api/tasks/${taskId}/artifacts/${artifactId}`, {
       headers,
       signal: controller.signal,
     });
@@ -395,7 +395,7 @@ async function downloadArtifact(taskId, artifactId, filename) {
 async function cancelTask(taskId) {
   if (!confirm(`确认终止任务 ${taskId}？`)) return;
   try {
-    const res = await fetch(`/api/tasks/${taskId}/cancel`, {
+    const res = await fetch(`/api/tasks/${taskId}:cancel`, {
       method: 'POST',
       headers
     });

@@ -108,7 +108,8 @@ def mount_auth_routes(
                 teams.append({"team_id": team_id, "name": team["name"]})
         return teams
 
-    @router.post("/auth/login")
+    @router.post("/auth/login", include_in_schema=False)
+    @router.post("/auth:login")
     async def login(payload: _LoginPayload) -> dict[str, Any]:
         if not payload.username or not payload.password:
             raise HTTPException(status_code=400, detail="username and password required")
@@ -135,7 +136,8 @@ def mount_auth_routes(
             "token_type": "session",
         }
 
-    @router.get("/auth/me")
+    @router.get("/auth/me", include_in_schema=False)
+    @router.get("/me")
     async def me(user: dict[str, Any] = Depends(require_user_token)):
         return _user_public(user, await _teams_of(user["user_id"]))
 
@@ -155,7 +157,8 @@ def mount_auth_routes(
     # ------------------------------------------------------------------
     # Admin-only user management
     # ------------------------------------------------------------------
-    @router.post("/auth/users")
+    @router.post("/auth/users", include_in_schema=False)
+    @router.post("/users")
     async def create_user(
         payload: _CreateUserPayload,
         admin: dict[str, Any] = Depends(require_admin),
@@ -212,7 +215,8 @@ def mount_auth_routes(
             "token_type": "api",
         }
 
-    @router.get("/auth/users")
+    @router.get("/auth/users", include_in_schema=False)
+    @router.get("/users")
     async def list_users(
         admin: dict[str, Any] = Depends(require_admin),
     ) -> dict[str, Any]:
@@ -228,7 +232,8 @@ def mount_auth_routes(
             ]
         }
 
-    @router.delete("/auth/users/{username}")
+    @router.delete("/auth/users/{username}", include_in_schema=False)
+    @router.delete("/users/{username}")
     async def delete_user(
         username: str,
         admin: dict[str, Any] = Depends(require_admin),
@@ -244,7 +249,8 @@ def mount_auth_routes(
         logger.info("deleted user %s by %s", username, admin["username"])
         return {"deleted": deleted}
 
-    @router.post("/auth/users/{username}/token")
+    @router.post("/auth/users/{username}/token", include_in_schema=False)
+    @router.post("/users/{username}:rotate_token")
     async def rotate_user_token(
         username: str,
         payload: _RotateTokenPayload | None = None,
@@ -271,7 +277,8 @@ def mount_auth_routes(
             "token_expires_at": _iso(expires_at),
         }
 
-    @router.post("/auth/users/{username}/password")
+    @router.post("/auth/users/{username}/password", include_in_schema=False)
+    @router.post("/users/{username}:reset_password")
     async def set_user_password(
         username: str,
         payload: _SetPasswordPayload,
@@ -287,7 +294,8 @@ def mount_auth_routes(
     # ------------------------------------------------------------------
     # Self-service
     # ------------------------------------------------------------------
-    @router.post("/auth/change-password")
+    @router.post("/auth/change-password", include_in_schema=False)
+    @router.post("/me:change_password")
     async def change_own_password(
         payload: _ChangePasswordPayload,
         user: dict[str, Any] = Depends(require_user_token),
@@ -297,7 +305,8 @@ def mount_auth_routes(
         await store.store.set_user_password(user["user_id"], hash_password(payload.new_password))
         return {"ok": True}
 
-    @router.post("/auth/token")
+    @router.post("/auth/token", include_in_schema=False)
+    @router.post("/me:rotate_token")
     async def rotate_own_token(
         payload: _RotateTokenPayload | None = None,
         user: dict[str, Any] = Depends(require_user_token),

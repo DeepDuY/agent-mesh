@@ -152,7 +152,7 @@ class ArtifactStore:
 
         content_type, _ = mimetypes.guess_type(safe_name)
         content_type = content_type or "application/octet-stream"
-        download_url = f"/api/artifacts/{task_id}/{artifact_id}"
+        download_url = f"/api/tasks/{task_id}/artifacts/{artifact_id}"
         return ArtifactRef(
             filename=safe_name,
             size=len(content),
@@ -184,7 +184,7 @@ class ArtifactStore:
                         filename=filename,
                         size=p.stat().st_size,
                         content_type=content_type or "application/octet-stream",
-                        download_url=f"/api/artifacts/{task_id}/{artifact_id}",
+                        download_url=f"/api/tasks/{task_id}/artifacts/{artifact_id}",
                         artifact_id=artifact_id,
                     )
                 )

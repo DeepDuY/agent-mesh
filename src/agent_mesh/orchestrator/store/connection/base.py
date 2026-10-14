@@ -90,7 +90,3 @@ class Database:
     ) -> int:
         """Run a write statement over many parameter tuples; returns count."""
         raise NotImplementedError
-
-    async def dequeue(self, agent_id: str) -> str | None:
-        """Atomically take the oldest queued task for ``agent_id`` or None."""
-        raise NotImplementedError

@@ -174,20 +174,3 @@ class PostgresDatabase(Database):
             return len(params_list)
         finally:
             await self._release(conn)
-
-    async def dequeue(self, agent_id: str) -> str | None:
-        row = await self.fetchrow(
-            """
-            DELETE FROM task_queue
-            WHERE task_id = (
-                SELECT task_id FROM task_queue
-                WHERE agent_id = ?
-                ORDER BY enqueued_at ASC
-                LIMIT 1
-                FOR UPDATE SKIP LOCKED
-            )
-            RETURNING task_id
-            """,
-            (agent_id,),
-        )
-        return row["task_id"] if row else None

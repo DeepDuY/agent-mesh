@@ -33,7 +33,7 @@
 
 - 磁盘：`<artifact_dir>/<task_id>/<artifact_id>_<原始文件名>`，`artifact_id = a-<uuid8>`。
 - 元数据：`artifacts` 表（`INSERT OR IGNORE` 幂等）。
-- 下载：`GET /api/artifacts/{task_id}/{artifact_id}` 用 `FileResponse` 返回，`content_type` 由 `mimetypes` 猜测。
+- 下载：`GET /api/tasks/{task_id}/artifacts/{artifact_id}` 用 `FileResponse` 返回，`content_type` 由 `mimetypes` 猜测。
 - 大小限制（**运行时可调**，配置页「上传大小限制」/`PATCH /api/settings`，逐请求读取）：单文件 `artifact_max_size_mb`（默认 100MB）、单任务总量 `artifact_task_total_mb`（默认 100MB）、全库总量 `artifact_total_mb`（默认 200MB）。超出全库总量且 `artifact_evict_oldest=1`（默认）时按 mtime **回收最旧的产物**（同时删磁盘文件与 `artifacts` 行）腾空间；关闭回收则直接 `413`。超限返回 `413`，detail 含文件名与上限（探针会把它写入任务日志/结果）。
 - 传输超时 `artifact_timeout_s`（默认 300s）：探针上传产物与页面下载产物共用，随心跳下发给探针。
 
@@ -56,7 +56,7 @@ queued ──心跳领取──▶ assigned ──mark_started──▶ working 
    queued/assigned/working ──cancel_task──▶ cancelled (终态)
 ```
 
-- 领取：`queued → assigned`（心跳 `dequeue` 命中且任务仍为 queued）。
+- 领取：`queued → assigned`（心跳以 `peek_queue` 取得候选、`dequeue_task` 条件删除完成认领，且任务仍为 queued）。
 - 开始：`mark_started()`：`assigned → working`，写 `started_at`。
 - 结束：`submit_result()`：**`assigned` 或 `working`** → `completed / failed`（写 `task_results` 行、状态、`finished_at`，清 `current_task`）。
 - 超时扫描：`working` 且 `started_at + timeout_s <= now` → `timed_out`；**以原子条件更新（`update_task_status(..., expected_status='working')`）标记超时**，边沿并发提交的真实结果（已完成/失败/取消）不会被清扫器覆盖；若 `retry_count < max_retries` 则回 `queued` 并 `retry_count+1`、重置 assigned/started/finished、重新入队（**仅超时触发重试，失败不重试**）。
@@ -67,21 +67,23 @@ queued ──心跳领取──▶ assigned ──mark_started──▶ working 
 
 ### 2.1 批次（Run）与批量派发
 
-- `POST /api/tasks/dispatch-batch` 把同一条任务派发到多个节点，所有任务写同一个 `tasks.run_id`（`r-<uuid8>`，可由调用方指定）。
+- `POST /api/runs` 把同一条任务派发到多个节点，所有任务写同一个 `tasks.run_id`（`r-<uuid8>`，可由调用方指定）。
 - **逐目标独立校验**：节点 ACL、模型白名单、技能、命令权限各算各的；不合格目标计入响应 `denied`（命令被拦截时同时落一条 `denied` 任务），其余正常入队，整体仍返回 `200`。
 - **扇出护栏**：整批上限 `max_batch_fanout`（默认 200）、单节点每批上限 `max_run_per_node`（默认 50），均可在 settings 调整；超限目标进 `denied`。
 - **幂等**：`Idempotency-Key`（或 body `idempotency_key`）→ `idempotency_keys` 表按 `(scope=调用者, key)` 记住 `run_id`，重复请求返回同一批次（`duplicate: true`），不重复派发。
 - **聚合视图**：`GET /api/runs/{run_id}` 用 `count_tasks_by_status` 一次拿到各状态计数，并返回每任务一行紧凑摘要（不含日志）；`?wait=30` 在进程内阻塞直到任一任务状态变化或整批结束。
-- **批次操作**：`POST /api/runs/{run_id}/cancel` 逐个 `cancel_task`；`/retry` 把 `failed`/`timed_out` 任务按 `expected_status` 原子回 `queued` 并重新入队。
+- **批次操作**：`POST /api/runs/{run_id}:cancel` 逐个 `cancel_task`；`:retry` 把 `failed`/`timed_out` 任务按 `expected_status` 原子回 `queued` 并重新入队。
 - **fan-in**：`depends_on_run` 在派发时展开为该批次全部任务 id 追加到 `depends_on`，复用既有依赖门禁/级联取消，无需专门引擎。
 - **产物流转**：`attachments_from` 把上游任务产物复制进文件库（按 md5 去重）并作为新任务附件，边沿用自身 token 经普通附件链路下载。
 
 ## 3. 边沿 Agent 内部逻辑
 
+> 本章描述探针实现，源码位于独立仓库 `agent-mesh-edge` 的 `src/agent_mesh/edge/`；本仓库仅包含 orchestrator 服务端。
+
 ### 3.1 agent.py：主循环
 
 - `EdgeAgent(agent_id, orchestrator_url, token, runtime, workdir, llm_api_key, llm_base_url, llm_model, llm_models, system_prompt, permission, heartbeat_s=3, install_dir)`。
-- `orchestrator_url.replace("/mcp", "")` 得到 REST base URL（仅为兼容早期 `EdgeConfig` 默认值残留的 `/mcp` 后缀；当前默认值已无该后缀）。
+- `orchestrator_url.replace("/mcp", "")` 得到 REST base URL（仅为兼容早期探针 `EdgeConfig` 默认值残留的 `/mcp` 后缀；当前默认值已无该后缀）。
 - 启动时 `read_agent_version(install_dir)` 读取已装版本（缺省回退内置 `VERSION`）；若 `token` 为空/占位且 `edge.env` 已持久化独立 token 则回退读取（见 [auth-security.md §7](./auth-security.md#7-agent-独立-token-与设备-用户关联)）。
 - `_loop()`：
   1. `device_id = get_device_id(install_dir)`（首次运行持久化）。
@@ -113,7 +115,7 @@ queued ──心跳领取──▶ assigned ──mark_started──▶ working 
 
 ### 3.3 execution/ 包：任务执行
 
-按职责拆分为 `edge/execution/` 包：
+按职责拆分为 `edge/execution/` 包（探针仓 `agent-mesh-edge`）：
 
 - `common.py`：`ExecutionOutcome` 数据结构 + 共享工具。含 `_wait_proc()`（并发等待子进程完成/超时/取消：收到取消信号先 `kill` 再 `SIGKILL`，返回 `(-2, True)`）。
 - `command.py`：`run_command()`。执行前用共享权限引擎对指令求值（`ask`→拒绝），通过后 `bash -c <instruction>`，并 `_snapshot_files(workdir)`；滚动截断 stdout/stderr 到 `output_limit`（保留尾部）；超时 `timeout_s` 强杀，`exit_code=-1`；`_collect_artifacts` 收集新文件；summary 取输出首行。实时上报只挂 stdout 回调。
@@ -145,5 +147,5 @@ REST 边沿协议（`poll_for_task`/`submit_result`/`mark_started`/`get_task_sta
 
 ### 4.2 api/tasks.py / api/agents.py
 
-- `POST /api/tasks/dispatch`：REST 版派发（控制面，用户 token）。
+- `POST /api/tasks`：REST 版派发（控制面，用户 token）。
 - `DELETE /api/agents/{id}`：先 `store.dispatch()` 下发 **command 模式**自毁命令（停/禁 systemd、删 service 文件、删 `${EDGE_INSTALL_DIR:-/opt/agent-mesh-agent}`（边沿进程继承 `EDGE_INSTALL_DIR` 环境变量，兼容非默认安装目录），最后 `systemctl stop`，`timeout_s=30`，`workdir=/tmp`）；随后**立即** `delete_agent(id)` 删 DB 记录。不等待任务结果（命令会停掉 agent 自身）。

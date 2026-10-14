@@ -169,7 +169,7 @@ async function rejectReviewedTask(taskId) {
 
 async function reviewAct(taskId, action, reason) {
   try {
-    const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/${action}`, {
+    const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}:${action}`, {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
       body: JSON.stringify({ reason: reason || '' }),

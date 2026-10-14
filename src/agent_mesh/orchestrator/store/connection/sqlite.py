@@ -93,25 +93,6 @@ class SQLiteDatabase(Database):
             finally:
                 conn.close()
 
-    async def dequeue(self, agent_id: str) -> str | None:
-        async with self._lock:
-            conn = self._connect()
-            try:
-                # Atomic dequeue: delete + return in a single statement so two
-                # workers polling simultaneously never hand out the same task.
-                cur = conn.execute(
-                    "DELETE FROM task_queue WHERE task_id = ("
-                    "SELECT task_id FROM task_queue WHERE agent_id = ? "
-                    "ORDER BY enqueued_at ASC LIMIT 1"
-                    ") RETURNING task_id",
-                    (agent_id,),
-                )
-                row = cur.fetchone()
-                conn.commit()
-                return row["task_id"] if row else None
-            finally:
-                conn.close()
-
     async def _run_migrations(self) -> None:
         # Migrations live in the parent ``store/migrations`` directory.
         migrations_dir = Path(__file__).resolve().parent.parent / "migrations"
@@ -131,10 +112,19 @@ class SQLiteDatabase(Database):
                         (version,),
                     ).fetchall()
                     if not rows:
-                        sql = f.read_text(encoding="utf-8")
-                        sql += f"\nINSERT INTO schema_migrations (version) VALUES ({version});\n"
+                        # Wrap the migration DDL and its version record in a
+                        # single explicit transaction: ``executescript`` does not
+                        # open one on its own, so a failure mid-script would
+                        # otherwise leave partially applied DDL and no version
+                        # row. BEGIN/COMMIT makes the migration all-or-nothing.
+                        body = f.read_text(encoding="utf-8")
+                        sql = (
+                            "BEGIN;\n"
+                            + body
+                            + f"\nINSERT INTO schema_migrations (version) VALUES ({version});\n"
+                            + "COMMIT;\n"
+                        )
                         conn.executescript(sql)
-                        conn.commit()
                         logger.info("applied migration %s", f.name)
                 finally:
                     conn.close()

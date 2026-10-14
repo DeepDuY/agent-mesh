@@ -219,10 +219,10 @@ async function submitBatchTemplate() {
   const template_id = raw ? parseInt(raw, 10) : null;
   const statusEl = document.getElementById('batch-template-status');
   try {
-    const res = await fetch('/api/agents/batch/template', {
+    const res = await fetch('/api/agents:batch_update', {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agent_ids: ids, template_id }),
+      body: JSON.stringify({ agent_ids: ids, changes: { template_id } }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
@@ -262,17 +262,17 @@ async function submitBatchAccess(mode) {
   if (!teams.length && !users.length) return alert('请至少勾选一个团队或用户');
   const statusEl = document.getElementById('batch-access-status');
   try {
-    const res = await fetch('/api/agents/batch/access', {
+    const res = await fetch('/api/agents:batch_update', {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agent_ids: ids, teams, users, mode }),
+      body: JSON.stringify({ agent_ids: ids, changes: { access: { teams, users } }, mode }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
     closeAgentModal();
     clearAgentSelection();
     await loadAll();
-    alert(`已${mode === 'remove' ? '移除' : '添加'}授权，更新 ${data.updated} 个节点`);
+    alert(`已${mode === 'remove' ? '移除' : '添加'}授权，更新 ${data.applied} 个节点`);
   } catch (e) {
     statusEl.textContent = '失败：' + e.message;
     statusEl.style.color = 'var(--danger)';
@@ -280,7 +280,7 @@ async function submitBatchAccess(mode) {
 }
 
 async function showAgentDetail(agentId) {
-  const res = await fetch(`/api/agents/${agentId}/detail`, { headers });
+  const res = await fetch(`/api/agents/${agentId}?include=tasks`, { headers });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     alert(`加载失败：${err.detail || res.status}`);
@@ -386,7 +386,7 @@ async function requestUpgrade(agentId) {
   }
   if (!confirm(`确认升级节点 ${name}？\n将在该节点空闲时自动下载新版安装包并重启（失败会自动回滚）。`)) return;
   try {
-    const res = await fetch(`/api/agents/${agentId}/upgrade`, {
+    const res = await fetch(`/api/agents/${agentId}:upgrade`, {
       method: 'POST',
       headers
     });
@@ -480,7 +480,7 @@ function selectInstallOs(os) {
 async function setAlias(e, agentId) {
   e.preventDefault();
   const alias = e.target.alias.value;
-  const res = await fetch(`/api/agents/${agentId}/alias`, {
+  const res = await fetch(`/api/agents/${agentId}`, {
     method: 'PATCH',
     headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({ alias: alias || null })
@@ -497,7 +497,7 @@ async function setAlias(e, agentId) {
 async function setAgentDescription(e, agentId) {
   e.preventDefault();
   const description = e.target.description.value;
-  const res = await fetch(`/api/agents/${agentId}/description`, {
+  const res = await fetch(`/api/agents/${agentId}`, {
     method: 'PATCH',
     headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({ description: description || null })
@@ -514,7 +514,7 @@ async function setAgentDescription(e, agentId) {
 async function setAgentSystemPrompt(e, agentId) {
   e.preventDefault();
   const system_prompt = e.target.system_prompt.value;
-  const res = await fetch(`/api/agents/${agentId}/system_prompt`, {
+  const res = await fetch(`/api/agents/${agentId}`, {
     method: 'PATCH',
     headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({ system_prompt: system_prompt || null })
@@ -532,7 +532,7 @@ async function applyTemplate(e, agentId) {
   e.preventDefault();
   const raw = e.target.template_id.value;
   const template_id = raw ? parseInt(raw, 10) : null;
-  const res = await fetch(`/api/agents/${agentId}/template`, {
+  const res = await fetch(`/api/agents/${agentId}`, {
     method: 'PATCH',
     headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({ template_id })
@@ -551,10 +551,10 @@ async function setAgentAccess(e, agentId) {
   const teams = Array.from(e.target.querySelectorAll('input[name=access_team]:checked')).map(c => c.value);
   const users = Array.from(e.target.querySelectorAll('input[name=access_user]:checked')).map(c => c.value);
   try {
-    const res = await fetch(`/api/agents/${agentId}/access`, {
+    const res = await fetch(`/api/agents/${agentId}`, {
       method: 'PATCH',
       headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ teams, users }),
+      body: JSON.stringify({ access: { teams, users } }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     closeAgentModal();

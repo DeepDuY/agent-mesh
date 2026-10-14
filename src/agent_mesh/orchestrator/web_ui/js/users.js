@@ -11,7 +11,7 @@ function formatTime(value) {
 async function loadUsers() {
   if (!isAdmin()) return;
   try {
-    const res = await fetch('/api/auth/users', { headers });
+    const res = await fetch('/api/users', { headers });
     if (!res.ok) return;
     currentUsers = (await res.json()).users || [];
     renderUsers();
@@ -69,7 +69,7 @@ async function createUser() {
     return;
   }
   try {
-    const res = await fetch('/api/auth/users', {
+    const res = await fetch('/api/users', {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password, role, team_ids: teamIds }),
@@ -89,7 +89,7 @@ async function createUser() {
 async function deleteUser(username) {
   if (!confirm(`确认删除用户 ${username}？其 API token 将立即失效。`)) return;
   try {
-    const res = await fetch(`/api/auth/users/${encodeURIComponent(username)}`, {
+    const res = await fetch(`/api/users/${encodeURIComponent(username)}`, {
       method: 'DELETE',
       headers,
     });
@@ -109,7 +109,7 @@ async function resetUserPassword(username) {
     return;
   }
   try {
-    const res = await fetch(`/api/auth/users/${encodeURIComponent(username)}/password`, {
+    const res = await fetch(`/api/users/${encodeURIComponent(username)}:reset_password`, {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
       body: JSON.stringify({ password }),
@@ -126,7 +126,7 @@ async function resetUserPassword(username) {
 async function rotateUserToken(username) {
   if (!confirm(`确认轮换用户 ${username} 的 API token？旧 token 将立即失效。`)) return;
   try {
-    const res = await fetch(`/api/auth/users/${encodeURIComponent(username)}/token`, {
+    const res = await fetch(`/api/users/${encodeURIComponent(username)}:rotate_token`, {
       method: 'POST',
       headers,
     });

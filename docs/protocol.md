@@ -8,7 +8,7 @@
 
 | 方向 | 通道 | 说明 |
 |------|------|------|
-| 主 Agent → orchestrator | REST :8000 | `/api/tasks/dispatch`、`/api/tasks/{id}`、`/api/tasks/{id}/cancel`、`/api/agents/*`、`/api/bootstrap/*` 等（用户 token；`/api/settings`、`/api/teams*`、节点级 `llm_config`/`system_prompt` 为 admin；`/api/settings` 另需 `X-Agent-Mesh-UI: 1`） |
+| 主 Agent → orchestrator | REST :8000 | `/api/tasks`、`/api/tasks/{id}`、`/api/tasks/{id}:cancel`、`/api/agents/*`、`/api/bootstrap/*` 等（用户 token；`/api/settings`、`/api/teams*`、节点级 `llm_config`/`system_prompt` 为 admin；`/api/settings` 另需 `X-Agent-Mesh-UI: 1`） |
 | 边沿 Agent → orchestrator | REST :8000 | `/api/edge/poll_for_task`（心跳+领任务）、`mark_started`、`submit_result`、`get_task_status`（全局 token / agent 独立 token） |
 | 边沿 Agent → orchestrator | REST :8000 | `POST /api/artifacts/{task_id}`（产物上传，multipart，任选 token） |
 | 浏览器 → orchestrator | REST/SSE :8000 | `GET /api/realtime`（SSE 实时推送：任务状态/日志/节点上下线）+ 5s 轮询兜底 `GET /api/agents`、`/api/tasks`（用户 token；`/api/settings` 为 admin 且限 Web UI） |
@@ -25,7 +25,7 @@
    │                       │ enqueue(task_id, queue_key)       │
    │                       │◀────────────────────── 心跳 poll_for_task
    │                       │  upsert_agent(online, last_seen) │
-   │                       │  dequeue(key) → task_id          │
+   │                       │  peek_queue → dequeue_task       │
    │                       │  status: queued → assigned        │
    │                       │  set_agent_current_task(key, id)  │
    │                       │ 返回任务 ────────────────────────▶│
@@ -77,7 +77,7 @@ EdgeAgent.run()
 1. `key = device_id or agent_id`（稳定键，后续队列、current_task 都用它）。
 2. 先读旧记录保留 `current_task_id`，再 `upsert_agent(online=True, last_seen=now)`。
 3. **多任务并发分配（v1.4.0）**：请求带 `running_tasks`（边沿当前正在执行的任务 id 列表）；orchestrator 以 `tasks` 表 assigned/working 状态统计活跃数，`resume = 活跃但不在 running_tasks 的`（边沿崩溃重启后继续执行，不重复派发），`capacity = max_concurrent − 活跃数`。
-4. 循环 `dequeue(key)` 补足 capacity：SQLite 单语句 `DELETE ... RETURNING`（原子，跨 worker 安全），PG 同语义。
+4. 循环调用 `peek_queue(key)` 取得候选任务、`dequeue_task(task_id)` 条件删除认领，补足 capacity：仅当条件删除实际命中（受影响行数 > 0）时方计入本次分配，因此同一任务不会被两个轮询同时认领。
 5. 领到且状态为 `queued` → 置 `assigned`、写 `assigned_at`、`set_agent_current_task(key, task_id)`，加入返回集。
 6. 响应 `{tasks: [...], task: tasks[0]?, server_ts, max_concurrent, config_version, config, agent_token?, upgrade?}`（`task` 为兼容旧版探针的便捷视图）。
 
@@ -118,46 +118,42 @@ EdgeAgent.run()
 
 ### 3.3 查询/管理接口 REST `/api/*`（用户 token，除非标注）
 
+控制面资源、动作和批量操作按 [REST 接口规范](./standards/api-conventions.md) 命名；边沿上传与旧探针包下载路径兼容既有探针协议。
+
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/auth/login` | **公开**。账号密码 → `{username, token, role}` |
-| GET | `/api/auth/me` | 当前用户信息（含 `token_created_at`/`token_expires_at`） |
-| POST | `/api/auth/token` | **自助**轮换自己的 API token（`require_user_token`）：`{expires_in_days?: int}`（留空/`null` = 永久，1–36500），明文只返回一次；旧 API token 立即失效，session token 不受影响 |
+| POST | `/api/auth:login` | **公开**。账号密码 → `{username, token, role}` |
+| GET | `/api/me` | 当前用户信息（含 `token_created_at`/`token_expires_at`） |
+| POST | `/api/me:rotate_token` | **自助**轮换自己的 API token（`require_user_token`）：`{expires_in_days?: int}`（留空/`null` = 永久，1–36500），明文只返回一次；旧 API token 立即失效，session token 不受影响 |
+| POST/GET/DELETE | `/api/users`、`/api/users/{username}` | 管理员创建/列出/删除用户；`POST /api/users/{username}:rotate_token` 轮换凭据，`:reset_password` 重置密码 |
 | GET | `/api/healthz` | **公开**。健康检查 → `{status:"ok", version:"<SERVER_VERSION>"}` |
 | GET | `/api/tasks` | 任务列表（按身份过滤：自己 + 所在团队之一，admin 全部；`agent_id?`, `status?`, `mode?`(`command`/`llm`), `run_id?`(批次), `search?`(指令/任务ID/节点/来源用户名模糊), `started_after?`/`started_before?`(ISO 时间, 开始时间区间), `limit` 1–1000, `offset` 分页；返回 `total` 总数供分页/跨页选择。任务含 `dispatched_by`（派发者用户名）、`user_id`/`team_ids`（并保留 `team_id`=第一个）、`run_id`） |
 | GET | `/api/tasks/{task_id}` | 任务详情（越权/不存在 → 404） |
-| GET | `/api/tasks/{task_id}/status` | 任务状态（`{found, task}`） |
 | GET | `/api/tasks/{task_id}/logs` | 任务实时执行输出（`?after_id=&limit=`，增量；v1.4.0） |
 | GET | `/api/tasks/{task_id}/events` | 任务审计事件时间线（`?limit=`；`dispatched`/`cancelled`/`permission_denied` 等） |
-| POST | `/api/tasks/{task_id}/cancel` | 终止任务（`{accepted}`） |
-| POST | `/api/tasks/{task_id}/approve` | **审核通过**：`pending_review` → `queued` 并入队（admin 或任务所有者） |
-| POST | `/api/tasks/{task_id}/reject` | **审核拒绝**：`pending_review` → `denied`（可选 `{reason}`，admin 或任务所有者） |
+| POST | `/api/tasks/{task_id}:cancel` | 终止任务（`{accepted}`） |
+| POST | `/api/tasks/{task_id}:approve` | **审核通过**：`pending_review` → `queued` 并入队（admin 或任务所有者） |
+| POST | `/api/tasks/{task_id}:reject` | **审核拒绝**：`pending_review` → `denied`（可选 `{reason}`，admin 或任务所有者） |
 | GET | `/api/tasks/{task_id}/reviews` | 某任务的审核记录 |
 | GET | `/api/reviews` | 审核记录（admin；`?action=&task_id=&search=&limit=&offset=`，返回 `{reviews,total,limit,offset}`） |
 | DELETE | `/api/tasks/{task_id}` | 删除单个任务（含 queue/results/artifacts 关联行） |
-| POST | `/api/tasks/batch-delete` | 批量删除：`{task_ids: [...]}` 按 id，或 `{all_matching: true, status?, mode?, search?, started_after?, started_before?, agent_id?}` 删除匹配筛选的全部任务 |
-| POST | `/api/tasks/dispatch` | 派发任务（REST 版）。`command` 模式被权限策略拦截时返回 403，并落一条终态 `denied` 任务（摘要=拒绝原因）便于追溯。**AI 审核开启**且命中范围时先评分：低分且开启人工审核 → 返回 `{task_id,status:"pending_review"}`（不入队）；低分关闭人工审核或审核不可用 → 403 + `denied`。可选 `depends_on: [task_id]`：依赖全部 `completed` 后才派发（未就绪保持排队，不占并发）；依赖失败/终止则本任务级联 `cancelled`；非法/成环依赖返回 400。另有 `run_id?`(批次号)、`depends_on_run?`(展开为该批次全部任务 id)、`attachments_from?`(上游任务产物转附件) |
-| POST | `/api/tasks/dispatch-batch` | **批量派发**：`{targets: [agent_ref...], mode, instruction, 其余同 dispatch, run_id?, depends_on_run?, attachments_from?, idempotency_key?}`；逐目标独立校验，返回 `{run_id, queued, task_ids, pending_review:[{target,task_id,score}], denied:[{target,reason,task_id?}]}`；`Idempotency-Key` 头幂等；受 `max_batch_fanout`/`max_run_per_node` 护栏 |
+| POST | `/api/tasks:batch_delete` | 批量删除：`{task_ids: [...]}` 按 id，或 `{all_matching: true, status?, mode?, search?, started_after?, started_before?, agent_id?}` 删除匹配筛选的全部任务 |
+| POST | `/api/tasks` | 派发任务。`command` 模式被权限策略拦截时返回 403，并落一条终态 `denied` 任务（摘要=拒绝原因）便于追溯。**AI 审核开启**且命中范围时先评分：低分且开启人工审核 → 返回 `{task_id,status:"pending_review"}`（不入队）；低分关闭人工审核或审核不可用 → 403 + `denied`。可选 `depends_on: [task_id]`：依赖全部 `completed` 后才派发（未就绪保持排队，不占并发）；依赖失败/终止则本任务级联 `cancelled`；非法/成环依赖返回 400。另有 `run_id?`、`depends_on_run?`、`attachments_from?` |
+| POST | `/api/runs` | **批量派发**：`{targets: [agent_ref...], mode, instruction, 其余同单任务, run_id?, depends_on_run?, attachments_from?, idempotency_key?}`；逐目标独立校验，返回 `{run_id, queued, task_ids, pending_review:[{target,task_id,score}], denied:[{target,reason,task_id?}]}`；`Idempotency-Key` 头幂等；受 `max_batch_fanout`/`max_run_per_node` 护栏 |
 | GET | `/api/runs/{run_id}` | **批次聚合**：`{run_id,total,counts,active,tasks:[紧凑行]}`；`status?`/`include_tasks?`；`wait`(≤30s) 长轮询直到状态变化或结束 |
-| POST | `/api/runs/{run_id}/cancel` | 终止整批（`{total,cancelled,skipped}`） |
-| POST | `/api/runs/{run_id}/retry` | 重跑批内 `failed`/`timed_out`（`{total,retried,skipped}`） |
+| POST | `/api/runs/{run_id}:cancel` | 终止整批（`{total,cancelled,skipped}`） |
+| POST | `/api/runs/{run_id}:retry` | 重跑批内 `failed`/`timed_out`（`{total,retried,skipped}`） |
 | GET | `/api/agents` | 节点列表（按 ACL 过滤：admin 全部，其余仅可见/可操作节点） |
 | GET | `/api/agents/{agent_id}` | 单个节点（数字 id / device_id / agent_id；不可访问 → 404） |
-| GET | `/api/agents/{agent_id}/detail` | 详情 + 最近 20 任务（`metadata.allowed_users` 仅 admin 返回） |
-| PATCH | `/api/agents/{agent_id}/alias` | 设置/清除显示名 |
-| PATCH | `/api/agents/{agent_id}/description` | 设置节点描述 |
-| PATCH | `/api/agents/{agent_id}/system_prompt` | 设置节点级 system prompt（admin） |
-| PATCH | `/api/agents/{agent_id}/llm_config` | 设置节点级 LLM 配置（admin；随心跳同步到该节点，优先级高于全局，见 [auth-security.md §9](./auth-security.md#9-llm-配置同步)） |
-| PATCH | `/api/agents/{agent_id}/template` | 绑定/解绑模板（Web UI，`X-Agent-Mesh-UI`；owner/admin） |
-| PATCH | `/api/agents/{agent_id}/access` | 设置节点访问控制 ACL（admin；`{teams?: [...], users?: [...]}`） |
-| POST | `/api/agents/batch/template` | 批量绑定模板（Web UI，owner/admin；逐节点跳过无权/被锁定者，返回 `{applied, skipped}`） |
-| POST | `/api/agents/batch/access` | 批量设置节点 ACL（admin；`{agent_ids, teams?, users?, mode: add\|remove\|set}` → `{updated}`） |
-| POST | `/api/agents/{agent_id}/upgrade` | **admin**：请求升级节点（见 [auth-security.md §8](./auth-security.md#8-agent-自升级)；空闲时自动执行，失败自动回滚） |
-| POST | `/api/agents/{agent_id}/token` | 轮换 agent 独立 token（返回一次，旧 token 立即失效，见 [auth-security.md §7](./auth-security.md#7-agent-独立-token-与设备-用户关联)） |
+| GET | `/api/agents/{agent_id}?include=tasks` | 详情 + 当前用户可见的最近 20 任务（`metadata.allowed_users` 仅 admin 返回） |
+| PATCH | `/api/agents/{agent_id}` | 设置别名/描述；模板绑定（Web UI owner/admin）、LLM 配置/系统提示词/ACL（admin），逐字段鉴权 |
+| POST | `/api/agents:batch_update` | 批量更新模板或 ACL（`{agent_ids, changes, mode?: set\|add\|remove}` → `{applied,skipped}`） |
+| POST | `/api/agents/{agent_id}:upgrade` | **admin**：请求升级节点（见 [auth-security.md §8](./auth-security.md#8-agent-自升级)；空闲时自动执行，失败自动回滚） |
+| POST | `/api/agents/{agent_id}:rotate_token` | 轮换 agent 独立 token（返回一次，旧 token 立即失效，见 [auth-security.md §7](./auth-security.md#7-agent-独立-token-与设备-用户关联)） |
 | DELETE | `/api/agents/{agent_id}` | **admin**：删除节点（下发自毁命令 + 立即删记录，见 [task-and-execution.md §4.2](./task-and-execution.md#42-apitaskspy--apiagentspy)） |
-| POST | `/api/artifacts/{task_id}` | 产物上传（**任意 token**） |
-| GET | `/api/artifacts/{task_id}` | 列出产物 |
-| GET | `/api/artifacts/{task_id}/{artifact_id}` | 下载产物 |
+| POST | `/api/tasks/{task_id}/artifacts` | 产物上传（**任意 token**；旧探针可继续使用 `/api/artifacts/{task_id}`） |
+| GET | `/api/tasks/{task_id}/artifacts` | 列出产物 |
+| GET | `/api/tasks/{task_id}/artifacts/{artifact_id}` | 下载产物 |
 | GET | `/api/settings` | 全局配置。**`require_admin` + 必须携带 `X-Agent-Mesh-UI: 1`**（否则 404）；返回**白名单**键值（`public_url`/`llm_*`/`llm_models`/`default_permission`/`auto_upgrade`/限额等），不含 `session_secret`；admin 额外附带 `agent_mesh_token` |
 | PATCH | `/api/settings` | 更新全局配置（同样限 Web UI + admin） |
 | GET | `/api/realtime` | **SSE** 实时推送（`require_any_token`，走 `Authorization` 头；`fetch` 流式读取）。事件：`tasks_changed`/`task_log`/`agents_changed`；客户端断线时回落到 5s 轮询 |
@@ -166,8 +162,9 @@ EdgeAgent.run()
 | GET/POST/PATCH/DELETE | `/api/templates*` | 模板 CRUD（`require_ui_user`：**必须携带 `X-Agent-Mesh-UI: 1`**，否则一律 404；Web UI 专用，不对外开放） |
 | GET | `/api/bootstrap/install.sh` | 生成新节点安装命令脚本（内嵌 orchestrator `base_url`：优先 `public_url`，否则校验 `Host` 头；**不再内嵌 LLM 配置**，新节点注册后由心跳 config-sync 下发） |
 | GET | `/api/bootstrap/info` | **admin**：服务端版本（`SERVER_VERSION`）+ 已发布探针包版本（`bootstrap/VERSION`）与文件列表（配置页展示） |
-| POST | `/api/bootstrap` | **admin**：上传/替换探针安装包（multipart `.tar.gz`，校验布局与内嵌 `VERSION` 后发布到 `<db_path>/../bootstrap/`） |
-| GET | `/api/bootstrap/{filename}` | 下载安装包（`<db_path>/../bootstrap/` 下的文件；文件名限 `agent-mesh-agent-<os>-<arch>.tar.gz`/`install.sh`/`install.ps1`/`VERSION`，否则 404） |
+| POST | `/api/bootstrap/packages` | **admin**：上传/替换探针安装包（multipart `.tar.gz`，校验布局与内嵌 `VERSION` 后发布到 `<db_path>/../bootstrap/`） |
+| POST | `/api/bootstrap:sync` | **admin**：从 Release 同步成品包 |
+| GET | `/api/bootstrap/packages/{filename}` | 下载安装包（旧探针可继续使用 `/api/bootstrap/{filename}`；文件名限 `agent-mesh-agent-<os>-<arch>.tar.gz`/`install.sh`/`install.ps1`/`VERSION`，否则 404） |
 | GET | `/api/skills` | 技能摘要列表（`require_any_token`，仅 name/description/version/enabled） |
 | GET | `/api/skills/{name}` | 单个技能摘要 |
 | POST | `/api/skills` | 上传技能 zip（用户 token，提取并校验 SKILL.md frontmatter，重复上传 version+1） |
@@ -177,10 +174,10 @@ EdgeAgent.run()
 | POST | `/api/files` | 上传文件到文件库（multipart `files`，用户 token，同 md5+文件名 去重返回原 file_id） |
 | GET | `/api/files` | 文件库列表（用户 token，按身份过滤：自己创建 + admin 全部；`search?` 按文件名/文件ID模糊） |
 | GET | `/api/files/{file_id}` | 下载文件库文件（`require_any_token`，带 `X-File-Md5` 头）。user token 仅自己创建、admin 全部；**agent token 仅限被自身任务 `attachments` 引用的文件**，其余 404 |
-| POST | `/api/files/batch-delete` | 批量删除文件库文件（`{file_ids: [...]}`，用户 token，DB+磁盘） |
-| POST | `/api/files/batch-download` | 批量下载为 ZIP（`{file_ids: [...]}`，用户 token；重名自动加 file_id 前缀） |
+| POST | `/api/files:batch_delete` | 批量删除文件库文件（`{file_ids: [...]}`，用户 token，DB+磁盘） |
+| POST | `/api/files:batch_download` | 批量下载为 ZIP（`{file_ids: [...]}`，用户 token；重名自动加 file_id 前缀） |
 | DELETE | `/api/files/{file_id}` | 删除文件库文件（用户 token，不校验引用） |
-| GET | `/api/skill-pack/agent-mesh` | 下载**个性化** agent-mesh 技能包 zip（`require_user_token`）：含 SKILL.md 索引 + `references/`（已填充配置的公开地址）+ 自动生成的 `.env`（`AGENT_MESH_BASE_URL`/`AGENT_MESH_TOKEN`）；token 不写入 Markdown。未配置地址时在 SKILL.md 注入索取提示 |
+| GET | `/api/skill-packs/agent-mesh` | 下载**个性化** agent-mesh 技能包 zip（`require_user_token`）：含 SKILL.md 索引 + `references/`（已填充配置的公开地址）+ 生成的 `.env`（`AGENT_MESH_BASE_URL`/`AGENT_MESH_TOKEN`）；token 不写入 Markdown。未配置地址时在 SKILL.md 注入索取提示 |
 | GET | `/` | Web 看板（index.html） |
 | GET | `/static/*` | 看板静态资源 |
 
@@ -189,7 +186,7 @@ EdgeAgent.run()
 文件库独立于任务存储（镜像技能库的「上传-引用-按需下载」模式）：
 
 1. **上传**：`POST /api/files`（multipart `files`，可多文件，用户 token）。服务端计算 md5、落盘到 `<db_path 父目录>/files/<file_id>_<文件名>`（`file_id = f-<uuid8>`）并入库；**同 md5+文件名 自动去重**返回已有 `file_id`。响应为权威 `FileRef`：`{file_id, filename, size, content_type, md5, download_url}`。
-2. **引用**：REST `POST /api/tasks/dispatch` 的 `attachments: [file_id]` 引用文件库文件；服务端按 id 解析成 `FileRef` 快照写入 `tasks.attachments`（JSON 列），id 无效报错。非 admin 只能引用自己创建的文件。
+2. **引用**：REST `POST /api/tasks` 的 `attachments: [file_id]` 引用文件库文件；服务端按 id 解析成 `FileRef` 快照写入 `tasks.attachments`（JSON 列），id 无效报错。非 admin 只能引用自己创建的文件。
 3. **下载**：探针领到任务后、执行前，按 `download_url` 把每个附件下载到工作目录并以原文件名落盘，流式计算 md5 与快照比对；**下载失败或 md5 不符 → 任务标记失败**（`exit_code=-3`、`stderr_tail="attachment download failed: <文件名>: <原因>"`）。下载发生在执行前快照之前，附件不会被收集为产物。
-4. **管理**：`GET /api/files` 列表（`search` 模糊）、`GET /api/files/{file_id}` 下载、`DELETE /api/files/{file_id}` 删除（不校验引用；被删文件的任务执行时会下载失败）、`POST /api/files/batch-delete` 批量删除、`POST /api/files/batch-download` 批量打包下载。Web 看板「文件」页提供上传/搜索/列表/下载/批量删除/批量下载。
+4. **管理**：`GET /api/files` 列表（`search` 模糊）、`GET /api/files/{file_id}` 下载、`DELETE /api/files/{file_id}` 删除（不校验引用；被删文件的任务执行时会下载失败）、`POST /api/files:batch_delete` 批量删除、`POST /api/files:batch_download` 批量打包下载。Web 看板「文件」页提供上传/搜索/列表/下载/批量删除/批量下载。
 5. **删除文件 → 引用它的任务**：执行时下载 404 → 按第 3 条标记失败。

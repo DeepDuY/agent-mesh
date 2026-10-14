@@ -34,9 +34,9 @@
 
 - **存储**：`files` 表（file_id 主键、filename、size、content_type、md5、created_by）；文件落盘 `<db_path 父目录>/files/<file_id>_<文件名>`（`file_id = f-<uuid8>`）。
 - **上传**：`POST /api/files`（multipart `files`，可多文件，用户 token）→ 计算 md5 入库；**同 md5+文件名 去重**返回已有 `file_id`（非 admin 的去重范围限于自己创建的文件，admin 全局）；响应含 `{file_id, filename, size, content_type, md5, download_url}`。
-- **引用**：REST `POST /api/tasks/dispatch` 的 `attachments: [file_id]` → 服务端解析成 `FileRef` 快照存 `tasks.attachments`（JSON 列），id 无效报错。附件二进制只能走 REST 上传。
+- **引用**：REST `POST /api/tasks` 的 `attachments: [file_id]` → 服务端解析成 `FileRef` 快照存 `tasks.attachments`（JSON 列），id 无效报错。附件二进制只能走 REST 上传。
 - **下载与校验**：探针执行前把附件下载到工作目录（原文件名），流式 md5 与快照比对；**失败/不符 → 任务标记失败**（`exit_code=-3`、`summary="attachment download failed"`）。下载在 `_snapshot_files` 之前，附件不会误收成产物；llm 提示词追加"工作目录可能已放入附件"提示。
-- **管理**：Web 看板「文件」页（搜索/上传/列表/下载/删除/批量删除/批量下载为 ZIP）；`DELETE /api/files/{file_id}` 不校验引用（被删文件的任务执行时下载失败而标记失败）。右上角用户菜单「个人中心」可下载**个性化** agent-mesh 技能包（`GET /api/skill-pack/agent-mesh`，返回 zip：SKILL.md 索引 + `references/`（已填充公开地址）+ 自动生成的 `.env`（token 放这里，不写入 Markdown））。
+- **管理**：Web 看板「文件」页（搜索/上传/列表/下载/删除/批量删除/批量下载为 ZIP）；`DELETE /api/files/{file_id}` 不校验引用（被删文件的任务执行时下载失败而标记失败）。右上角用户菜单「个人中心」可下载**个性化** agent-mesh 技能包（`GET /api/skill-packs/agent-mesh`，返回 zip：SKILL.md 索引 + `references/`（已填充公开地址）+ 自动生成的 `.env`（token 放这里，不写入 Markdown））。
 
 - **上传大小限制（运行时可调）**：文件库单文件 `file_max_size_mb`、产物单文件 `artifact_max_size_mb`、单任务产物总量 `artifact_task_total_mb`、产物全库总量 `artifact_total_mb`、超出全库回收最旧 `artifact_evict_oldest`、产物传输超时 `artifact_timeout_s`（默认 100/100/100/200/开/300s）。配置页「上传大小限制」或 `PATCH /api/settings` 调整，逐请求生效；超限返回 `413`（探针把原因写入任务日志/结果），`artifact_timeout_s` 随心跳下发探针。
 
@@ -44,11 +44,11 @@
 
 - **并发上限**：全局设置 `max_concurrent`（默认 `2`，配置页或 `PATCH /api/settings` 调整），随心跳 `poll_for_task` 响应顶层 `max_concurrent` 下发到边沿。
 - **协议**：边沿心跳请求带 `running_tasks: [task_id...]`（当前正在执行的任务）；响应从单 `task` 扩展为 `tasks: [...]` 数组（`task` 字段保留 = `tasks[0]`，兼容旧版探针）。
-- **orchestrator 分配**（`task_store.heartbeat`）：以 `tasks` 表 assigned/working 状态统计活跃数；`resume = 活跃但不在 running_tasks 的`（边沿重启恢复）；`capacity = max_concurrent - 活跃数`，循环 dequeue+assign 直到满或队列空，返回 `resume + new`。
-- **边沿异步执行**（`edge/agent.py`）：`_loop` 对每个新任务 `asyncio.create_task` 并发执行（`self._running` 去重 + 计数），不再串行 `await`；升级仅在 `_running` 为空（完全空闲）时执行；取消监控 `_monitor_cancel` 为 per-task，天然适配并发。
+- **orchestrator 分配**（`task_store.heartbeat`）：以 `tasks` 表 assigned/working 状态统计活跃数；`resume = 活跃但不在 running_tasks 的`（边沿重启恢复）；`capacity = max_concurrent - 活跃数`，循环 `peek_queue` + `dequeue_task` 认领任务直到满或队列空，返回 `resume + new`。
+- **边沿异步执行**（探针仓 `agent-mesh-edge` 的 `edge/agent.py`）：`_loop` 对每个新任务 `asyncio.create_task` 并发执行（`self._running` 去重 + 计数），不再串行 `await`；升级仅在 `_running` 为空（完全空闲）时执行；取消监控 `_monitor_cancel` 为 per-task，天然适配并发。
 - **workdir 隔离**：任务未显式指定 `workdir` 时落到 `<EDGE_WORKDIR>/tasks/<task_id>/` 独立子目录（opencode.json、附件、产物互不干扰）；显式 workdir 由调用方自行隔离。
 - **离线清扫**：`_sweep_offline` 对 agent 所有 assigned 任务回队列（不再只处理单 `current_task_id`）；有任意 working 任务则保持在线。
-- **队列原子化**：SQLite `dequeue` 改为 `DELETE ... RETURNING` 单语句，跨 worker 不再竞态（PG 本就是 `FOR UPDATE SKIP LOCKED`）。
+- **队列认领原子化**：候选任务由 `peek_queue()` 读出，再由 `dequeue_task(task_id)` 的单条 `DELETE` 条件删除认领；以受影响行数判定认领是否成功，确保同一任务不会被重复派发。
 
 ## 7. LLM 实时执行输出（v1.4.0）
 
@@ -61,11 +61,11 @@
 
 面向「主 Agent 一次把同一条任务发给多个节点，再一次性看结果」——把 N 次派发/查询压成常数次调用。
 
-- **批量派发**：`POST /api/tasks/dispatch-batch` 用 `targets`（节点引用数组，去重）扇出一批任务，共享一个 `run_id`（`tasks.run_id`，迁移 023）。逐目标独立校验（节点 ACL/模型/技能/命令策略），不合格目标进 `denied`（命令被拦截时另落一条 `denied` 任务），不影响其余；整体返回 `200`。
+- **批量派发**：`POST /api/runs` 用 `targets`（节点引用数组，去重）扇出一批任务，共享一个 `run_id`（`tasks.run_id`，迁移 023）。逐目标独立校验（节点 ACL/模型/技能/命令策略），不合格目标进 `denied`（命令被拦截时另落一条 `denied` 任务），不影响其余；整体返回 `200`。
 - **护栏**：整批 `max_batch_fanout`（默认 200）、单节点每批 `max_run_per_node`（默认 50），超限目标进 `denied`。
 - **幂等**：`Idempotency-Key` 头（或 body `idempotency_key`）→ `idempotency_keys` 表 `(scope=调用者, key)` 记住 `run_id`；重复请求返回同一批次（`duplicate: true`），不重复派发。
 - **聚合监控**：`GET /api/runs/{run_id}` 一次返回 `counts`（各状态数量）+ 每任务一行紧凑摘要（不含日志）；`status?` 过滤、`include_tasks=false` 只要计数、`wait`(≤30s) 长轮询直到任一任务状态变化或整批结束。
-- **批次操作**：`POST /api/runs/{run_id}/cancel` 终止整批；`/retry` 原子重排 `failed`/`timed_out` 任务回 `queued`。
+- **批次操作**：`POST /api/runs/{run_id}:cancel` 终止整批；`:retry` 原子重排 `failed`/`timed_out` 任务回 `queued`。
 - **fan-out / fan-in**：`depends_on_run` 在派发时展开为该批次全部任务 id 追加到 `depends_on`，复用既有依赖门禁 + 级联取消实现「等全批完成再汇总」；`attachments_from` 把上游任务产物复制进文件库（md5 去重）作为下游附件，省去「下载再上传」。
 - **看板**：任务列表展示批次号并支持按 `run_id` 过滤，详情可「只看此批次」。
 
@@ -87,6 +87,5 @@
 - **并发与延迟**：审核在**派发请求内同步完成**（单条派发会等待审核模型返回，故派发变慢）；**批量派发时各目标并发审核**（`asyncio.gather`，网关侧并发上限 5）。相同「指令 + 节点 + 权限档案」的结论有 **5 分钟内存缓存**，重试/重复派发不再调用模型；审核失败（超时/不可解析）不缓存，按 fail-deny 处理。审核调用与节点 LLM 共用同一网关，建议给审核单独配 `model`（必要时单独的 key）以免与节点任务抢并发。
 - **接口风格**：`api_style` 自动按 `base_url`/模型名判断；Anthropic 走 `{base}/v1/messages`（模型去掉 `anthropic/` 前缀，兼容 reasoning 模型只输出 thinking 的情况），OpenAI 走 `{base}/chat/completions`。
 - **局限**：审的是**指令文本**；`llm` 模式下节点现场生成的命令看不到，真正的命令级拦截需在 edge 侧加钩子（后续）。
-
 
 

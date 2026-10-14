@@ -152,7 +152,7 @@ async function toggleSchedule(scheduleId, enabled) {
 
 async function runScheduleNow(scheduleId) {
   try {
-    const res = await fetch(`/api/schedules/${scheduleId}/run`, { method: 'POST', headers });
+  const res = await fetch(`/api/schedules/${scheduleId}:run`, { method: 'POST', headers });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
     alert(`已派发任务 ${data.task_id}`);

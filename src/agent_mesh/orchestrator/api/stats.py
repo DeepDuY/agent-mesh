@@ -13,6 +13,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from agent_mesh.orchestrator.api.common import owner_filter, parse_query_dt
 from agent_mesh.orchestrator.task_store import TaskStore
 from agent_mesh.shared.constants import TaskStatus
 
@@ -29,25 +30,7 @@ _FAILED_STATUSES = {TaskStatus.FAILED.value, TaskStatus.TIMED_OUT.value}
 _ACTIVE_STATUSES = {TaskStatus.ASSIGNED.value, TaskStatus.WORKING.value}
 
 
-def _parse_dt(value: str | None, name: str) -> datetime | None:
-    if not value:
-        return None
-    try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"invalid {name}: {value}")
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt
-
-
 def mount_stats_routes(router: APIRouter, store: TaskStore, require_user_token) -> None:
-    async def _scope(user: dict[str, Any]) -> tuple[str | None, list[str] | None]:
-        """(owner_user_id, owner_team_ids); (None, None) means unrestricted."""
-        if store.is_admin(user):
-            return None, None
-        return user.get("user_id"), sorted(await store.user_teams(user))
-
     @router.get("/stats/overview")
     async def stats_overview(
         range_: str = Query("7d", alias="range"),
@@ -58,8 +41,8 @@ def mount_stats_routes(router: APIRouter, store: TaskStore, require_user_token) 
     ) -> dict[str, Any]:
         now = datetime.now(timezone.utc)
         if range_ == "custom":
-            after = _parse_dt(created_after, "created_after")
-            before = _parse_dt(created_before, "created_before") or now
+            after = parse_query_dt(created_after, "created_after")
+            before = parse_query_dt(created_before, "created_before") or now
             if after is None:
                 raise HTTPException(
                     status_code=400, detail="created_after required for custom range"
@@ -70,7 +53,7 @@ def mount_stats_routes(router: APIRouter, store: TaskStore, require_user_token) 
         else:
             raise HTTPException(status_code=400, detail=f"invalid range: {range_}")
 
-        owner_user_id, owner_team_ids = await _scope(user)
+        owner_user_id, owner_team_ids = await owner_filter(store, user)
         base = dict(
             created_after=after,
             created_before=before,

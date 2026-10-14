@@ -34,7 +34,7 @@
 - `mark_started()`：仅 `assigned` → `working`，写 `started_at`。
 - `submit_result()`：仅 `assigned/working` 接受；写 `task_results`、状态置 `result.status`、`finished_at`、清 `current_task`。
 - `cancel_task()`：仅非终态任务可取消——`queued` 先 `remove_from_queue()`；`assigned/working` 直接置 `cancelled`。取消后边沿 agent 的下一次 cancel 轮询会终止正在执行的子进程。
-- **并发模型**：TaskStore 本身不加锁（原 `asyncio.Lock` 已删除）；并发正确性依赖后端存储的原子操作——SQLite 每次操作持自身 `asyncio.Lock`，`dequeue` 在锁内完成"取队首+删行"。`update_task_status(..., expected_status=...)` 支持原子条件更新（追加 `WHERE status = <expected>`），用于需要"仅在当前状态为 X 时才迁移"的场景（如超时清扫，见 §1.3）。
+- **并发模型**：TaskStore 本身不加锁；并发正确性依赖后端存储的原子操作——SQLite 每次操作持自身 `asyncio.Lock`。心跳以 `peek_queue()` 读取候选任务，再以 `dequeue_task(task_id)` 的单条 `DELETE` 条件删除结果（受影响行数）判定认领是否成功，从而保证同一任务不会被两个轮询同时取得。`update_task_status(..., expected_status=...)` 支持原子条件更新（追加 `WHERE status = <expected>`），用于仅当任务当前状态为指定值时才迁移的场景（如超时清扫，见 §1.3）。
 
 #### 1.2.1 定时任务（`scheduler.py`）
 
@@ -81,35 +81,35 @@ elif now - last_seen > offline_after_s:
 REST 端点按领域拆分到 `orchestrator/api/` 包，`__init__.py` 的 `create_query_router()` 统一挂载：
 
 - `api/__init__.py`：`create_query_router()` + 认证依赖（`require_user_token` / `require_admin` / `require_ui_user` / `require_any_token`）+ `_store_artifact_ref`。`require_ui_user` 要求页面专用头 `X-Agent-Mesh-UI: 1`，外部调用一律 404。
-- `api/auth.py`：`POST /api/auth/login`、`GET /api/auth/me`、`GET /api/healthz`、admin 用户管理（创建/列表/删除/轮换 token/重置密码）+ 自助改密 + 自助轮换 token（`POST /api/auth/token`，可选有效期天数）。
-- `api/tasks.py`：任务列表（含 `offset` 分页与 `total` 计数）/详情/状态/派发/终止/单删/批量删除（`batch-delete` 支持 `task_ids` 与 `all_matching` 两种模式）。
-- `api/agents.py`：节点列表/详情/别名/描述；配置（system prompt/LLM）、ACL、生命周期（token/升级/删除）分别拆到 `api/agent_config.py`、`api/agent_access.py`、`api/agent_lifecycle.py`，共享 `api/agent_common.py`。
+- `api/auth.py`：`POST /api/auth:login`、`GET /api/me`、`GET /api/healthz`、admin 用户管理（创建/列表/删除/轮换 token/重置密码）+ 自助改密 + 自助轮换 token（`POST /api/me:rotate_token`，可选有效期天数）。
+- `api/tasks.py`：任务列表（含 `offset` 分页与 `total` 计数）/详情/派发/终止/单删/批量删除（`tasks:batch_delete` 支持 `task_ids` 与 `all_matching` 两种模式）。
+- `api/agents.py`：节点列表/详情及按字段鉴权的统一 PATCH、批量更新；旧配置/ACL 路由隐藏兼容于 `api/agent_config.py`、`api/agent_access.py`，生命周期（token/升级/删除）在 `api/agent_lifecycle.py`，共享 `api/agent_common.py`。
 - `api/edge.py`：边沿协议（`poll_for_task`/`submit_result`/`mark_started`/`get_task_status`/`task_log`）。
 - `api/artifacts.py`：产物上传/列表/下载。
 - `api/files.py`：文件库上传/列表/下载/删除（见 [features.md §5](./features.md#5-文件库任务附件)）。
 - `api/teams.py` / `api/templates.py`：团队 CRUD 与成员；模板 CRUD（`require_ui_user`）。
-- `api/bootstrap.py`：`GET/PATCH /settings`、`/bootstrap/install.sh`、`/bootstrap/info`（服务端/探针版本）、`POST /bootstrap`（上传探针包，admin）、`/bootstrap/{filename}`。
-- `api/skills.py`：技能摘要/上传/页面新建编辑（`PUT /api/skills/{name}` + `GET /api/skills/{name}/content`）/启停/删除/下载，以及 `GET /api/skill-pack/agent-mesh`（打包 SKILL.md + references + 生成的 `.env`）。
+- `api/bootstrap.py`：`GET/PATCH /settings`、`/bootstrap/install.sh`、`/bootstrap/info`（服务端/探针版本）、`POST /bootstrap/packages`（上传探针包，admin）、`/bootstrap/packages/{filename}`。
+- `api/skills.py`：技能摘要/上传/页面新建编辑（`PUT /api/skills/{name}` + `GET /api/skills/{name}/content`）/启停/删除/下载，以及 `GET /api/skill-packs/agent-mesh`（打包 SKILL.md + references + 生成的 `.env`）。
 
 关键行为：
 - 认证：`require_user_token`（用户 token：API token 按 SHA-256 查表，session token 按 HMAC 解析，禁用用户拒绝）；`require_admin`（admin 角色限定）；`require_any_token`（全局 `config.token` / 用户 token / **agent 独立 token** 任一，返回调用者身份 `{auth:...}`）。Edge 端点、产物上传、bootstrap 下载用后者。详见 [auth-security.md](./auth-security.md)。
-- 登录：`POST /api/auth/login` 校验 bcrypt，返回**短期 session token**（不再返回长期 API token）。
+- 登录：`POST /api/auth:login` 校验 bcrypt，返回**短期 session token**（不再返回长期 API token）。
 - 产物上传：`artifact_store.save()` 写磁盘（`threading.Lock` 内串行做**单文件/单任务**上限校验与写盘）+ `await` 同步落库元数据；**全库配额**在路由层处理——超限时按 mtime 回收最旧产物（删磁盘 + `artifacts` 行），回收关闭则 `413`。上限与传输超时均为运行时设置（`orchestrator/limits.py` 逐请求读取）。
 - 删除节点（`DELETE /api/agents/{id}`）：先下发 command 自毁命令（见 [task-and-execution.md §4.2](./task-and-execution.md#42-apitaskspy--apiagentspy)），随后立即删 DB 记录。
 - `GET /api/bootstrap/install.sh`：动态生成安装脚本（见 [deployment.md §1](./deployment.md)），内嵌 orchestrator `base_url`；**不再内嵌全局 LLM 配置**（v1.3.3 起改由心跳 config-sync 下发，见 [auth-security.md §9](./auth-security.md#9-llm-配置同步)）。
-- `GET /api/bootstrap/{filename}`：静态文件服务，目录为 `<db_path 父目录>/bootstrap`（鉴权为 `require_any_token`，edge 可用全局 token 下载升级包）。
+- `GET /api/bootstrap/packages/{filename}`：静态文件服务，目录为 `<db_path 父目录>/bootstrap`（鉴权为 `require_any_token`；旧探针仍可用原路径下载升级包）。
 
 ### 1.5 存储层（orchestrator/store/）
 
 - `base.py`：`AbstractStore` 抽象接口 + `_new_task_id()`（`t-<uuid8>`）。接口含 `list_tasks(..., offset=0)` 与 `remove_from_queue()`。
 - **`connection/`（统一数据库对接层，v1.4.0）**：集中管理两侧连接生命周期与执行原语，store 层只写 SQL + 行映射。按职责拆分：`base.py`（`Database` 抽象 + 值转换助手）、`sqlite.py`（`SQLiteDatabase`）、`pg.py`（`PostgresDatabase` + 占位符重写）、`pg_schema.py`（PG 建表/种子）、`pg_schema_upgrade.py`（PG 列级升级）。
-  - `Database` 抽象：`execute`（返回 dict-like 行）/ `execute_rowcount`（写返回受影响行数）/ `fetchrow`（单行）/ `executemany` / `dequeue`。**所有 SQL 统一用 `?` 占位符**。
+  - `Database` 抽象：`execute`（返回 dict-like 行）/ `execute_rowcount`（写返回受影响行数）/ `fetchrow`（单行）/ `executemany`。**所有 SQL 统一用 `?` 占位符**。
   - `SQLiteDatabase`：每连接新建 + `asyncio.Lock` 串行化；WAL（`PRAGMA journal_mode=WAL` + `busy_timeout=5000`）；SQL 迁移（`store/migrations/*.sql`）；`_ensure_admin_user`/`_ensure_session_secret`。
   - `PostgresDatabase`：**per-process 惰性 asyncpg 池**（`_acquire()` 按 `os.getpid()` 建池，fork 的 uvicorn worker 自动重建自己的池，规避 asyncpg loop 绑定与 fork 陷阱）；`initialize()` 用一次性连接建 schema + 列级升级；`?`→`$n` 占位符转换；aware datetime 自动归一化为 naive（匹配 PG `TIMESTAMP` 无时区列）。
   - 统一工具：`_dt_to_iso`/`_iso_to_dt`/`_load_json`/`_dump_json`/`_utcnow`。
-- `sqlite/`：`SQLiteStore` 生产实现，按数据域拆分为多个 mixin（`agents.py`/`tasks.py`/`artifacts.py`/`settings.py`/`users.py`/`skills.py`/`files.py`/`logs.py`/`teams.py`/`templates.py`）。mixin 基类 `SQLiteBase` 持有 `self._db: SQLiteDatabase`，`_execute`/`_execute_rowcount` 委托统一层；所有写方法基于 `rowcount` 返回正确布尔值；`dequeue` 走统一层原子"取队首+删行"。
+- `sqlite/`：`SQLiteStore` 生产实现，按数据域拆分为多个 mixin（`agents.py`/`tasks.py`/`artifacts.py`/`settings.py`/`users.py`/`skills.py`/`files.py`/`logs.py`/`teams.py`/`templates.py`）。mixin 基类 `SQLiteBase` 持有 `self._db: SQLiteDatabase`，`_execute`/`_execute_rowcount` 委托统一层；所有写方法基于 `rowcount` 返回正确布尔值；任务认领由 `peek_queue()` 读取候选、`dequeue_task()` 原子删除完成（见 §1.1 并发模型）。
   - **上报字段持久化是注册表驱动的**：`upsert_agent(..., telemetry=...)` 的列名只从 `shared.schemas` 的 `SYSTEM_FIELDS`/`METRIC_FIELDS` 常量取；`system` 字段用 `COALESCE(?, col)` 保留旧值、`metrics` 字段直接覆盖（见 [standards/edge-reporting.md](./standards/edge-reporting.md)）。
-- `pg/`：`PostgresStore` 可选生产实现，与 `sqlite/` 同样按数据域拆分为多个 mixin（`agents.py`/`tasks.py`/`artifacts.py`/`settings.py`/`users.py`/`skills.py`/`files.py`/`logs.py`/`teams.py`/`templates.py`），mixin 基类 `PostgresBase` 持有 `self._db: PostgresDatabase`，只做行映射与 SQL。`dequeue` 走统一层 `FOR UPDATE SKIP LOCKED` 原子出队。设置 `AGENT_MESH_DB_TYPE=pg` + `AGENT_MESH_PG_DSN` 启用。**多进程支持**：每个 worker 进程在统一层内自动重建连接池。
+- `pg/`：`PostgresStore` 可选生产实现，与 `sqlite/` 同样按数据域拆分为多个 mixin（`agents.py`/`tasks.py`/`artifacts.py`/`settings.py`/`users.py`/`skills.py`/`files.py`/`logs.py`/`teams.py`/`templates.py`），mixin 基类 `PostgresBase` 持有 `self._db: PostgresDatabase`，只做行映射与 SQL。设置 `AGENT_MESH_DB_TYPE=pg` + `AGENT_MESH_PG_DSN` 启用。**多进程支持**：每个 worker 进程在统一层内自动重建连接池。
 - `auth.py`：`hash_password` / `verify_password`（bcrypt）/ `generate_token`（`secrets.token_urlsafe(32)`）。
 
 ## 2. 数据模型（shared/schemas.py）
@@ -173,7 +173,7 @@ class ArtifactRef(BaseModel):
     filename: str
     size: int
     content_type: str
-    download_url: str      # /api/artifacts/{task_id}/{artifact_id}
+    download_url: str      # /api/tasks/{task_id}/artifacts/{artifact_id}
     artifact_id: str       # a-<uuid8>
 ```
 
@@ -285,7 +285,7 @@ store/
 ```
 
 ### 3.2 迁移机制
-- SQLite `_run_migrations()` 按文件名前缀序号升序执行，`schema_migrations(version)` 记录已应用版本，`executescript` 原子执行，幂等。
+- SQLite `_run_migrations()` 按文件名前缀序号升序执行；每个迁移以显式 `BEGIN ... COMMIT` 事务包裹其 DDL 与 `schema_migrations(version)` 版本写入，任一语句失败则整体回滚，不残留半套结构；已应用版本以 `schema_migrations` 为准，重复执行幂等。
 - PG `initialize()` 用一次性连接建 schema + 列级升级（`connection/pg_schema.py` 的 `create_schema`/`ensure_settings`/`ensure_default_templates`/`ensure_session_secret`/`ensure_admin_user`，`connection/pg_schema_upgrade.py` 的 `ensure_user_schema_upgrade`/`ensure_agent_schema_upgrade`/`ensure_task_schema_upgrade`）用 `information_schema.columns` 做列级增量升级（`ALTER TABLE ADD COLUMN`），新列只需在 `additions` 字典登记。
 - ⚠️ **执行顺序约束（务必遵守 [README.md §D](./README.md#d-修改数据模型--新增列关键ddl-执行顺序)）**：`create_schema` 先于 upgrade 函数执行，且 `CREATE TABLE/INDEX IF NOT EXISTS` 对旧表是 no-op。**依赖新列的索引/约束只能放在 upgrade 函数里（加列之后），不能写进 `create_schema`**，否则旧库启动时报 `UndefinedColumnError`（2026-09 `idx_tasks_run_id` 曾导致生产启动崩溃）。
 

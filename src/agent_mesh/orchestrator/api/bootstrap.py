@@ -125,7 +125,7 @@ if ($BootstrapBase) {
     $url = "$($BootstrapBase.TrimEnd('/'))/$pkg"
     $headers = @{}
 } else {
-    $url = "$BaseUrl/api/bootstrap/$pkg"
+    $url = "$BaseUrl/api/bootstrap/packages/$pkg"
     $headers = @{ Authorization = "Bearer $Token" }
 }
 $tmp = Join-Path $env:TEMP ("agent-mesh-" + [guid]::NewGuid().ToString("N"))
@@ -266,7 +266,7 @@ def mount_bootstrap_routes(
             'if [ -n "$BOOTSTRAP_BASE" ]; then\n'
             '    INSTALL_URL="${BOOTSTRAP_BASE%/}/${PKG}"\n'
             "else\n"
-            '    INSTALL_URL="${BASE_URL}/api/bootstrap/${PKG}"\n'
+            '    INSTALL_URL="${BASE_URL}/api/bootstrap/packages/${PKG}"\n'
             '    CURL_ARGS+=(-H "Authorization: Bearer $TOKEN")\n'
             "fi\n"
             'echo "==> Downloading ${PKG} from ${INSTALL_URL}"\n'
@@ -310,7 +310,8 @@ def mount_bootstrap_routes(
         )
         return PlainTextResponse(script, media_type="text/plain")
 
-    @router.post("/bootstrap/sync")
+    @router.post("/bootstrap/sync", include_in_schema=False)
+    @router.post("/bootstrap:sync")
     async def bootstrap_sync(
         admin: dict[str, Any] = Depends(require_admin),
     ) -> dict[str, Any]:
@@ -363,7 +364,8 @@ def mount_bootstrap_routes(
             "packages": packages,
         }
 
-    @router.post("/bootstrap")
+    @router.post("/bootstrap", include_in_schema=False)
+    @router.post("/bootstrap/packages")
     async def upload_bootstrap(
         file: UploadFile = File(...),
         admin: dict[str, Any] = Depends(require_admin),
@@ -461,7 +463,8 @@ def mount_bootstrap_routes(
             "size": size,
         }
 
-    @router.get("/bootstrap/{filename}")
+    @router.get("/bootstrap/{filename}", include_in_schema=False)
+    @router.get("/bootstrap/packages/{filename}")
     async def bootstrap_download(
         filename: str,
         _auth: None = Depends(require_any_token),

@@ -181,13 +181,14 @@ def test_skill_pack_download(client: TestClient):
     names = zf.namelist()
     assert "agent-mesh/SKILL.md" in names
     assert "agent-mesh/.env" in names
-    assert any(n.startswith("agent-mesh/references/") for n in names)
+    assert "agent-mesh/references/runs.md" in names
 
     # The token lives ONLY in .env, never in the Markdown.
     env = zf.read("agent-mesh/.env").decode()
     assert "AGENT_MESH_TOKEN=admin-api-token-123" in env
     skill_md = zf.read("agent-mesh/SKILL.md").decode()
     assert "admin-api-token-123" not in skill_md
+    assert "references/runs.md" in skill_md
     # No public_url configured -> an explicit "ask the user" note is injected.
     assert "未配置" in skill_md
 

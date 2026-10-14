@@ -14,7 +14,7 @@ cd agent-mesh-edge
     --output-dir /opt/agent-mesh/data/bootstrap
 ```
 
-> 需 Python 3.12 + `pyinstaller` + `httpx/pydantic/pydantic-settings/psutil`。改探针代码后**必须升该仓库根 `VERSION` 并重建**，否则在线节点不会拿到新代码（见 [docs/README.md 变更规范 §B](./README.md#b-修改探针edge-下的代码)）。也可走其 CI：push 触发 `build-probe`，在原生 runner 上出包并发布 `probe-v<VERSION>` Release；再用 `POST /api/bootstrap/sync` 或 `python scripts/sync_probe_release.py` 拉成品到 `data/bootstrap/`。
+> 需 Python 3.12 + `pyinstaller` + `httpx/pydantic/pydantic-settings/psutil`。改探针代码后**必须升该仓库根 `VERSION` 并重建**，否则在线节点不会拿到新代码（见 [变更规范 §B](./README.md#b-修改探针edge)）。也可走其 CI：push 触发 `build-probe`，在原生 runner 上出包并发布 `probe-v<VERSION>` Release；再用 `POST /api/bootstrap:sync` 或 `python scripts/sync_probe_release.py` 拉成品到 `data/bootstrap/`。
 
 产物（写到 `data/bootstrap/`）：
 - `agent-mesh-agent-{linux|darwin|win32}-{x64|arm64}.tar.gz`：PyInstaller 构建的 `agent-mesh-edge`（Windows 为 `.exe`）单二进制 + `opencode`（Windows 为 `opencode.exe`）二进制 + 包内 `install.sh`（Windows 为 `install.ps1`） + `VERSION` + `MANIFEST.json`（version + 各文件 size/sha256，升级时据此跳过未变化成员）。
@@ -23,7 +23,7 @@ cd agent-mesh-edge
 
 > ⚠️ **Windows 包必须在 Windows 机器上构建**：PyInstaller 不能交叉编译，`win32` 产物只能由 Windows 主机运行同一脚本生成。
 
-> 服务端（orchestrator）版本独立于探针版本，见 `shared/constants.py:SERVER_VERSION`，通过 `GET /api/healthz` 与 `GET /api/bootstrap/info` 暴露。探针包除用本脚本构建外，也可由 admin 在 Web「配置」页上传替换（`POST /api/bootstrap`）。
+> 服务端（orchestrator）版本独立于探针版本，见 `shared/constants.py:SERVER_VERSION`，通过 `GET /api/healthz` 与 `GET /api/bootstrap/info` 暴露。探针包除用本脚本构建外，也可由 admin 在 Web「配置」页上传替换（`POST /api/bootstrap/packages`）。
 
 `data/bootstrap/install.sh` 是包内安装脚本的唯一真源（构建脚本直接复制，不再动态生成）。流程：
 1. 读取 `INSTALL_DIR`（默认 `/opt/agent-mesh-agent`）、`ORCHESTRATOR_URL`、`TOKEN`（缺失即报错退出）、`EDGE_ALIAS`、`EDGE_LLM_*`。
@@ -39,7 +39,7 @@ cd agent-mesh-edge
 ```
 1. OS=$(uname -s); ARCH=$(uname -m) → x64/arm64
 2. 校验 $TOKEN 环境变量存在
-3. curl 下载 http://<base_url>/api/bootstrap/agent-mesh-agent-<os>-<arch>.tar.gz
+3. curl 下载 http://<base_url>/api/bootstrap/packages/agent-mesh-agent-<os>-<arch>.tar.gz
 4. 解压并执行包内 install.sh，
    传入 INSTALL_DIR / ORCHESTRATOR_URL / TOKEN / EDGE_ALIAS
    （**不再内嵌任何 LLM 配置**：新节点注册后由心跳 config-sync 下发，见 auth-security.md §9）
@@ -83,7 +83,7 @@ $env:TOKEN='<token>'; irm -Headers @{Authorization="Bearer <token>"} <public_url
    - **本地缓存**：`probe_release_repo`（`owner/repo`，默认 `DeepDuY/agent-mesh-edge`）→ 点「从 GitHub 同步到服务器」或跑 `python scripts/sync_probe_release.py`，把最新 Release 成品拉到 `data/bootstrap/`；安装/升级仍从本服务器下载（目标机只需能访问 orchestrator，适合内网）。私有仓库可填 `probe_release_token`。
    - **外部直链**：`bootstrap_download_base` 填镜像根（如 `https://github.com/<owner>/<repo>/releases/latest/download`）→ 生成的安装脚本直接从该镜像匿名下载 `agent-mesh-agent-<os>-<arch>.tar.gz`（目标机需能访问该镜像）。留空则从本服务器下载。
 
-> `POST /api/bootstrap/sync`（admin）与 CLI 都经由 `api.github.com` 拉取，即使部署机访问不了 `github.com` 也可用。手动上传探针包（§1.1）仍可用，作为无外网时的兜底。
+> `POST /api/bootstrap:sync`（admin）与 CLI 都经由 `api.github.com` 拉取，即使部署机访问不了 `github.com` 也可用。手动上传探针包（§1.1）仍可用，作为无外网时的兜底。
 
 ## 2. 配置项
 
@@ -111,7 +111,7 @@ $env:TOKEN='<token>'; irm -Headers @{Authorization="Bearer <token>"} <public_url
 | `AGENT_MESH_OFFLINE_AFTER_S` | `15` | 心跳超时判离线（秒）。⚠️ `deploy/install.sh` 生成的 `orchestrator.env` 会覆盖为 `30` |
 | `AGENT_MESH_SESSION_TTL_S` | `86400` | 登录 session token 有效期（秒） |
 
-### 2.2 边沿 Agent（`EDGE_` 前缀，EdgeConfig）
+### 2.2 边沿 Agent（`EDGE_` 前缀，探针仓 `agent-mesh-edge` 的 `EdgeConfig`）
 
 > **PostgreSQL**（v1.4.0）：统一连接层 `store/connection/`（`base.py`/`sqlite.py`/`pg.py`）的 `PostgresDatabase` 按 `os.getpid()` **惰性建 asyncpg 池**，为将来多 worker 预留（当前实际单进程运行，见 architecture.md §1.3）。
 >

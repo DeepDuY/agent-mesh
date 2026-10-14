@@ -103,10 +103,10 @@ async function saveTemplateNodes(templateId) {
     let applied = 0;
     for (const [ids, template_id] of [[toBind, templateId], [toUnbind, null]]) {
       if (!ids.length) continue;
-      const res = await fetch('/api/agents/batch/template', {
+      const res = await fetch('/api/agents:batch_update', {
         method: 'POST',
         headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent_ids: ids, template_id }),
+        body: JSON.stringify({ agent_ids: ids, changes: { template_id } }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);

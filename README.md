@@ -2,6 +2,8 @@
 
 > 通用多 Agent 远程协同执行框架
 
+服务端版本：**2.0.0**。节点探针在独立仓库发布，版本单独管理。
+
 **agent-mesh** 把你正在使用的 LLM Agent（DeepChat、OpenCode、Claude 等）与部署在任意机器上的执行节点连接起来：你用自然语言描述任务，agent-mesh 负责把任务排队、派发到目标节点执行，并回传结果、实时日志与产物。
 
 ## 为什么需要它
@@ -90,6 +92,7 @@ sudo ./deploy/install.sh
 | [docs/protocol.md](docs/protocol.md) | 通信协议与接口 |
 | [docs/deployment.md](docs/deployment.md) | 部署与配置 |
 | [docs/reference.md](docs/reference.md) | 环境变量、REST 接口与使用示例 |
+| [docs/standards/api-conventions.md](docs/standards/api-conventions.md) | REST 接口设计规范 |
 | [skills/agent-mesh/SKILL.md](skills/agent-mesh/SKILL.md) | 主 Agent 操作指南 |
 
 ## 安全

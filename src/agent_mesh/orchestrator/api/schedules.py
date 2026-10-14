@@ -289,7 +289,8 @@ def mount_schedule_routes(
         logger.info("deleted schedule %s by %s", schedule_id, user["username"])
         return {"deleted": True}
 
-    @router.post("/schedules/{schedule_id}/run")
+    @router.post("/schedules/{schedule_id}/run", include_in_schema=False)
+    @router.post("/schedules/{schedule_id}:run")
     async def run_schedule_now(
         schedule_id: int,
         user: dict[str, Any] = Depends(require_user_token),

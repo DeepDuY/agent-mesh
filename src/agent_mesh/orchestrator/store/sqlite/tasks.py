@@ -422,9 +422,6 @@ class QueueMixin(SQLiteBase):
             (task_id, agent_id),
         )
 
-    async def dequeue(self, agent_id: str) -> str | None:
-        return await self._db.dequeue(agent_id)
-
     async def peek_queue(self, agent_id: str, limit: int = 100) -> list[str]:
         rows = await self._execute(
             "SELECT task_id FROM task_queue WHERE agent_id = ? "

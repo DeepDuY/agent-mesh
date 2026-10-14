@@ -70,29 +70,30 @@ agent-mesh/
 │   └── relocate_venv.py          # 重写 venv 符号链接（打包用）
 ├── src/agent_mesh/
 │   ├── shared/{constants,schemas,permissions}.py
-│   ├── orchestrator/
-│   │   ├── main.py  task_store.py  tenancy.py  permissions.py  sweeper.py  scheduler.py  cron.py
-│   │   ├── config.py  auth.py  artifact_store.py  realtime.py
-│   │   ├── api/                   # REST 层（按领域拆分）
-│   │   │   ├── __init__.py        # create_query_router + 认证依赖
-│   │   │   ├── auth.py  tasks.py  agents.py  edge.py  artifacts.py  files.py  bootstrap.py  skills.py  schedules.py  realtime.py
-│   │   │   ├── agent_common.py  agent_config.py  agent_access.py  agent_lifecycle.py
-│   │   │   └── teams.py  templates.py
-│   │   ├── store/
-│   │   │   ├── base.py            # AbstractStore
-│   │   │   ├── connection/{__init__,base,sqlite,pg,pg_schema,pg_schema_upgrade}.py
-│   │   │   ├── sqlite/{__init__,connection,agents,tasks,artifacts,files,logs,settings,skills,users,teams,templates,schedules}.py
-│   │   │   ├── pg/{__init__,base,agents,tasks,artifacts,files,logs,settings,skills,users,teams,templates,schedules}.py
-│   │   │   └── migrations/001-022_*.sql
-│   │   └── web_ui/{index.html,style.css,js/app,auth,agents,tasks,files,skills,schedules,users,teams,templates,config}.js
-│   └── edge/                      # ← 已迁出：探针代码在独立仓库 agent-mesh-edge
+│   └── orchestrator/
+│       ├── main.py  task_store.py  tenancy.py  permissions.py  sweeper.py  scheduler.py  cron.py
+│       ├── config.py  auth.py  artifact_store.py  realtime.py  limits.py  review.py  probe_release.py
+│       ├── api/                   # REST 层（按领域拆分）
+│       │   ├── __init__.py        # create_query_router + 认证依赖
+│       │   ├── common.py          # 查询参数解析、租户过滤等共享助手
+│       │   ├── auth.py  tasks.py  stats.py  agents.py  edge.py  artifacts.py  files.py
+│       │   ├── bootstrap.py  skills.py  schedules.py  realtime.py
+│       │   ├── agent_common.py  agent_config.py  agent_access.py  agent_lifecycle.py
+│       │   └── teams.py  templates.py
+│       ├── store/
+│       │   ├── base.py            # AbstractStore
+│       │   ├── connection/{__init__,base,sqlite,pg,pg_schema,pg_schema_upgrade,verify}.py
+│       │   ├── sqlite/{__init__,connection,agents,tasks,artifacts,files,logs,reviews,schedules,settings,skills,stats,users,teams,templates}.py
+│       │   ├── pg/{__init__,base,agents,tasks,artifacts,files,logs,reviews,schedules,settings,skills,stats,users,teams,templates}.py
+│       │   └── migrations/001-025_*.sql
+│       └── web_ui/{index.html,style.css,js/{app,auth,agents,tasks,overview,files,skills,schedules,users,teams,templates,config,review,realtime,multiselect,profile}.js}
 ├── deploy/
 │   ├── install.sh                 # systemd 部署 orchestrator（edge 探针单独 bootstrap 安装）
 │   ├── redeploy.sh  status.sh  uninstall.sh  common.sh
 │   └── README.md
 ├── skills/agent-mesh/             # OpenCode skill（REST 用法索引 + references/）
-│   ├── SKILL.md                   # 索引：场景速查 + 认证/环境 + 快速节奏
-│   └── references/                # auth / nodes / tasks / files / skills / troubleshooting（.md）
+│   ├── SKILL.md                   # 使用范围、连接方式与按需求选取的参考页
+│   └── references/                # auth / nodes / tasks / runs / schedules / files / skills / troubleshooting（.md）
 └── tests/                         # pytest（含 test_task_store/test_auth_api/test_edge_telemetry/
                                    #  test_files_api/test_tenancy/test_permission/test_templates/
                                    #  test_edge_authz/test_upgrade 等）

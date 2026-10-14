@@ -1,57 +1,40 @@
-# 文件：任务输入与产物的搬运
+# 文件与任务产物
 
-解决「主 Agent 所在机器」与「边缘节点工作目录」之间的文件搬运：**把本地文件送过去给任务用**，以及**把任务产生的文件取回来**。
+文件库用于上传任务输入，任务产物通过任务 ID 下载。当前目录为技能包根目录，命令保留完整认证头。
 
-## 何时用 / 不用
-
-- **要用**：任务需要读取/处理某个本地文件 → 走「上传 + `attachments`」。
-- **要拿回**：任务产出了文件、用户想看/保存 → 走「产物下载」。
-- **不用**：只是一小段文本 → 直接写进 `instruction`。command 模式产生的文件已自动作为 task 产物收集，无需手动上传到文件库。
-
-## 上传本地文件给任务用
+## 上传并引用文件
 
 ```bash
 set -a; . ./.env; set +a
-# 1) 上传（可多文件；返回 file_id + md5，同内容自动去重）
-curl -s -X POST "$AGENT_MESH_BASE_URL/files" \
-  -H "Authorization: Bearer $AGENT_MESH_TOKEN" \
-  -F "files=@./data.csv" -F "files=@./config.yaml"
-# => {"files":[{"file_id":"f-xxxx","filename":"data.csv","size":123,
-#              "content_type":"text/csv","md5":"...","download_url":"/api/files/f-xxxx"}]}
-
-# 2) 派发时引用 file_id
-curl -s -X POST "$AGENT_MESH_BASE_URL/tasks/dispatch" \
+curl -sS -X POST "$AGENT_MESH_BASE_URL/files" \
+  -H "Authorization: Bearer $AGENT_MESH_TOKEN" -F "files=@./data.csv"
+# => {"files":[{"file_id":"f-...","md5":"...","download_url":"/api/files/f-...",...}]}
+curl -sS -X POST "$AGENT_MESH_BASE_URL/tasks" \
   -H "Authorization: Bearer $AGENT_MESH_TOKEN" -H "Content-Type: application/json" \
-  -d '{"agent_id":3,"mode":"llm","instruction":"分析工作目录下的 data.csv，输出 summary.md",
-      "attachments":["f-xxxx","f-yyyy"]}'
+  -d '{"agent_id":3,"mode":"llm","instruction":"分析 data.csv 并生成 summary.md","attachments":["f-xxxxx"]}'
 ```
 
-- 附件以**原文件名**写入任务工作目录；探针下载后**按 md5 校验**，不一致则任务失败（`summary: attachment download failed`）。
-- `mode=command` 也可用 `attachments`：文件先落到工作目录，命令直接引用文件名即可。
+上传响应中的 `file_id` 用于 `attachments`。探针按原文件名下载到工作目录并核验 md5；文件缺失或校验失败时任务执行失败。`command` 与 `llm` 模式均支持附件。
 
-## 取回任务产物
+## 下载产物
+
+从 `GET /tasks/{id}` 的 `task.result.artifacts[]` 读取 `artifact_id`、`filename` 与 `download_url`；使用任务归属权限下载：
 
 ```bash
-# 任务详情里有 result.artifacts（artifact_id / filename / size）
-curl -s -H "Authorization: Bearer $AGENT_MESH_TOKEN" "$AGENT_MESH_BASE_URL/tasks/t-xxxxx"
-# 下载单个产物
-curl -s -H "Authorization: Bearer $AGENT_MESH_TOKEN" \
-  "$AGENT_MESH_BASE_URL/artifacts/t-xxxxx/a-1" -o summary.md
+curl -sS -H "Authorization: Bearer $AGENT_MESH_TOKEN" \
+  "$AGENT_MESH_BASE_URL/tasks/t-xxxxx/artifacts/a-xxxxx" -o summary.md
 ```
 
-- **command 模式**：工作目录下新增文件自动进产物。
-- **llm 模式**：只收集 LLM 在最终 JSON 里声明的文件；大文件/多文件要求打包成 `.tar.gz` / `.zip`。
-- 产物路径带鉴权，按任务归属过滤；无权访问返回 404。
+`command` 模式收集工作目录下新增文件；`llm` 模式根据执行结果中声明的产物收集。产物不存在或无权限时返回 404。
 
 ## 文件库管理
 
 ```bash
-curl -s -H "Authorization: Bearer $AGENT_MESH_TOKEN" "$AGENT_MESH_BASE_URL/files?search=csv"   # 列表/搜索
-curl -s -H "Authorization: Bearer $AGENT_MESH_TOKEN" "$AGENT_MESH_BASE_URL/files/f-xxxx" -o f  # 下载
-curl -s -X DELETE -H "Authorization: Bearer $AGENT_MESH_TOKEN" "$AGENT_MESH_BASE_URL/files/f-xxxx"
-curl -s -X POST -H "Authorization: Bearer $AGENT_MESH_TOKEN" -H "Content-Type: application/json" \
-  -d '{"file_ids":["f-xxxx","f-yyyy"]}' "$AGENT_MESH_BASE_URL/files/batch-download" -o files.zip
+curl -sS -H "Authorization: Bearer $AGENT_MESH_TOKEN" "$AGENT_MESH_BASE_URL/files?search=csv"
+curl -sS -H "Authorization: Bearer $AGENT_MESH_TOKEN" "$AGENT_MESH_BASE_URL/files/f-xxxxx" -o data.csv
+curl -sS -X POST "$AGENT_MESH_BASE_URL/files:batch_download" \
+  -H "Authorization: Bearer $AGENT_MESH_TOKEN" -H "Content-Type: application/json" \
+  -d '{"file_ids":["f-xxxxx"]}' -o files.zip
 ```
 
-- 文件库按内容去重。
-- **删除不做引用校验**：被删的文件如果后续任务还在用它，任务执行时会因下载失败而失败。删除前和用户确认。
+`DELETE /files/{id}` 删除文件库条目和文件，但不检查任务引用；在后续任务需要该文件时会导致下载失败。删除前确认任务依赖。

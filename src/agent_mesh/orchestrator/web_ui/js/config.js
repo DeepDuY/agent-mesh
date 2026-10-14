@@ -98,7 +98,7 @@ async function uploadProbe(input) {
   const form = new FormData();
   form.append('file', file);
   try {
-    const res = await fetch('/api/bootstrap', { method: 'POST', headers, body: form });
+    const res = await fetch('/api/bootstrap/packages', { method: 'POST', headers, body: form });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
     statusEl.textContent = `已发布 ${data.filename}（版本 ${data.probe_version}）`;
@@ -301,7 +301,7 @@ async function syncProbeRelease() {
   el.textContent = '同步中…（下载中请稍候）';
   el.style.color = '';
   try {
-    const res = await fetch('/api/bootstrap/sync', { method: 'POST', headers });
+  const res = await fetch('/api/bootstrap:sync', { method: 'POST', headers });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
     const names = (data.synced || []).map((s) => s.filename).join(', ') || '无匹配包';

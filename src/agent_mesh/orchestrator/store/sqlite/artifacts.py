@@ -34,7 +34,7 @@ class ArtifactMixin(SQLiteBase):
                 "filename": row["filename"],
                 "size": row["size"],
                 "content_type": row["content_type"],
-                "download_url": f"/api/artifacts/{task_id}/{row['artifact_id']}",
+                "download_url": f"/api/tasks/{task_id}/artifacts/{row['artifact_id']}",
             }
             for row in rows
         ]

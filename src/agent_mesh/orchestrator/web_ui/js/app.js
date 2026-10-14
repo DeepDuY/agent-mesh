@@ -35,7 +35,7 @@ function handleSessionExpired() {
       if (
         res.status === 401 &&
         url.includes('/api/') &&
-        !url.includes('/api/auth/login')
+        !url.includes('/api/auth:login')
       ) {
         handleSessionExpired();
       }
@@ -68,7 +68,7 @@ function applyRole() {
 
 async function refreshMe() {
   try {
-    const res = await fetch('/api/auth/me', { headers });
+    const res = await fetch('/api/me', { headers });
     if (res.status === 401) {
       // The fetch guard already triggers the redirect to the login view.
       return;

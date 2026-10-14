@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
+from agent_mesh.orchestrator.api.common import owner_filter, parse_query_dt
 from agent_mesh.orchestrator.artifact_store import ArtifactStore
 from agent_mesh.orchestrator.config import OrchestratorConfig
 from agent_mesh.orchestrator.limits import clamp_int
@@ -32,19 +33,6 @@ _ACTIVE_RUN_STATUSES = {
     TaskStatus.ASSIGNED.value,
     TaskStatus.WORKING.value,
 }
-
-
-def _parse_dt(value: str | None, name: str) -> datetime | None:
-    """Parse an ISO-8601 query param into a UTC-aware datetime, or 400."""
-    if not value:
-        return None
-    try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"invalid {name}: {value}")
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt
 
 
 def _normalize_dt(dt: datetime | None) -> datetime | None:
@@ -218,12 +206,6 @@ def mount_task_routes(
     config: OrchestratorConfig | None = None,
 ) -> None:
 
-    async def _owner_filter(user: dict[str, Any]):
-        """(owner_user_id, owner_team_idss) for a non-admin, else (None, None)."""
-        if store.is_admin(user):
-            return None, None
-        return user.get("user_id"), sorted(await store.user_teams(user))
-
     async def _require_task(task_id: str, user: dict[str, Any]):
         task = await store.get_task(task_id)
         if task is None or not await _can_see_task(task, user):
@@ -237,7 +219,7 @@ def mount_task_routes(
         """Combine explicit depends_on with every task in a referenced run."""
         deps = list(depends_on or [])
         if depends_on_run:
-            owner_user_id, owner_team_ids = await _owner_filter(user)
+            owner_user_id, owner_team_ids = await owner_filter(store, user)
             ids = await store.list_run_task_ids(
                 depends_on_run,
                 owner_user_id=owner_user_id,
@@ -296,9 +278,9 @@ def mount_task_routes(
             )
         if mode is not None and mode not in ("command", "llm"):
             raise HTTPException(status_code=400, detail="mode must be 'command' or 'llm'")
-        after = _parse_dt(started_after, "started_after")
-        before = _parse_dt(started_before, "started_before")
-        owner_user_id, owner_team_ids = await _owner_filter(user)
+        after = parse_query_dt(started_after, "started_after")
+        before = parse_query_dt(started_before, "started_before")
+        owner_user_id, owner_team_ids = await owner_filter(store, user)
         tasks = await store.list_tasks(
             agent_id=agent_id,
             status=task_status,
@@ -338,7 +320,8 @@ def mount_task_routes(
         task = await _require_task(task_id, user)
         return {"task": task.model_dump_json_safe()}
 
-    @router.post("/tasks/dispatch")
+    @router.post("/tasks/dispatch", include_in_schema=False)
+    @router.post("/tasks")
     async def rest_dispatch_task(
         request: Request,
         user: dict[str, Any] = Depends(require_user_token),
@@ -464,7 +447,8 @@ def mount_task_routes(
             "review_score": result.score,
         }
 
-    @router.post("/tasks/dispatch-batch")
+    @router.post("/tasks/dispatch-batch", include_in_schema=False)
+    @router.post("/runs")
     async def rest_dispatch_batch(
         payload: _DispatchBatchPayload,
         request: Request,
@@ -679,7 +663,7 @@ def mount_task_routes(
         leaves the active states, so a caller (e.g. the main agent) can block
         instead of polling.
         """
-        owner_user_id, owner_team_ids = await _owner_filter(user)
+        owner_user_id, owner_team_ids = await owner_filter(store, user)
         task_status = None
         if status is not None:
             try:
@@ -724,12 +708,13 @@ def mount_task_routes(
             resp["offset"] = offset
         return resp
 
-    @router.post("/runs/{run_id}/cancel")
+    @router.post("/runs/{run_id}/cancel", include_in_schema=False)
+    @router.post("/runs/{run_id}:cancel")
     async def rest_cancel_run(
         run_id: str,
         user: dict[str, Any] = Depends(require_user_token),
     ) -> dict[str, Any]:
-        owner_user_id, owner_team_ids = await _owner_filter(user)
+        owner_user_id, owner_team_ids = await owner_filter(store, user)
         counts = await store.run_status_counts(run_id, owner_user_id, owner_team_ids)
         if not counts:
             raise HTTPException(status_code=404, detail="run not found")
@@ -737,12 +722,13 @@ def mount_task_routes(
         logger.info("REST cancelled run %s (%s) by %s", run_id, result, user["username"])
         return {"run_id": run_id, **result}
 
-    @router.post("/runs/{run_id}/retry")
+    @router.post("/runs/{run_id}/retry", include_in_schema=False)
+    @router.post("/runs/{run_id}:retry")
     async def rest_retry_run(
         run_id: str,
         user: dict[str, Any] = Depends(require_user_token),
     ) -> dict[str, Any]:
-        owner_user_id, owner_team_ids = await _owner_filter(user)
+        owner_user_id, owner_team_ids = await owner_filter(store, user)
         counts = await store.run_status_counts(run_id, owner_user_id, owner_team_ids)
         if not counts:
             raise HTTPException(status_code=404, detail="run not found")
@@ -772,7 +758,7 @@ def mount_task_routes(
         next_id = logs[-1]["id"] if logs else after_id
         return {"task_id": task_id, "logs": logs, "next_id": next_id}
 
-    @router.get("/tasks/{task_id}/status")
+    @router.get("/tasks/{task_id}/status", include_in_schema=False)
     async def rest_get_task_status(
         task_id: str,
         user: dict[str, Any] = Depends(require_user_token),
@@ -782,7 +768,8 @@ def mount_task_routes(
             return {"found": False}
         return {"found": True, "task": task.model_dump_json_safe()}
 
-    @router.post("/tasks/{task_id}/cancel")
+    @router.post("/tasks/{task_id}/cancel", include_in_schema=False)
+    @router.post("/tasks/{task_id}:cancel")
     async def rest_cancel_task(
         task_id: str,
         user: dict[str, Any] = Depends(require_user_token),
@@ -800,7 +787,8 @@ def mount_task_routes(
         )
         return {"accepted": True, "task_id": task_id, "status": TaskStatus.CANCELLED.value}
 
-    @router.post("/tasks/{task_id}/approve")
+    @router.post("/tasks/{task_id}/approve", include_in_schema=False)
+    @router.post("/tasks/{task_id}:approve")
     async def rest_approve_task(
         task_id: str,
         user: dict[str, Any] = Depends(require_user_token),
@@ -814,7 +802,8 @@ def mount_task_routes(
         logger.info("REST approved reviewed task %s by %s", task_id, user["username"])
         return {"approved": True, "task_id": task_id, "status": TaskStatus.QUEUED.value}
 
-    @router.post("/tasks/{task_id}/reject")
+    @router.post("/tasks/{task_id}/reject", include_in_schema=False)
+    @router.post("/tasks/{task_id}:reject")
     async def rest_reject_task(
         task_id: str,
         request: Request,
@@ -883,12 +872,13 @@ def mount_task_routes(
         logger.info("REST deleted task %s by %s", task_id, user["username"])
         return {"deleted": True, "task_id": task_id}
 
-    @router.post("/tasks/batch-delete")
+    @router.post("/tasks/batch-delete", include_in_schema=False)
+    @router.post("/tasks:batch_delete")
     async def rest_batch_delete_tasks(
         payload: _BatchDeletePayload,
         user: dict[str, Any] = Depends(require_user_token),
     ) -> dict[str, Any]:
-        owner_user_id, owner_team_ids = await _owner_filter(user)
+        owner_user_id, owner_team_ids = await owner_filter(store, user)
         if payload.all_matching:
             task_status = None
             if payload.status is not None:

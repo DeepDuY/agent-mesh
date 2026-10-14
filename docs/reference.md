@@ -45,7 +45,7 @@ edge 的 LLM 配置通过 orchestrator 配置页/`PATCH /api/settings` 下发（
 
 ```bash
 # 1. 登录获取 session token（短期有效，用于 REST / Web）
-TOKEN=$(curl -s -X POST http://127.0.0.1:8000/api/auth/login \
+TOKEN=$(curl -s -X POST http://127.0.0.1:8000/api/auth:login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"admin"}' | jq -r .token)
 
@@ -53,7 +53,7 @@ TOKEN=$(curl -s -X POST http://127.0.0.1:8000/api/auth/login \
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/agents
 
 # 3. 下发 command 任务（直接跑 shell 命令，不走 LLM）
-curl -s -X POST http://127.0.0.1:8000/api/tasks/dispatch \
+curl -s -X POST http://127.0.0.1:8000/api/tasks \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -65,7 +65,7 @@ curl -s -X POST http://127.0.0.1:8000/api/tasks/dispatch \
   }'
 
 # 4. 下发 llm 任务（自然语言，走 opencode）
-curl -s -X POST http://127.0.0.1:8000/api/tasks/dispatch \
+curl -s -X POST http://127.0.0.1:8000/api/tasks \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -86,7 +86,7 @@ curl -s -X POST http://127.0.0.1:8000/api/tasks/dispatch \
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/tasks/t-xxxxx | jq .task.result.session_id
 
 # 2. 新任务追加 session_id 续用会话
-curl -s -X POST http://127.0.0.1:8000/api/tasks/dispatch \
+curl -s -X POST http://127.0.0.1:8000/api/tasks \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{
     "agent_id": 1, "mode": "llm",
@@ -97,7 +97,7 @@ curl -s -X POST http://127.0.0.1:8000/api/tasks/dispatch \
 
 任务完成后的 `result.session_id` 即为本次实际使用的会话 ID。
 
-> 如何拿到用户 API token：首次启动 orchestrator 时日志会打印一次 admin 的 token；或通过 `POST /api/auth/users`（admin）创建用户 / `POST /api/auth/users/{username}/token` 轮换 token 获取；用户也可在 Web「个人中心」自助生成（`POST /api/auth/token`）。API token 只显示一次，请妥善保存。
+> 如何拿到用户 API token：首次启动 orchestrator 时日志会打印一次 admin 的 token；或通过 `POST /api/users`（admin）创建用户 / `POST /api/users/{username}:rotate_token` 轮换 token 获取；用户也可在 Web「个人中心」自助生成（`POST /api/me:rotate_token`）。API token 只显示一次，请妥善保存。
 
 ### 用户管理（admin）
 
@@ -106,21 +106,21 @@ curl -s -X POST http://127.0.0.1:8000/api/tasks/dispatch \
 TEAM_ID=$(curl -s -X POST http://127.0.0.1:8000/api/teams \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"name":"ops"}' | python -c 'import sys,json;print(json.load(sys.stdin)["team"]["team_id"])')
-curl -s -X POST http://127.0.0.1:8000/api/auth/users \
+curl -s -X POST http://127.0.0.1:8000/api/users \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d "{\"username\":\"bob\",\"password\":\"secret123\",\"role\":\"user\",\"team_ids\":[\"$TEAM_ID\"]}"
 
 # 用户列表 / 轮换 token / 改密 / 删除
-curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/auth/users
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/users
 # 轮换 token（可选 {"expires_in_days":30}，省略=永久）
-curl -s -X POST -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/auth/users/bob/token
+curl -s -X POST -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/users/bob:rotate_token
 curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"password":"newsecret456"}' http://127.0.0.1:8000/api/auth/users/bob/password
-curl -s -X DELETE -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/auth/users/bob
+  -d '{"password":"newsecret456"}' http://127.0.0.1:8000/api/users/bob:reset_password
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/users/bob
 
 # 自助轮换自己的 token（任意用户；可选有效期天数，留空=永久）
 curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"expires_in_days":90}' http://127.0.0.1:8000/api/auth/token
+  -d '{"expires_in_days":90}' http://127.0.0.1:8000/api/me:rotate_token
 ```
 
 ### Web 看板
@@ -187,54 +187,51 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/auth/login` | 账号密码登录，返回**短期 session token**（`token` 字段） |
-| GET | `/api/auth/me` | 当前用户信息（含 `token_created_at`/`token_expires_at`） |
-| POST | `/api/auth/token` | 自助轮换**自己**的 API token（可选 `{"expires_in_days":N}`，留空=永久；明文返回一次） |
-| POST | `/api/auth/users` | **admin**：创建用户，返回一次性 API token |
-| GET | `/api/auth/users` | **admin**：用户列表 |
-| DELETE | `/api/auth/users/{username}` | **admin**：删除用户 |
-| POST | `/api/auth/users/{username}/token` | **admin**：轮换 API token（返回一次，可选 `expires_in_days`） |
-| POST | `/api/auth/users/{username}/password` | **admin**：重置指定用户密码 |
-| POST | `/api/auth/change-password` | 修改自己的密码 |
+| POST | `/api/auth:login` | 账号密码登录，返回**短期 session token**（`token` 字段） |
+| GET | `/api/me` | 当前用户信息（含 `token_created_at`/`token_expires_at`） |
+| POST | `/api/me:rotate_token` | 自助轮换**自己**的 API token（可选 `{"expires_in_days":N}`，留空=永久；明文返回一次） |
+| POST/GET | `/api/users` | **admin**：创建用户或列出用户 |
+| DELETE | `/api/users/{username}` | **admin**：删除用户 |
+| POST | `/api/users/{username}:rotate_token` | **admin**：轮换 API token（返回一次，可选 `expires_in_days`） |
+| POST | `/api/users/{username}:reset_password` | **admin**：重置指定用户密码 |
+| POST | `/api/me:change_password` | 修改自己的密码 |
 
 ### REST API（主 Agent / 脚本）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/tasks/dispatch` | 下发任务（`mode` 必填；`session_id` 选填续用 opencode 会话；`attachments` 选填引用文件库 file_id；另有 `run_id`、`depends_on_run`、`attachments_from`） |
-| POST | `/api/tasks/dispatch-batch` | **批量下发**：把同一条任务发给多个 `targets`，返回一个 `run_id`；逐目标独立校验，失败项进 `denied`。支持 `Idempotency-Key` 幂等 |
+| POST | `/api/tasks` | 下发任务（`mode` 必填；`session_id` 选填续用 opencode 会话；`attachments` 选填引用文件库 file_id；另有 `run_id`、`depends_on_run`、`attachments_from`） |
+| POST | `/api/runs` | **批量下发**：把同一条任务发给多个 `targets`，返回一个 `run_id`；逐目标独立校验，失败项进 `denied`。支持 `Idempotency-Key` 幂等 |
 | GET | `/api/tasks/{task_id}` | 查询任务详情 |
-| GET | `/api/tasks/{task_id}/status` | 查询任务状态 |
-| POST | `/api/tasks/{task_id}/cancel` | 终止任务 |
-| POST | `/api/tasks/{task_id}/approve` | 审核通过（`pending_review` → 排队执行；admin 或任务所有者） |
-| POST | `/api/tasks/{task_id}/reject` | 审核拒绝（`pending_review` → `denied`，可选 `{reason}`） |
+| POST | `/api/tasks/{task_id}:cancel` | 终止任务 |
+| POST | `/api/tasks/{task_id}:approve` | 审核通过（`pending_review` → 排队执行；admin 或任务所有者） |
+| POST | `/api/tasks/{task_id}:reject` | 审核拒绝（`pending_review` → `denied`，可选 `{reason}`） |
 | GET | `/api/tasks/{task_id}/reviews` | 某任务的审核记录 |
 | GET | `/api/reviews` | 审核记录（**admin**；`?action=`/`task_id`/`search`（任务ID/节点/说明/处理人模糊）/分页，返回 `total`） |
 | GET | `/api/tasks/{task_id}/logs` | 任务实时执行输出（增量，`?after_id=`、`?limit=`） |
 | GET | `/api/tasks` | 任务列表（支持 `limit`/`offset` 分页、`status`/`mode`/`run_id` 过滤、`search` 模糊、`started_after`/`started_before` 开始时间区间，返回 `total` 总数） |
 | GET | `/api/runs/{run_id}` | **批次聚合**：`counts` 各状态数量 + 每任务一行紧凑摘要；`?status=`/`?include_tasks=false`/`?wait=30` 长轮询 |
-| POST | `/api/runs/{run_id}/cancel` | 终止整批 |
-| POST | `/api/runs/{run_id}/retry` | 重跑批内失败/超时任务 |
+| POST | `/api/runs/{run_id}:cancel` | 终止整批 |
+| POST | `/api/runs/{run_id}:retry` | 重跑批内失败/超时任务 |
 | DELETE | `/api/tasks/{task_id}` | 删除单个任务 |
-| POST | `/api/tasks/batch-delete` | 批量删除：`{"task_ids": [...]}` 按 id；或 `{"all_matching": true, "status": "..."}` 删除匹配筛选的全部任务 |
+| POST | `/api/tasks:batch_delete` | 批量删除：`{"task_ids": [...]}` 按 id；或 `{"all_matching": true, "status": "..."}` 删除匹配筛选的全部任务 |
 | GET | `/api/agents` | 节点列表 |
 | GET | `/api/agents/{id}` | 节点状态 |
-| GET | `/api/agents/{id}/detail` | 节点详情（含最近任务） |
-| PATCH | `/api/agents/{id}/alias` | 设置节点别名 |
-| PATCH | `/api/agents/{id}/description` | 设置节点描述（主 Agent 识别用途；不影响执行） |
-| PATCH | `/api/agents/{id}/system_prompt` | 设置节点级 system prompt（**admin**；随心跳同步到该节点） |
-| PATCH | `/api/agents/{id}/llm_config` | 设置节点级 LLM 配置（**admin**；随心跳同步到该节点） |
-| POST | `/api/agents/{id}/upgrade` | **admin**：请求升级节点（空闲时自动执行并回滚） |
+| GET | `/api/agents/{id}?include=tasks` | 节点详情（含当前用户可见的最近任务） |
+| PATCH | `/api/agents/{id}` | 修改别名/描述、模板绑定（仅 Web 管理界面）或管理员配置（LLM、提示词、ACL）；按字段鉴权 |
+| POST | `/api/agents/{id}:upgrade` | **admin**：请求升级节点（空闲时自动执行并回滚） |
+| POST | `/api/agents:batch_update` | 批量修改节点模板或 ACL（按字段鉴权） |
 | DELETE | `/api/agents/{id}` | **admin**：删除节点（下发卸载任务） |
 | GET | `/api/settings` | 全局配置（**admin**，仅限 Web UI 头部） |
 | PATCH | `/api/settings` | 更新全局配置（**admin**，仅限 Web UI 头部） |
-| POST | `/api/artifacts/{task_id}` | 上传产物 |
-| GET | `/api/artifacts/{task_id}` | 列出产物 |
-| GET | `/api/artifacts/{task_id}/{artifact_id}` | 下载产物 |
+| POST | `/api/tasks/{task_id}/artifacts` | 上传产物（旧探针仍可使用 `/api/artifacts/{task_id}`） |
+| GET | `/api/tasks/{task_id}/artifacts` | 列出产物 |
+| GET | `/api/tasks/{task_id}/artifacts/{artifact_id}` | 下载产物 |
 | GET | `/api/bootstrap/install.sh` | 新节点安装脚本 |
 | GET | `/api/bootstrap/info` | **admin**：服务端版本 + 已发布探针版本（配置页展示） |
-| POST | `/api/bootstrap` | **admin**：上传/替换探针安装包（`.tar.gz`） |
-| GET | `/api/bootstrap/{filename}` | 安装包下载 |
+| POST | `/api/bootstrap/packages` | **admin**：上传/替换探针安装包（`.tar.gz`） |
+| GET | `/api/bootstrap/packages/{filename}` | 安装包下载（旧探针仍可使用 `/api/bootstrap/{filename}`） |
+| POST | `/api/bootstrap:sync` | **admin**：同步探针发布包 |
 | GET | `/api/skills` | 技能摘要列表（**仅 name/description/version/enabled，不含内容**；边沿/用户 token 均可） |
 | GET | `/api/skills/{name}` | 单个技能摘要 |
 | POST | `/api/skills` | 上传技能 zip（提取并校验 SKILL.md，重复上传 version+1） |
@@ -243,13 +240,13 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/
 | GET | `/api/skills/{name}/download` | 下载技能 zip（agent 用自己的 token 按需拉取） |
 | POST | `/api/files` | 上传文件到文件库（multipart `files`，返回 `file_id` + `md5`，同内容去重） |
 | GET | `/api/files` | 文件库列表（`search` 可选按文件名/文件ID模糊） |
-| GET | `/api/files/{file_id}` | 下载文件库文件（任意 token，带 `X-File-Md5`） |
-| POST | `/api/files/batch-delete` | 批量删除文件库文件 |
-| POST | `/api/files/batch-download` | 批量下载文件库文件为 ZIP |
+| GET | `/api/files/{file_id}` | 下载文件库文件（带 `X-File-Md5` 校验完整性）。权限范围：global token 不限；admin 不限；普通用户仅限本人创建的文件；agent token 仅限其自身任务附件所引用的文件 |
+| POST | `/api/files:batch_delete` | 批量删除文件库文件 |
+| POST | `/api/files:batch_download` | 批量下载文件库文件为 ZIP |
 | DELETE | `/api/files/{file_id}` | 删除文件库文件（不校验引用） |
-| GET | `/api/skill-pack/agent-mesh` | 下载个性化 agent-mesh 技能包 zip（SKILL.md + references + 生成的 `.env`，已填充公开地址；token 放在 `.env`，不写入 Markdown） |
+| GET | `/api/skill-packs/agent-mesh` | 下载个性化 agent-mesh 技能包 zip（SKILL.md + references + 生成的 `.env`，已填充公开地址；token 放在 `.env`，不写入 Markdown） |
 
-> 模板管理（`/api/templates*`、`/api/agents/{id}/template`）与团队管理（`/api/teams*`）**仅限 Web 管理平台**（需 `X-Agent-Mesh-UI` 头，外部调用一律 404），不在主 Agent/脚本可用接口内。
+> 模板管理（`/api/templates*`）和节点模板绑定（`PATCH /api/agents/{id}` 携带 `template_id`）需要 `X-Agent-Mesh-UI`；团队管理按用户角色验证。
 
 ### REST API（边沿 Agent）
 
@@ -279,7 +276,7 @@ curl -s -H "Authorization: Bearer <agent-token>" \
   http://127.0.0.1:8000/api/skills/my-skill/download -o my-skill.zip
 ```
 
-**在任务中使用技能**：`POST /api/tasks/dispatch` 传 `skills: ["<name>", ...]`。服务端会校验每个名字存在且 `enabled`，否则返回 `400`；边沿执行 `llm` 任务时会拉取这些技能并把 `SKILL.md` 注入任务提示（需节点为支持该特性的版本）。未指定 `skills` 时，提示词仍带通用技能库指引，由节点 LLM 自主决定是否取用。技能内容仅通过下载接口按需下发，摘要接口永不暴露正文。
+**在任务中使用技能**：`POST /api/tasks` 传 `skills: ["<name>", ...]`。服务端会校验每个名字存在且 `enabled`，否则返回 `400`；边沿执行 `llm` 任务时会拉取这些技能并把 `SKILL.md` 注入任务提示（需节点为支持该特性的版本）。未指定 `skills` 时，提示词仍带通用技能库指引，由节点 LLM 自主决定是否取用。技能内容仅通过下载接口按需下发，摘要接口永不暴露正文。
 
 ## 文件库（任务附件）
 
@@ -293,14 +290,14 @@ curl -s -X POST http://127.0.0.1:8000/api/files \
 # => {"files":[{"file_id":"f-xxxx","filename":"myfile.txt","size":123,"content_type":"text/plain","md5":"...","download_url":"/api/files/f-xxxx"}]}
 
 # 2. 派发任务时带上 attachments
-curl -s -X POST http://127.0.0.1:8000/api/tasks/dispatch \
+curl -s -X POST http://127.0.0.1:8000/api/tasks \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"agent_id":1,"mode":"llm","instruction":"读取并分析工作目录下的 myfile.txt","attachments":["f-xxxx"]}'
 ```
 
 - 附件以原文件名写入工作目录；llm 模式提示词会提示"工作目录可能已放入附件"。
 - 文件库独立于任务，可在 Web 看板「文件」页管理（上传/下载/删除）；删除不校验引用，被删文件的任务执行时会因下载失败而标记失败。
-- 最新版 agent-mesh 使用指南可从看板右上角用户菜单「个人中心」（或 `GET /api/skill-pack/agent-mesh`）下载为 `agent-mesh.zip`：含 SKILL.md 索引与 `references/`（示例中的公开地址已自动填充），以及写有你用户 token 的 `.env`。解压后放进主 Agent 的 skills 目录即可。
+- 最新版 agent-mesh 使用指南可从看板右上角用户菜单「个人中心」（或 `GET /api/skill-packs/agent-mesh`）下载为 `agent-mesh.zip`：含 SKILL.md 索引与 `references/`（示例中的公开地址已自动填充），以及写有你用户 token 的 `.env`。解压后放进主 Agent 的 skills 目录即可。
 
 ## 定时任务（cron 调度）
 
@@ -317,7 +314,7 @@ curl -s -X POST http://127.0.0.1:8000/api/tasks/dispatch \
 | GET | `/api/schedules/{id}` | 详情 |
 | PATCH | `/api/schedules/{id}` | 更新（改 cron/时区/启停会重算下次运行） |
 | DELETE | `/api/schedules/{id}` | 删除 |
-| POST | `/api/schedules/{id}/run` | 立即运行一次（不影响下次运行） |
+| POST | `/api/schedules/{id}:run` | 立即运行一次（不影响下次运行） |
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/api/schedules \
@@ -330,10 +327,10 @@ curl -s -X POST http://127.0.0.1:8000/api/schedules \
 ### 自升级
 
 - **自动升级（默认开启）**：orchestrator 构建/更新了新版安装包后，版本低于最新包的节点会在空闲时自动升级，无需逐个操作。配置页可关闭（`auto_upgrade=0`）。
-- **手动升级**：先构建/更新安装包并发布到 `/opt/agent-mesh/data/bootstrap/`（在 `agent-mesh-edge` 仓库构建，或 `POST /api/bootstrap/sync` 从 Release 同步），然后节点页点「升级」或：
+- **手动升级**：先构建/更新安装包并发布到 `/opt/agent-mesh/data/bootstrap/`（在 `agent-mesh-edge` 仓库构建，或 `POST /api/bootstrap:sync` 从 Release 同步），然后节点页点「升级」或：
 
 ```bash
-curl -s -X POST http://127.0.0.1:8000/api/agents/1/upgrade \
+curl -s -X POST http://127.0.0.1:8000/api/agents/1:upgrade \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -350,7 +347,7 @@ Windows 节点同一套逻辑，但布局为 `bin\agent-mesh-edge.bin.exe` + 启
 
 ### LLM 配置同步
 
-配置页「默认 LLM 配置」保存后（或 `PATCH /api/agents/{id}/llm_config` 设置节点级配置），`config_version` 自动自增，并随下一次心跳推送解析后的配置（节点级优先于全局）。边沿节点对比本地 `etc/config_version`，变更时即时更新运行中的 executor，并重写 `etc/edge.env` 使重启后仍然生效。
+配置页「默认 LLM 配置」保存后（或 `PATCH /api/agents/{id}` 设置节点级 `llm_*` 配置），`config_version` 自动自增，并随下一次心跳推送解析后的配置（节点级优先于全局）。边沿节点对比本地 `etc/config_version`，变更时即时更新运行中的 executor，并重写 `etc/edge.env` 使重启后仍然生效。
 
 ## 测试
 

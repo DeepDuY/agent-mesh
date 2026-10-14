@@ -23,7 +23,7 @@ def mount_agent_access_routes(
     store: TaskStore,
     require_admin,
 ) -> None:
-    @router.patch("/agents/{agent_id}/access")
+    @router.patch("/agents/{agent_id}/access", include_in_schema=False)
     async def patch_agent_access(
         agent_id: str,
         payload: AccessPayload,
@@ -40,7 +40,7 @@ def mount_agent_access_routes(
         logger.info("updated access for agent %s by %s", agent.id, user["username"])
         return {"agent": dump_agent(store, agent, user)}
 
-    @router.post("/agents/batch/access")
+    @router.post("/agents/batch/access", include_in_schema=False)
     async def batch_set_agent_access(
         payload: BatchAccessPayload,
         user: dict[str, Any] = Depends(require_admin),

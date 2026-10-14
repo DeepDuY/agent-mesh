@@ -9,7 +9,7 @@
 
 1. **仅支持单进程（多 worker 未实现）**：`AGENT_MESH_WORKERS` 默认 `1`；`>1` 会被 `main.py:_resolve_workers()` 忽略并打警告，实际始终单进程运行（不再静默走失效的多进程分支）。未来开放多 worker 的前置条件：改用 import-string + `uvicorn.run`（或 supervisor）启动、lifespan 可 pickle、明确 sweeper 归属，并解决下面的 SSE 与容量原子性约束。
    - **连带约束**：实时推送（`/api/realtime` SSE）目前是**进程内**广播（`orchestrator/realtime.py`），只在单 worker 下正确；一旦启用多 worker，必须改成共享总线（Postgres `LISTEN/NOTIFY`）。
-2. **heartbeat 容量检查非原子**：单进程可加锁；PG 多 worker 下"统计活跃数 → dequeue 补足 capacity"需放到 DB 级事务里，否则并发心跳会超额派发。
+2. **heartbeat 容量检查非原子**：单进程可加锁；PG 多 worker 下「统计活跃数 → 认领补足 capacity」需置于 DB 级事务，否则并发心跳会超额派发。
 3. **agent 键解析不统一**：队列键（`device_id or agent_id`）与 `agents` 行定位（数字 id → device_id → 显示名）语义分散，`alias`/`hostname` 显示名并未真正参与解析（见 §1 协议 `agent_id` 三级解析的文档口径）。
 4. **SQLite→PG 迁移脚本不完整**：`scripts/migrate_sqlite_to_pg.py` 未覆盖 `teams`/`team_members`/`templates`/`task_events` 与 `tasks.user_id/team_id`；迁移 015 后仍读取已删除的 `templates.allowed_tools` 列会报错。
 5. **超时重试状态翻转语义**：`_sweep_timeouts` 的回退重试与状态机语义需与容量检查原子性（§2）一并设计。
@@ -21,7 +21,7 @@
 ### 平台
 
 7. **macOS Intel（darwin-x64）无探针包**：CI 只构建 `darwin-arm64`；`install.sh` 会按 `uname` 找 `darwin-x64` 但发布里没有。
-8. **探针 Release 自动同步缺失**：目前只有配置页手动按钮（`POST /api/bootstrap/sync`），无启动/定时/发布回调触发。
+8. **探针 Release 自动同步缺失**：目前只有配置页手动按钮（`POST /api/bootstrap:sync`），无启动/定时/发布回调触发。
 
 ### 执行隔离后续
 

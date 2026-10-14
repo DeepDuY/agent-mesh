@@ -53,7 +53,8 @@ def mount_artifact_routes(
     _store_artifact_ref,
 ) -> None:
 
-    @router.post("/artifacts/{task_id}")
+    @router.post("/artifacts/{task_id}", include_in_schema=False)
+    @router.post("/tasks/{task_id}/artifacts")
     async def upload_artifacts(
         task_id: str,
         files: list[UploadFile] = File(...),
@@ -102,7 +103,8 @@ def mount_artifact_routes(
             refs.append(ref.model_dump())
         return {"artifacts": refs}
 
-    @router.get("/artifacts/{task_id}")
+    @router.get("/artifacts/{task_id}", include_in_schema=False)
+    @router.get("/tasks/{task_id}/artifacts")
     async def list_artifacts(
         task_id: str,
         user: dict[str, Any] = Depends(require_user_token),
@@ -113,7 +115,8 @@ def mount_artifact_routes(
         refs = artifact_store.list(task_id)
         return {"artifacts": [r.model_dump() for r in refs]}
 
-    @router.get("/artifacts/{task_id}/{artifact_id}")
+    @router.get("/artifacts/{task_id}/{artifact_id}", include_in_schema=False)
+    @router.get("/tasks/{task_id}/artifacts/{artifact_id}")
     async def download_artifact(
         task_id: str,
         artifact_id: str,

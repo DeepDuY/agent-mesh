@@ -28,7 +28,8 @@ def mount_agent_lifecycle_routes(
     # them. Fall back to the user guard if no admin dependency was supplied.
     require_admin = require_admin or require_user_token
 
-    @router.post("/agents/{agent_id}/token")
+    @router.post("/agents/{agent_id}/token", include_in_schema=False)
+    @router.post("/agents/{agent_id}:rotate_token")
     async def rotate_agent_token(
         agent_id: str,
         user: dict[str, Any] = Depends(require_user_token),
@@ -46,7 +47,8 @@ def mount_agent_lifecycle_routes(
             "token_type": "agent",
         }
 
-    @router.post("/agents/{agent_id}/upgrade")
+    @router.post("/agents/{agent_id}/upgrade", include_in_schema=False)
+    @router.post("/agents/{agent_id}:upgrade")
     async def request_agent_upgrade(
         agent_id: str,
         user: dict[str, Any] = Depends(require_admin),

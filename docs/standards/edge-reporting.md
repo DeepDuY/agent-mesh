@@ -4,7 +4,7 @@
 > 1. 探针上报了什么、怎么上报（字段规范）。
 > 2. 收到新数据/新字段时，服务端如何追加与处理（治理流程）。
 >
-> 相关实现：`shared/schemas.py`（字段注册表）、`orchestrator/task_store.py:heartbeat`、`orchestrator/store/*`（注册表驱动持久化）、`edge/config_writer.py`（采集）。
+> 相关实现：`shared/schemas.py`（字段注册表）、`orchestrator/task_store.py:heartbeat`、`orchestrator/store/*`（注册表驱动持久化）、探针仓 `agent-mesh-edge` 的 `src/agent_mesh/edge/config_writer.py`（采集）。
 
 ---
 
@@ -114,9 +114,9 @@ def validate_telemetry(telemetry) -> None  # 非注册键抛 ValueError（防注
 
 | 函数 | 位置 | 说明 |
 |------|------|------|
-| `get_os()` | `edge/config_writer.py` | 平台族 `linux`/`darwin`/`win32` |
-| `get_distro()` | `edge/config_writer.py` | Linux 读 `/etc/os-release` → `ID VERSION_ID`（如 `ubuntu 22.04`）；非 Linux 返回 `None` |
-| `get_arch()` | `edge/config_writer.py` | `x64` / `arm64` |
-| `_collect_metrics()` | `edge/agent.py` | `psutil` 采集 CPU/内存指标，失败回退 `None` |
+| `get_os()` | `agent-mesh-edge/src/agent_mesh/edge/config_writer.py` | 平台族 `linux`/`darwin`/`win32` |
+| `get_distro()` | `agent-mesh-edge/src/agent_mesh/edge/config_writer.py` | Linux 读 `/etc/os-release` → `ID VERSION_ID`（如 `ubuntu 22.04`）；非 Linux 返回 `None` |
+| `get_arch()` | `agent-mesh-edge/src/agent_mesh/edge/config_writer.py` | `x64` / `arm64` |
+| `_collect_metrics()` | `agent-mesh-edge/src/agent_mesh/edge/agent.py` | `psutil` 采集 CPU/内存指标，失败回退 `None` |
 
 探针在每次心跳调用 `poll_for_task(...)` 时一并上报。新增系统字段后，老探针（未采集）不发该字段 → 服务端走"缺失保留旧值"规则，前后兼容。

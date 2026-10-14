@@ -21,7 +21,7 @@ function onProfileBackdrop(e) {
 
 async function loadProfile() {
   try {
-    const res = await fetch('/api/auth/me', { headers });
+  const res = await fetch('/api/me', { headers });
     if (!res.ok) return;
     const me = await res.json();
     renderProfileInfo(me);
@@ -78,7 +78,7 @@ async function rotateOwnToken() {
   if (!confirm(msg)) return;
 
   try {
-    const res = await fetch('/api/auth/token', {
+    const res = await fetch('/api/me:rotate_token', {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -106,7 +106,7 @@ async function rotateOwnToken() {
 async function downloadSkillPack() {
   const statusEl = document.getElementById('profile-skill-status');
   try {
-    const res = await fetch('/api/skill-pack/agent-mesh', { headers });
+    const res = await fetch('/api/skill-packs/agent-mesh', { headers });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);

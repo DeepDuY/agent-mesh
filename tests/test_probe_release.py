@@ -13,12 +13,12 @@ def test_install_scripts_default_to_server(client):
     sh = client.get("/api/bootstrap/install.sh", headers=_admin())
     assert sh.status_code == 200, sh.text
     assert 'BOOTSTRAP_BASE=""' in sh.text
-    assert "/api/bootstrap/${PKG}" in sh.text
+    assert "/api/bootstrap/packages/${PKG}" in sh.text
 
     ps = client.get("/api/bootstrap/install.ps1", headers=_admin())
     assert ps.status_code == 200, ps.text
     assert '$BootstrapBase = ""' in ps.text
-    assert "/api/bootstrap/$pkg" in ps.text
+    assert "/api/bootstrap/packages/$pkg" in ps.text
 
 
 def test_install_scripts_use_external_base(client):
@@ -40,7 +40,7 @@ def test_install_scripts_use_external_base(client):
 def test_sync_requires_repo(client):
     r = client.patch("/api/settings", json={"probe_release_repo": ""}, headers=_admin())
     assert r.status_code == 200, r.text
-    r = client.post("/api/bootstrap/sync", headers=_admin())
+    r = client.post("/api/bootstrap:sync", headers=_admin())
     assert r.status_code == 400
 
 
@@ -67,7 +67,7 @@ def test_sync_uses_configured_repo(client, monkeypatch):
     )
     assert r.status_code == 200, r.text
 
-    r = client.post("/api/bootstrap/sync", headers=_admin())
+    r = client.post("/api/bootstrap:sync", headers=_admin())
     assert r.status_code == 200, r.text
     assert r.json()["tag"] == "probe-v1.6.4"
     assert captured["repo"] == "DeepDuY/agent-mesh-edge"
