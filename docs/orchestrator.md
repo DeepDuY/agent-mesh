@@ -281,7 +281,8 @@ store/
     ├── 022_schedules.sql           # schedules 表（cron 定时任务）
     ├── 023_task_runs.sql           # tasks.run_id + idempotency_keys（批量派发/批次）
     ├── 024_multi_team.sql          # 删除 team_members.user_id 唯一索引 + tasks/schedules.team_ids、templates.owner_team_ids（多团队归属，回填旧单值列）
-    └── 025_task_reviews.sql        # tasks.review_score/review_reason + task_reviews 表 + settings.review_policy（AI 审核）
+    ├── 025_task_reviews.sql        # tasks.review_score/review_reason + task_reviews 表 + settings.review_policy（AI 审核）
+    └── 026_webhooks.sql            # settings.webhook_* (出站事件通知配置；纯 settings 行，见 features.md §11)
 ```
 
 ### 3.2 迁移机制

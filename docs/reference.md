@@ -160,6 +160,8 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/
 > **AI 任务审核**（可选）由运行时设置 `review_policy`（JSON）控制，配置页「任务审核」或 `PATCH /api/settings` 调整：`enabled`（总开关）、`threshold`（默认 60，分数越高越安全，低于阈值拦截）、`human_review`（低分进人工审核队列 vs 直接拦截）、`model`（审核模型，空则用 `llm_model`）、`api_style`（`auto`/`anthropic`/`openai`，自动按地址与模型判断；Anthropic 走 `{base}/v1/messages` 且模型去掉 `anthropic/` 前缀，OpenAI 走 `{base}/chat/completions`）、`rubric`（评分基准提示词）、`agents`/`teams`/`users`（生效范围，留空=全部）、`bypass_admin`、`expire_s`（人工审核超时）、`fail_mode`（审核不可用时 `deny`）。关闭时完全维持现有模板权限策略。
 >
 > `schedule_timezone`（定时任务 cron 求值所用时区，IANA 名，默认空 = 系统时区）也是运行时可调设置；定时任务可在自身 `timezone` 字段覆盖。
+>
+> **Webhook 事件通知**（可选，全局单一目标）由运行时设置控制：`webhook_enabled`（`1`/`0` 总开关）、`webhook_kind`（`dingtalk`/`feishu`/`wecom`/`generic`）、`webhook_url`（http/https）、`webhook_secret`（选填签名密钥）、`webhook_task_events`（CSV，任务终态事件）、`webhook_review_events`（CSV，审核事件）——两组事件**独立订阅**，清空某组 = 不推送该类事件。配置页「Webhook 通知」或 `PATCH /api/settings` 调整；「发送测试」调用 `POST /api/settings:test_webhook`（admin + 页面头）发样例通知。详见 [features.md §11](./features.md#11-webhook-事件通知可选)。
 
 ### edge agent
 
@@ -224,6 +226,7 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/
 | DELETE | `/api/agents/{id}` | **admin**：删除节点（下发卸载任务） |
 | GET | `/api/settings` | 全局配置（**admin**，仅限 Web UI 头部） |
 | PATCH | `/api/settings` | 更新全局配置（**admin**，仅限 Web UI 头部） |
+| POST | `/api/settings:test_webhook` | **admin**：用当前 webhook 配置发送一条样例通知（Web UI 头部） |
 | POST | `/api/tasks/{task_id}/artifacts` | 上传产物（旧探针仍可使用 `/api/artifacts/{task_id}`） |
 | GET | `/api/tasks/{task_id}/artifacts` | 列出产物 |
 | GET | `/api/tasks/{task_id}/artifacts/{artifact_id}` | 下载产物 |

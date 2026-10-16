@@ -100,6 +100,7 @@ class SweeperMixin:
                     )
                 else:
                     logger.info("task %s timed out", task.task_id)
+                    self._notify(await self.store.get_task(task.task_id), "timed_out")
 
     async def _sweep_offline(self) -> None:
         while not self._stop_event.is_set():

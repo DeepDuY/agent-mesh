@@ -8,6 +8,7 @@ from typing import Any
 
 from agent_mesh.orchestrator.permissions import PermissionMixin
 from agent_mesh.orchestrator.realtime import publish
+from agent_mesh.orchestrator import webhook
 from agent_mesh.orchestrator.scheduler import SchedulerMixin
 from agent_mesh.orchestrator.store.base import AbstractStore, _new_run_id, _new_task_id
 from agent_mesh.orchestrator.sweeper import SweeperMixin
@@ -191,6 +192,7 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin, SchedulerMixin):
         logger.info(
             "cancelled task %s: dependency not satisfied (%s)", task_id, failed_deps
         )
+        self._notify(await self.get_task(task_id), "cancelled")
 
     # ------------------------------------------------------------------
     # Dispatch
@@ -288,6 +290,7 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin, SchedulerMixin):
             ),
         )
         logger.info("recorded denied dispatch %s for agent=%s", task.task_id, queue_key)
+        self._notify(await self.get_task(task.task_id), "denied")
         return task.task_id
 
     async def dispatch_pending_review(
@@ -484,6 +487,25 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin, SchedulerMixin):
                 )
             except Exception:
                 logger.exception("failed to record AI review audit for task=%s", task_id)
+            event = {
+                "allowed": "allowed",
+                "pending_review": "pending",
+                "denied": "denied",
+            }.get(action, action)
+            self._notify_review(
+                await self.get_task(task_id),
+                event,
+                {
+                    "action": action,
+                    "score": outcome.score if outcome else None,
+                    "threshold": outcome.threshold if outcome else None,
+                    "reason": outcome.reason if outcome else None,
+                    "violations": outcome.violations if outcome else [],
+                    "model": outcome.model if outcome else None,
+                    "source": "dispatch",
+                    "actor": "ai",
+                },
+            )
 
         if outcome is None:
             return GatedDispatch(await _dispatch(), TaskStatus.QUEUED.value)
@@ -613,6 +635,17 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin, SchedulerMixin):
         )
         logger.info("task %s approved by %s", task_id, actor)
         publish("tasks_changed")
+        self._notify_review(
+            await self.get_task(task_id),
+            "approved",
+            {
+                "action": "approved",
+                "score": task.review_score,
+                "reason": task.review_reason,
+                "source": "approve",
+                "actor": actor,
+            },
+        )
         return True
 
     async def reject_reviewed_task(
@@ -664,6 +697,17 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin, SchedulerMixin):
         )
         logger.info("task %s rejected by %s: %s", task_id, actor, final_reason)
         publish("tasks_changed")
+        self._notify_review(
+            await self.get_task(task_id),
+            "rejected",
+            {
+                "action": "rejected",
+                "score": task.review_score,
+                "reason": final_reason,
+                "source": "reject",
+                "actor": actor,
+            },
+        )
         return True
 
     async def expire_reviewed_task(self, task_id: str) -> bool:
@@ -711,6 +755,17 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin, SchedulerMixin):
         )
         logger.info("task %s review expired -> denied", task_id)
         publish("tasks_changed")
+        self._notify_review(
+            await self.get_task(task_id),
+            "expired",
+            {
+                "action": "expired",
+                "score": task.review_score,
+                "reason": reason,
+                "source": "expire",
+                "actor": "system",
+            },
+        )
         return True
 
     async def _resolve_agent(self, agent_ref: str) -> AgentStatus | None:
@@ -909,6 +964,7 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin, SchedulerMixin):
         key = await self._agent_stable_key(task.agent_id)
         await self._refresh_current_task(key)
         publish("tasks_changed")
+        self._notify(await self.get_task(task_id), result.status)
         return True
 
     async def cancel_task(self, task_id: str) -> bool:
@@ -938,7 +994,23 @@ class TaskStore(TenancyMixin, PermissionMixin, SweeperMixin, SchedulerMixin):
         await self._refresh_current_task(key)
         logger.info("cancelled task %s (was %s)", task_id, task.status.value)
         publish("tasks_changed")
+        self._notify(await self.get_task(task_id), "cancelled")
         return True
+
+    # ------------------------------------------------------------------
+    # Outbound webhook notifications (fire-and-forget; never blocking)
+    # ------------------------------------------------------------------
+    def _notify(self, task: Task | None, event: str) -> None:
+        """Schedule a task-event webhook; failures are contained in webhook.py."""
+        if task is None:
+            return
+        asyncio.create_task(webhook.notify_task_event(task, event, self.store))
+
+    def _notify_review(self, task: Task | None, action: str, detail: dict[str, Any]) -> None:
+        """Schedule an AI-review webhook; failures are contained in webhook.py."""
+        if task is None:
+            return
+        asyncio.create_task(webhook.notify_review_event(task, action, detail, self.store))
 
     # ------------------------------------------------------------------
     # Runs (batch dispatch grouping)

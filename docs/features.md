@@ -88,4 +88,15 @@
 - **接口风格**：`api_style` 自动按 `base_url`/模型名判断；Anthropic 走 `{base}/v1/messages`（模型去掉 `anthropic/` 前缀，兼容 reasoning 模型只输出 thinking 的情况），OpenAI 走 `{base}/chat/completions`。
 - **局限**：审的是**指令文本**；`llm` 模式下节点现场生成的命令看不到，真正的命令级拦截需在 edge 侧加钩子（后续）。
 
+## 11. Webhook 事件通知（可选）
+
+- **总开关与目标**：全局单一目标，`settings.webhook_enabled` 控制开关，`webhook_kind` 选 `dingtalk` / `feishu` / `wecom` / `generic`，`webhook_url` 为地址（仅接受 http/https）。配置页「Webhook 通知」或 `PATCH /api/settings` 调整。
+- **签名**：`webhook_secret` 选填——钉钉按官方算法把 `sign`/`timestamp` 拼进 URL，飞书把 `sign`/`timestamp` 放进 body，`generic` 用 `X-Agent-Mesh-Signature: sha256=<hex>`（对请求体做 HMAC-SHA256）。
+- **事件订阅（分组可选）**：`webhook_task_events`（CSV，`completed,failed,timed_out,cancelled,denied`）与 `webhook_review_events`（CSV，`allowed,denied,pending,approved,rejected,expired`）**各自独立订阅**；两组可只开其一，清空某组 = 不推送该类事件。
+- **任务事件**：在任务进终态时触发——完成/失败（提交结果）、超时（超时清扫且不再重试）、取消（人工终止或依赖失败）、被拒绝（权限或审核拦截）。
+- **审核事件**：AI 审核决策（通过/拦截/待人工审核）与人工处置（通过/拒绝/超时自动拦截）触发，消息附带评分、阈值、结论、原因、违规点、审核模型与来源。
+- **投递语义**：后台 `asyncio.create_task` 火忘发送，超时 8s、最多 3 次指数退避；**失败只记日志，绝不影响任务状态机**。配置页「发送测试」可发一条样例通知（`POST /api/settings:test_webhook`）。
+- **注意**：同一次「AI 审核拦截」会产生 `task.denied` 与 `review.denied` 两条通知，可按订阅组取舍避免刷屏。
+
+
 

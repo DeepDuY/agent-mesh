@@ -249,6 +249,13 @@ async def ensure_settings(conn: Any) -> None:
         ("schedule_timezone", ""),
         # Optional AI review gate (JSON; see orchestrator/review.py).
         ("review_policy", ""),
+        # Outbound webhook notifications (see orchestrator/webhook.py).
+        ("webhook_enabled", "0"),
+        ("webhook_kind", "generic"),
+        ("webhook_url", ""),
+        ("webhook_secret", ""),
+        ("webhook_task_events", "completed,failed,timed_out,cancelled,denied"),
+        ("webhook_review_events", "allowed,denied,pending,approved,rejected,expired"),
     ):
         await conn.execute(
             "INSERT INTO settings (key, value) VALUES ($1, $2) "

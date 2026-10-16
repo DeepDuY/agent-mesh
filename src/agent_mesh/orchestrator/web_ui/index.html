@@ -512,6 +512,58 @@
               </div>
             </div>
 
+            <div class="setting setting-lg">
+              <div class="setting-label">Webhook 通知 <span class="help" data-tip="把任务与审核事件推送到钉钉/飞书/企业微信机器人或自定义 HTTP 端点。可分别订阅任务事件与审核事件。">?</span></div>
+              <div class="setting-control">
+                <div class="sub-field">
+                  <label class="toggle-line"><input type="checkbox" id="webhook-enabled"> 启用 Webhook 通知</label>
+                </div>
+                <div class="sub-field">
+                  <label>目标平台</label>
+                  <select id="webhook-kind">
+                    <option value="generic">自定义 HTTP</option>
+                    <option value="dingtalk">钉钉机器人</option>
+                    <option value="feishu">飞书机器人</option>
+                    <option value="wecom">企业微信机器人</option>
+                  </select>
+                </div>
+                <div class="sub-field">
+                  <label>Webhook 地址</label>
+                  <input id="webhook-url" type="text" placeholder="https://...">
+                </div>
+                <div class="sub-field">
+                  <label>签名密钥（可选）</label>
+                  <input id="webhook-secret" type="password" placeholder="(可选)">
+                </div>
+                <div class="sub-field">
+                  <label>任务事件</label>
+                  <div class="webhook-events" id="webhook-task-events">
+                    <label class="toggle-line"><input type="checkbox" value="completed"> 完成</label>
+                    <label class="toggle-line"><input type="checkbox" value="failed"> 失败</label>
+                    <label class="toggle-line"><input type="checkbox" value="timed_out"> 超时</label>
+                    <label class="toggle-line"><input type="checkbox" value="cancelled"> 已取消</label>
+                    <label class="toggle-line"><input type="checkbox" value="denied"> 被拒绝</label>
+                  </div>
+                </div>
+                <div class="sub-field">
+                  <label>审核事件</label>
+                  <div class="webhook-events" id="webhook-review-events">
+                    <label class="toggle-line"><input type="checkbox" value="allowed"> 通过</label>
+                    <label class="toggle-line"><input type="checkbox" value="denied"> 拦截</label>
+                    <label class="toggle-line"><input type="checkbox" value="pending"> 待人工审核</label>
+                    <label class="toggle-line"><input type="checkbox" value="approved"> 人工通过</label>
+                    <label class="toggle-line"><input type="checkbox" value="rejected"> 人工拒绝</label>
+                    <label class="toggle-line"><input type="checkbox" value="expired"> 超时自动拦截</label>
+                  </div>
+                </div>
+                <div class="sub-actions">
+                  <button class="btn" onclick="saveWebhook()">保存 Webhook 设置</button>
+                  <button class="btn btn-secondary" onclick="testWebhook()">发送测试</button>
+                  <span id="webhook-status" class="status-msg"></span>
+                </div>
+              </div>
+            </div>
+
             <div class="setting">
               <div class="setting-label">实时输出刷新间隔 <span class="help" data-tip="任务详情页「实时输出」区域的轮询间隔（秒，默认 5）。">?</span></div>
               <div class="setting-control">

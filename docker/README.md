@@ -66,7 +66,7 @@ docker compose -f docker/docker-compose.external-pg.yml up -d
 1. 保留旧 token、端口、数据目录，并从旧 `AGENT_MESH_PG_DSN` 取 **现有** 用户名、密码、库名；按 `docker-compose.yml` 和 `.env.example` 写入安装目录的私有运行时文件。设 `AGENT_MESH_PG_VOLUME=agent-mesh-pg-data`，不要复制或初始化旧卷。
 2. 提前从旧容器运行 `pg_dump -Fc` 保存到 `/opt/agent-mesh/backups/`（权限仅管理员），验证备份能用 `pg_restore -l` 读取；另保留旧 Compose、`.env` 和旧镜像。
 3. 停旧 orchestrator，**再停旧 PG 容器**；确认旧 PG 不再占用卷，然后从安装目录 `docker compose up -d`。新 `postgres` 服务挂载同卷，orchestrator 通过服务名连接并执行 PG 列级升级。
-4. `curl -fsS http://127.0.0.1:8000/api/healthz` 应返回 `version=2.0.0`、`db=ok`。PG 的健康接口不返回 `schema_version`（该字段只用于 SQLite）；检查日志、数据数量和关键表列验证迁移。
+4. `curl -fsS http://127.0.0.1:8000/api/healthz` 应返回 `version=2.1.0`、`db=ok`。PG 的健康接口不返回 `schema_version`（该字段只用于 SQLite）；检查日志、数据数量和关键表列验证迁移。
 
 旧镜像应单独保留标签（例如 `agent-mesh:1.9.0-prod`）；升级脚本每次运行都会更新 `agent-mesh:previous`。若需回退这次迁移，指定 `ROLLBACK_TAG=agent-mesh:1.9.0-prod ./docker/redeploy.sh --rollback /opt/agent-mesh/backups/<迁移前备份.dump>`。首次切换前保存的原 Compose/.env 可用于还原部署拓扑；恢复 PG 数据时确保只有一个容器占用该卷。
 

@@ -7,8 +7,8 @@ import pytest
 from agent_mesh.orchestrator.store.connection.verify import verify_schema
 from agent_mesh.orchestrator.store.sqlite import SQLiteStore
 
-# Highest migration bundled with the code (store/migrations/025_task_reviews.sql).
-_EXPECTED_MAX_VERSION = 25
+# Highest migration bundled with the code (store/migrations/026_webhooks.sql).
+_EXPECTED_MAX_VERSION = 26
 
 
 @pytest.mark.asyncio

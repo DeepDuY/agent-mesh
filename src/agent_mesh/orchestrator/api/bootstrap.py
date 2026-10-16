@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from agent_mesh.orchestrator.config import OrchestratorConfig, bootstrap_version
 from agent_mesh.orchestrator.limits import LIMIT_SPECS, validate_limit
 from agent_mesh.orchestrator.task_store import TaskStore
+from agent_mesh.orchestrator.webhook import WEBHOOK_SETTING_KEYS, send_test
 from agent_mesh.shared.constants import SERVER_VERSION
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,7 @@ _PUBLIC_SETTINGS_KEYS = frozenset(
         "probe_release_repo",
         "probe_release_token",
         *LIMIT_SPECS.keys(),
+        *WEBHOOK_SETTING_KEYS,
     }
 )
 
@@ -210,6 +212,15 @@ def mount_bootstrap_routes(
         ):
             await store.bump_config_version()
         return {"settings": _public_settings(await store.store.list_settings(), user, config)}
+
+    @router.post("/settings:test_webhook")
+    async def test_webhook(
+        request: Request,
+        user: dict[str, Any] = Depends(require_admin),
+    ) -> dict[str, Any]:
+        """Send a sample notification with the current webhook settings."""
+        _require_ui(request)
+        return await send_test(store.store)
 
     @router.get("/bootstrap/install.sh")
     async def bootstrap_install_script(

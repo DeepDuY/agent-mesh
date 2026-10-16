@@ -63,6 +63,17 @@ async function loadConfig() {
     const prt = document.getElementById('probe-release-token');
     if (prt && document.activeElement !== prt) prt.value = settings.probe_release_token || '';
 
+    const whEnabled = document.getElementById('webhook-enabled');
+    if (whEnabled) whEnabled.checked = (settings.webhook_enabled ?? '0') === '1';
+    const whKind = document.getElementById('webhook-kind');
+    if (whKind && document.activeElement !== whKind) whKind.value = settings.webhook_kind || 'generic';
+    const whUrl = document.getElementById('webhook-url');
+    if (whUrl && document.activeElement !== whUrl) whUrl.value = settings.webhook_url || '';
+    const whSecret = document.getElementById('webhook-secret');
+    if (whSecret && document.activeElement !== whSecret) whSecret.value = settings.webhook_secret || '';
+    applyWebhookEvents('webhook-task-events', settings.webhook_task_events, 'completed,failed,timed_out,cancelled,denied');
+    applyWebhookEvents('webhook-review-events', settings.webhook_review_events, 'allowed,denied,pending,approved,rejected,expired');
+
     if (typeof loadReviewPolicy === 'function') loadReviewPolicy(settings.review_policy || '');
 
     loadVersionInfo();
@@ -313,3 +324,62 @@ async function syncProbeRelease() {
     el.style.color = 'var(--danger)';
   }
 }
+
+function applyWebhookEvents(containerId, value, fallback) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const set = new Set((value || fallback).split(',').map(s => s.trim()).filter(Boolean));
+  container.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.checked = set.has(cb.value);
+  });
+}
+
+function collectWebhookEvents(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return '';
+  return Array.from(container.querySelectorAll('input[type=checkbox]:checked'))
+    .map(cb => cb.value)
+    .join(',');
+}
+
+async function saveWebhook() {
+  const el = document.getElementById('webhook-status');
+  try {
+    await patchSettings({
+      webhook_enabled: document.getElementById('webhook-enabled').checked ? '1' : '0',
+      webhook_kind: document.getElementById('webhook-kind').value,
+      webhook_url: document.getElementById('webhook-url').value.trim(),
+      webhook_secret: document.getElementById('webhook-secret').value.trim(),
+      webhook_task_events: collectWebhookEvents('webhook-task-events'),
+      webhook_review_events: collectWebhookEvents('webhook-review-events'),
+    });
+    el.textContent = '已保存';
+    el.style.color = '';
+  } catch (e) {
+    el.textContent = '保存失败：' + e.message;
+    el.style.color = 'var(--danger)';
+  }
+  setTimeout(() => { el.textContent = ''; }, 3000);
+}
+
+async function testWebhook() {
+  const el = document.getElementById('webhook-status');
+  el.textContent = '发送中…';
+  el.style.color = '';
+  try {
+    const res = await fetch('/api/settings:test_webhook', { method: 'POST', headers });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    if (data.ok) {
+      el.textContent = '测试通知已发送';
+      el.style.color = 'var(--ok)';
+    } else {
+      el.textContent = '发送失败：' + (data.detail || '未知错误');
+      el.style.color = 'var(--danger)';
+    }
+  } catch (e) {
+    el.textContent = '发送失败：' + e.message;
+    el.style.color = 'var(--danger)';
+  }
+}
+
