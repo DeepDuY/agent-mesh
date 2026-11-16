@@ -23,6 +23,19 @@ def _ver_ge(a: str, b: str) -> bool:
     return _ver_parts(a) >= _ver_parts(b)
 
 
+def _client_ip(request: Request) -> str | None:
+    """Real client address, accounting for the TLS front proxy.
+
+    The front relays every connection from 127.0.0.1 and stamps the original
+    peer into ``X-Forwarded-For``. Direct connections (TLS disabled, tests)
+    have no such header, so fall back to the socket peer.
+    """
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip() or None
+    return request.client.host if request.client else None
+
+
 def _bootstrap_package_exists(config: OrchestratorConfig, filename: str) -> bool:
     pkg_dir = Path(config.db_path).parent / "bootstrap"
     return (pkg_dir / filename).exists()
@@ -136,7 +149,7 @@ def mount_edge_routes(
         task, key = await store.heartbeat(
             agent_id, device_id, runtime, hostname, version, telemetry,
             running_tasks=body.get("running_tasks") or [],
-            ip_address=request.client.host if request.client else None,
+            ip_address=_client_ip(request),
         )
         agent = await store.resolve_agent(key)
 
@@ -148,6 +161,12 @@ def mount_edge_routes(
             "server_ts": _now_ts(),
             "max_concurrent": await store.max_concurrent(),
         }
+
+        # TLS capability: new probes pin this fingerprint and switch the same
+        # port to HTTPS. Old probes ignore the field and keep speaking HTTP.
+        fingerprint = getattr(request.app.state, "tls_fingerprint", "")
+        if fingerprint:
+            resp["tls"] = {"enabled": True, "fingerprint": fingerprint}
 
         # --- Independent per-agent token (issued exactly once on registration) ---
         # The edge persists it into edge.env and authenticates with it from then

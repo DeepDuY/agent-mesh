@@ -48,11 +48,11 @@ function templateUsage(templateId) {
 function renderTemplates() {
   const rows = currentTemplates.map(t => `
     <tr>
-      <td>${escHtml(t.name)}</td>
-      <td>${t.description ? escHtml(t.description) : '-'}</td>
-      <td class="col-desc">${t.node_description ? escHtml(t.node_description) : '-'}</td>
-      <td class="mono">${t.llm_model ? escHtml(t.llm_model) : '-'}</td>
-      <td class="col-desc">${t.system_prompt ? escHtml(t.system_prompt) : '-'}</td>
+      <td class="clip" title="${escHtml(t.name)}">${escHtml(t.name)}</td>
+      <td class="col-desc col-clamp" title="${escHtml(t.description || '')}">${t.description ? escHtml(t.description) : '-'}</td>
+      <td class="col-desc col-clamp" title="${escHtml(t.node_description || '')}">${t.node_description ? escHtml(t.node_description) : '-'}</td>
+      <td class="mono clip" title="${escHtml(t.llm_model || '')}">${t.llm_model ? escHtml(t.llm_model) : '-'}</td>
+      <td class="col-desc col-clamp" title="${escHtml(t.system_prompt || '')}">${t.system_prompt ? escHtml(t.system_prompt) : '-'}</td>
       <td>${templateUsage(t.id)}</td>
       <td>
         <span class="actions">

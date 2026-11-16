@@ -74,6 +74,14 @@ class OrchestratorConfig(BaseSettings):
     offline_after_s: float = DEFAULT_OFFLINE_AFTER_S
     session_ttl_s: int = 86400
 
+    # Single-port TLS front. When enabled the public port accepts both plaintext
+    # HTTP (old probes) and HTTPS (new probes); see orchestrator/tls_front.py.
+    # Empty cert/key paths fall back to <db_dir>/certs/server.crt|.key, generated
+    # on first start.
+    tls_enabled: bool = True
+    tls_cert: str = ""
+    tls_key: str = ""
+
 
 def constant_time_compare(a: str, b: str) -> bool:
     import hmac

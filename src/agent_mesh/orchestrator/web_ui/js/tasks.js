@@ -148,9 +148,9 @@ async function loadTasks() {
         <input type="checkbox" class="task-checkbox" ${checked ? 'checked' : ''} onclick="toggleTaskSelect('${t.task_id}')">
       </td>
       <td class="mono">${t.task_id}${t.run_id ? `<div class="muted" style="font-size:.75em">批次 ${escHtml(t.run_id)}</div>` : ''}</td>
-      <td>${escHtml(agentDisplayName(t.agent_id))}</td>
-      <td>${escHtml(t.dispatched_by || '-')}</td>
-      <td title="${escHtml(t.instruction)}">${escHtml(t.instruction.slice(0, 60))}${t.instruction.length > 60 ? '...' : ''}</td>
+      <td class="clip" title="${escHtml(agentDisplayName(t.agent_id))}">${escHtml(agentDisplayName(t.agent_id))}</td>
+      <td class="clip" title="${escHtml(t.dispatched_by || '')}">${escHtml(t.dispatched_by || '-')}</td>
+      <td class="clip" title="${escHtml(t.instruction)}">${escHtml(t.instruction)}</td>
       <td>${modeBadge(t.mode)}</td>
       <td>${badge(t.status)}</td>
       <td>${reviewScoreCell(t.review_score)}</td>

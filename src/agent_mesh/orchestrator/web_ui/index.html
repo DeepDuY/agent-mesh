@@ -255,8 +255,7 @@
               <button class="btn btn-success" onclick="document.getElementById('skill-upload-input').click()">上传技能 ZIP</button>
             </div>
           </div>
-          <table>
-            <thead><tr><th>名称</th><th class="col-desc">描述</th><th>版本</th><th>状态</th><th>操作</th></tr></thead>
+          <table class="table-fixed">
             <tbody id="skills-body"><tr><td colspan="5" class="empty">加载中...</td></tr></tbody>
           </table>
           <div id="skill-upload-status" class="status-msg"></div>
@@ -269,8 +268,8 @@
             <h2>定时任务</h2>
             <button class="btn btn-success" onclick="openScheduleModal()">+ 新建定时任务</button>
           </div>
-          <table>
-            <thead><tr><th>名称</th><th>Cron</th><th>时区</th><th>节点</th><th>模式</th><th>指令</th><th>状态</th><th>下次运行</th><th>上次运行</th><th>操作</th></tr></thead>
+          <table class="table-fixed">
+            <thead><tr><th>名称</th><th>Cron</th><th>时区</th><th>节点</th><th>模式</th><th class="col-desc">指令</th><th>状态</th><th>下次运行</th><th>上次运行</th><th>操作</th></tr></thead>
             <tbody id="schedules-body"><tr><td colspan="10" class="empty">加载中...</td></tr></tbody>
           </table>
           <div id="schedules-status" class="status-msg"></div>

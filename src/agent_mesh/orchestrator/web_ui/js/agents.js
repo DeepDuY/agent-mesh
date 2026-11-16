@@ -60,8 +60,8 @@ function renderAgents() {
     <tr data-agent-id="${a.id}">
       <td class="col-select"><input type="checkbox" class="agent-checkbox" ${checked ? 'checked' : ''} onclick="toggleAgentSelect(${a.id}, this.checked)"></td>
       <td class="mono">${a.id}</td>
-      <td title="${escHtml(a.hostname || '')}">${hostLabel(a)}</td>
-      <td>${a.alias || '-'}</td>
+      <td class="clip" title="${escHtml(a.hostname || '')}">${hostLabel(a)}</td>
+      <td class="clip" title="${escHtml(a.alias || '')}">${a.alias || '-'}</td>
       <td>${version}</td>
       <td>${a.runtime || '-'}</td>
       <td>${a.distro || a.os || '-'}</td>

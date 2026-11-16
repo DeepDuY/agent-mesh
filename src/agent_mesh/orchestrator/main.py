@@ -194,11 +194,65 @@ def main() -> None:
 
 
 def _run_single_process(config, store):
-    """Single-process mode."""
+    """Single-process mode.
+
+    With TLS enabled, uvicorn binds a plaintext backend on localhost and a
+    front on the public port accepts both HTTP and HTTPS (see tls_front.py).
+    With TLS disabled, uvicorn binds the public port directly, as before.
+    """
     import uvicorn
 
     app, _, _ = create_app(config, store)
-    uvicorn.run(app, host=config.host, port=config.port, log_level="info")
+    if not config.tls_enabled:
+        uvicorn.run(app, host=config.host, port=config.port, log_level="info")
+        return
+
+    asyncio.run(_run_with_tls(app, config))
+
+
+async def _run_with_tls(app, config) -> None:
+    import uvicorn
+
+    from agent_mesh.orchestrator.tls_front import (
+        TlsFront,
+        cert_fingerprint,
+        ensure_self_signed_cert,
+        reserve_backend_port,
+    )
+
+    cert_path, key_path = _tls_paths(config)
+    ensure_self_signed_cert(cert_path, key_path, _tls_hosts(config))
+    app.state.tls_fingerprint = cert_fingerprint(cert_path)
+    logger.info("TLS enabled, cert fingerprint %s", app.state.tls_fingerprint)
+
+    backend_port = reserve_backend_port()
+    server = uvicorn.Server(
+        uvicorn.Config(app, host="127.0.0.1", port=backend_port, log_level="info")
+    )
+    front = TlsFront(config.host, config.port, backend_port, str(cert_path), str(key_path))
+    try:
+        await asyncio.gather(server.serve(), front.serve())
+    finally:
+        front.close()
+
+
+def _tls_paths(config) -> tuple[Path, Path]:
+    base = Path(config.db_path).parent / "certs"
+    cert = Path(config.tls_cert) if config.tls_cert else base / "server.crt"
+    key = Path(config.tls_key) if config.tls_key else base / "server.key"
+    return cert, key
+
+
+def _tls_hosts(config) -> list[str]:
+    hosts = ["localhost", "127.0.0.1"]
+    public = (config.public_url or "").strip()
+    if public:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(public if "://" in public else f"http://{public}")
+        if parsed.hostname:
+            hosts.append(parsed.hostname)
+    return hosts
 
 
 if __name__ == "__main__":

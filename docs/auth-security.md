@@ -91,3 +91,16 @@
 - **提示词注入（edge）**：`_wrap_llm_instruction(instruction, system_prompt)` 把拼接后的节点+模板提示词作为「## 角色与上下文」块注入每个 llm 任务提示词；为空则不注入。
 - **重装防坑**：install.sh 重装时会清理 `etc/config_version` 等状态文件，否则新二进制本地版本==服务端版本会跳过同步、沿用旧模型。
 - 由此**复活了节点级 `llm_config` 死特性**（此前只写库不读回）。
+
+## 10. 传输加密（单端口双协议）
+
+对外端口同时接受明文 HTTP 与 HTTPS，**不新增端口**，因此离线、无法升级的旧探针不用改地址也能继续上报。
+
+- **区分方式**：连接首字节 `0x16` 视为 TLS ClientHello，在 `orchestrator/tls_front.py` 内用 `ssl.MemoryBIO` 终止 TLS；其余字节按明文 HTTP 原样转发。两者都转发到只监听 `127.0.0.1` 的明文 uvicorn，SSE 与产物上传不解析、不断流。
+- **真实地址**：前置代理把对端地址写入 `X-Forwarded-For`，`/api/edge/*` 用它记录节点 IP；直连（TLS 关闭或测试）时回退到 socket 对端。
+- **证书**：自签，首次启动生成到 `<db_dir>/certs/server.crt|server.key`（可用 `AGENT_MESH_TLS_CERT` / `AGENT_MESH_TLS_KEY` 指定已有证书）。SAN 含 `localhost` 与 `public_url` 的主机名。
+- **指纹下发**：心跳响应携带 `tls: {enabled, fingerprint}`（证书 SHA-256，无冒号小写十六进制）。**旧探针忽略未知字段**，行为不变。
+- **新探针切换**：探针（`agent-mesh-edge` ≥ 1.6.8）仍以明文完成首次心跳，读到 `tls` 后把同一主机与端口的 scheme 改为 `https`，把 `EDGE_ORCHESTRATOR_URL` / `EDGE_TLS=1` / `EDGE_TLS_FINGERPRINT` 写入 `edge.env`，之后每次请求校验服务端证书指纹（不依赖系统 CA）。指纹不符即拒绝，避免被降级回明文后遭中间人。
+- **开关**：`AGENT_MESH_TLS`（默认开启）。关闭时 uvicorn 直接监听对外端口，与旧行为一致。
+
+> 首次心跳仍是明文（要先拿到指纹）。证书固定后，后续心跳、领任务、产物与技能下载都走 TLS。看板与主 Agent 访问同一端口，用 HTTP 或 HTTPS 均可。

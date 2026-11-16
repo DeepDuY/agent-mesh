@@ -117,10 +117,10 @@ function renderReviewPending(tasks) {
     <tr>
       <td class="mono"><a href="#" class="link" onclick="event.preventDefault();openReviewTask('${escHtml(t.task_id)}')">${escHtml(t.task_id)}</a></td>
       <td class="mono">${escHtml(node.id)}</td>
-      <td>${escHtml(node.hostname)}</td>
+      <td class="clip" title="${escHtml(node.hostname)}">${escHtml(node.hostname)}</td>
       <td>${modeBadge(t.mode)}</td>
       <td>${reviewScoreCell(t.review_score)}</td>
-      <td title="${escHtml(t.review_reason || '')}">${escHtml((t.review_reason || '').slice(0, 60))}${(t.review_reason || '').length > 60 ? '...' : ''}</td>
+      <td class="clip" title="${escHtml(t.review_reason || '')}">${escHtml(t.review_reason || '-')}</td>
       <td>${escHtml(t.dispatched_by || '-')}</td>
       <td class="mono">${formatTime(t.created_at)}</td>
       <td>
@@ -144,10 +144,10 @@ function renderReviewHistory(reviews) {
       <td class="mono">${formatTime(r.created_at)}</td>
       <td class="mono"><a href="#" class="link" onclick="event.preventDefault();openReviewTask('${escHtml(r.task_id)}')">${escHtml(r.task_id)}</a></td>
       <td class="mono">${escHtml(node.id)}</td>
-      <td>${escHtml(node.hostname)}</td>
+      <td class="clip" title="${escHtml(node.hostname)}">${escHtml(node.hostname)}</td>
       <td>${escHtml(reviewActionLabel(r.action))}</td>
       <td>${reviewScoreCell(r.score)}</td>
-      <td title="${escHtml(r.reason || '')}">${escHtml((r.reason || '').slice(0, 60))}${(r.reason || '').length > 60 ? '...' : ''}</td>
+      <td class="clip" title="${escHtml(r.reason || '')}">${escHtml(r.reason || '-')}</td>
       <td>${escHtml(reviewSourceLabel(r.source))}</td>
       <td>${escHtml(r.actor || '-')}</td>
     </tr>

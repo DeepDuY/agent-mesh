@@ -21,12 +21,12 @@ async function loadSchedules() {
 function renderSchedules() {
   const rows = currentSchedules.map(s => `
     <tr>
-      <td>${escHtml(s.name)}</td>
-      <td class="mono">${escHtml(s.cron)}</td>
-      <td>${s.timezone ? escHtml(s.timezone) : '系统'}</td>
-      <td>${escHtml(agentDisplayName(s.agent_id))}</td>
+      <td class="clip">${escHtml(s.name)}</td>
+      <td class="mono clip">${escHtml(s.cron)}</td>
+      <td class="clip">${s.timezone ? escHtml(s.timezone) : '系统'}</td>
+      <td class="clip">${escHtml(agentDisplayName(s.agent_id))}</td>
       <td>${s.mode === 'command' ? '命令' : 'LLM'}</td>
-      <td class="col-desc">${escHtml(s.instruction)}</td>
+      <td class="col-desc col-clamp" title="${escHtml(s.instruction)}">${escHtml(s.instruction)}</td>
       <td>${s.enabled ? '启用' : '<span class="muted">停用</span>'}${s.last_status ? ` <span class="muted">${escHtml(s.last_status)}</span>` : ''}</td>
       <td>${s.enabled ? fmtLocal(s.next_run_at) : '-'}</td>
       <td>${fmtLocal(s.last_run_at)}</td>

@@ -110,6 +110,9 @@ $env:TOKEN='<token>'; irm -Headers @{Authorization="Bearer <token>"} <public_url
 | `AGENT_MESH_SWEEP_INTERVAL_S` | `5` | 清扫间隔（秒） |
 | `AGENT_MESH_OFFLINE_AFTER_S` | `15` | 心跳超时判离线（秒）。⚠️ `deploy/install.sh` 生成的 `orchestrator.env` 会覆盖为 `30` |
 | `AGENT_MESH_SESSION_TTL_S` | `86400` | 登录 session token 有效期（秒） |
+| `AGENT_MESH_TLS` | `1` | 对外端口同时接受 HTTP 与 HTTPS（见 [auth-security.md §10](./auth-security.md#10-传输加密单端口双协议)）。关闭则只监听明文 |
+| `AGENT_MESH_TLS_CERT` | `""` | TLS 证书路径（PEM）。留空则用 `<db_dir>/certs/server.crt`，首次启动自动生成自签证书 |
+| `AGENT_MESH_TLS_KEY` | `""` | TLS 私钥路径。留空则用 `<db_dir>/certs/server.key` |
 
 ### 2.2 边沿 Agent（`EDGE_` 前缀，探针仓 `agent-mesh-edge` 的 `EdgeConfig`）
 
@@ -136,7 +139,8 @@ $env:TOKEN='<token>'; irm -Headers @{Authorization="Bearer <token>"} <public_url
 | `EDGE_LLM_MODEL` | `""`（**必配**） | 默认模型（网关真实完整 id；空且任务未传 `model` 时拒绝 llm 任务） |
 | `EDGE_LLM_MODELS` | `""` | 可用模型列表（逗号/换行；config-sync 下发） |
 | `EDGE_SYSTEM_PROMPT` | `""` | 节点级 system prompt（config-sync 下发） |
-| `LOG_LEVEL` | `INFO` | 日志级别 |
+| `EDGE_TLS` | `0` | 是否以 HTTPS 连接 orchestrator。默认关：升级后的探针先用明文心跳，读到服务端 `tls` 通告后自动改为 `1` 并固定证书指纹 |
+| `EDGE_TLS_FINGERPRINT` | `""` | orchestrator 证书的 SHA-256 指纹（十六进制、无冒号）。`EDGE_TLS=1` 时每次请求校验，不符即拒绝 |
 
 > `settings` 表中的 `public_url` / `llm_api_key` / `llm_base_url` / `llm_model` / `llm_models` / `default_permission` 可通过 `/api/settings` 读写（**全局 `system_prompt` 已移除**，提示词改为节点级 `agents.system_prompt` + 模板 `templates.system_prompt`）。其中 **LLM 配置不再内嵌进安装脚本**，节点注册后经心跳 config-sync 下发（见 [auth-security.md §9](./auth-security.md#9-llm-配置同步)）。`llm_models` 是模型唯一来源（无硬编码），`llm_model` 无默认值（未配置则 llm 任务被拒绝）。看板配置页保存时校验响应状态，失败会显示具体错误、不再误报"已保存"。
 

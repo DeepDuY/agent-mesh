@@ -183,9 +183,17 @@ h1 { margin: 0; font-size: 1.5rem; }
 }
 .panel h2 { margin: 0 0 .75rem; font-size: .95rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
 
-table { width: 100%; border-collapse: collapse; font-size: .875rem; }
+table { width: 100%; border-collapse: collapse; font-size: .875rem; table-layout: auto; }
 th, td { text-align: left; padding: .6rem .7rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
 th { color: var(--muted); font-weight: 600; font-size: .78rem; text-transform: uppercase; letter-spacing: .3px; white-space: nowrap; }
+/* Long text adapts to the available width and truncates instead of stretching
+   the table past the viewport; the full value stays in the cell's title. */
+td.clip {
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 tbody tr { transition: background var(--transition); }
 tbody tr:hover { background: rgba(59, 130, 246, .06); }
 tbody tr:last-child td { border-bottom: none; }
@@ -686,9 +694,15 @@ pre {
 
 .nowrap { white-space: nowrap; }
 .col-desc {
-  max-width: 380px;
-  min-width: 180px;
-  word-break: break-word;
+  width: 28%;
+}
+table.table-fixed { table-layout: fixed; }
+.col-clamp {
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal;
 }
 
 .detail-grid {

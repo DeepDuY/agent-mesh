@@ -9,7 +9,7 @@
 | 方向 | 通道 | 说明 |
 |------|------|------|
 | 主 Agent → orchestrator | REST :8000 | `/api/tasks`、`/api/tasks/{id}`、`/api/tasks/{id}:cancel`、`/api/agents/*`、`/api/bootstrap/*` 等（用户 token；`/api/settings`、`/api/teams*`、节点级 `llm_config`/`system_prompt` 为 admin；`/api/settings` 另需 `X-Agent-Mesh-UI: 1`） |
-| 边沿 Agent → orchestrator | REST :8000 | `/api/edge/poll_for_task`（心跳+领任务）、`mark_started`、`submit_result`、`get_task_status`（全局 token / agent 独立 token） |
+| 边沿 Agent → orchestrator | REST :8000 | `/api/edge/poll_for_task`（心跳+领任务）、`mark_started`、`submit_result`、`get_task_status`（全局 token / agent 独立 token）。同一端口同时接受明文 HTTP 与 HTTPS：旧探针继续 HTTP，新探针在首次心跳拿到证书指纹后切到 HTTPS（见 [auth-security.md §10](./auth-security.md#10-传输加密单端口双协议)） |
 | 边沿 Agent → orchestrator | REST :8000 | `POST /api/artifacts/{task_id}`（产物上传，multipart，任选 token） |
 | 浏览器 → orchestrator | REST/SSE :8000 | `GET /api/realtime`（SSE 实时推送：任务状态/日志/节点上下线）+ 5s 轮询兜底 `GET /api/agents`、`/api/tasks`（用户 token；`/api/settings` 为 admin 且限 Web UI） |
 | orchestrator → 边沿 Agent | 被动 | 仅在边沿心跳时通过响应返回任务（无主动推送） |
@@ -99,7 +99,7 @@ EdgeAgent.run()
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/edge/poll_for_task` | 心跳+领任务。body 分组见 [standards/edge-reporting.md §2](./standards/edge-reporting.md#2-心跳-body-字段分组规范)。返回 `{tasks: [...], task?, server_ts, max_concurrent, config_version, config, agent_token?, upgrade?}` |
+| POST | `/api/edge/poll_for_task` | 心跳+领任务。body 分组见 [standards/edge-reporting.md §2](./standards/edge-reporting.md#2-心跳-body-字段分组规范)。返回 `{tasks: [...], task?, server_ts, max_concurrent, config_version, config, agent_token?, upgrade?, tls?}`。`tls`（`{enabled, fingerprint}`）仅在服务端开启传输加密时出现，新探针据此把同一地址切到 HTTPS 并固定该证书指纹；旧探针忽略该字段 |
 | POST | `/api/edge/mark_started` | body：`task_id` → `{accepted}` |
 | POST | `/api/edge/submit_result` | body：`task_id`, `status`, `mode?`, `exit_code?`, `stdout_tail?`, `stderr_tail?`, `artifacts[]?`, `duration_ms?`, `summary?`, `session_id?` → `{accepted}` |
 | POST | `/api/edge/get_task_status` | body：`task_id` → `{found, task}` |
