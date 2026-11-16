@@ -55,46 +55,48 @@ def ensure_self_signed_cert(
     if cert.is_file() and key.is_file():
         return
     cert.parent.mkdir(parents=True, exist_ok=True)
-
-    import ipaddress
-    from datetime import datetime, timedelta, timezone
-
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa
-    from cryptography.x509.oid import NameOID
-
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    name = x509.Name(
-        [x509.NameAttribute(NameOID.COMMON_NAME, hosts[0] if hosts else "agent-mesh")]
-    )
-    now = datetime.now(timezone.utc)
-    san = []
-    for host in hosts or ["agent-mesh"]:
-        try:
-            san.append(x509.IPAddress(ipaddress.ip_address(host)))
-        except ValueError:
-            san.append(x509.DNSName(host))
-    certificate = (
-        x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(private_key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(minutes=5))
-        .not_valid_after(now + timedelta(days=3650))
-        .add_extension(x509.SubjectAlternativeName(san), critical=False)
-        .sign(private_key, hashes.SHA256())
-    )
-    key.write_bytes(
-        private_key.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.TraditionalOpenSSL,
-            serialization.NoEncryption(),
-        )
-    )
-    cert.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    _generate_self_signed(cert, key, hosts)
     logger.info("generated self-signed TLS certificate at %s", cert)
+
+
+def _generate_self_signed(cert: Path, key: Path, hosts: list[str]) -> None:
+    """Write a self-signed certificate using the openssl CLI.
+
+    The container image ships neither a crypto library nor a CA, and probes pin
+    the fingerprint rather than trusting a chain, so a self-signed cert is
+    enough. SAN entries cover both DNS names and IP addresses.
+    """
+    import ipaddress
+    import subprocess
+    import tempfile
+
+    names = hosts or ["agent-mesh"]
+    san = []
+    for host in names:
+        try:
+            ipaddress.ip_address(host)
+            san.append(f"IP:{host}")
+        except ValueError:
+            san.append(f"DNS:{host}")
+    config = (
+        "[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n"
+        "[dn]\nCN=agent-mesh\n[ext]\nsubjectAltName=" + ",".join(san) + "\n"
+    )
+    with tempfile.NamedTemporaryFile("w", suffix=".cnf", delete=False) as fh:
+        fh.write(config)
+        cfg_path = fh.name
+    try:
+        subprocess.run(
+            [
+                "openssl", "req", "-x509", "-newkey", "rsa:2048",
+                "-keyout", str(key), "-out", str(cert),
+                "-days", "3650", "-nodes",
+                "-config", cfg_path, "-extensions", "ext",
+            ],
+            check=True, capture_output=True,
+        )
+    finally:
+        Path(cfg_path).unlink(missing_ok=True)
 
 
 def _server_ssl_context(cert_path: str, key_path: str) -> ssl.SSLContext:
